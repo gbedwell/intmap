@@ -1,0 +1,18 @@
+name: intmap
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - python>=3.10
+  - pip>=23.0
+  - samtools==1.21
+  - bowtie2==2.5.4
+  - cutadapt==4.9
+  - pysam==0.22.1
+  - pip:
+    - biopython==1.84
+    - joblib==1.4.2
+    - regex==2024.5.15
+    - python-Levenshtein==0.26.0
+    - numpy==2.1.2
+    - faiss-cpu==1.9.0

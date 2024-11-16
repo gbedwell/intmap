@@ -1,0 +1,1382 @@
+#!/usr/local/bin/python
+
+import argparse
+parser = argparse.ArgumentParser(prog = 'intmap',
+                                description='''Maps the locations of viral integration sites 
+                                in a genome from short-read NGS data.''')
+parser.add_argument('-r1',
+                    type=str, 
+                    help='Forward/R1 read file.', 
+                    default=None, 
+                    required=True)
+parser.add_argument('-r2',
+                    type=str,
+                    help='Reverse/R2 read file.', 
+                    default=None, 
+                    required=True)
+parser.add_argument('-ltr_term',
+                    type=str, 
+                    help='LTR sequence to match.', 
+                    default=None)
+parser.add_argument('-linker_term',
+                    type=str, 
+                    help='Linker sequence to match.', 
+                    default=None)
+parser.add_argument('-v',
+                    type=str, 
+                    help='Virus name. Used when defining standard artifacts.',
+                    default=None,
+                    choices=['HIV1','HIV-1','MVV','MLV'])
+parser.add_argument('-c',
+                    type=str, 
+                    nargs='*', 
+                    help='''Possible contaminating sequences downstream of the viral LTR.''', 
+                    default=None)
+parser.add_argument('-ltr1_primer',
+                    type=str,  
+                    help='''The 3' end of the first round LTR primer. 
+                    Used to control for mispriming during fragment amplification. 
+                    Must be at least 10 bp.''',
+                    default=None)
+parser.add_argument('-ltr2_primer',
+                    type=str,  
+                    help='''The 3' end of the second round LTR primer. 
+                    Must be at least 10 bp.''',
+                    default=None)
+parser.add_argument('-linker_primer',
+                    type=str,  
+                    help='''The 3' end of the linker primer. Must be at least 10 bp.''',
+                    default=None)
+parser.add_argument('--remove_internal_artifacts', '-remove_internal_artifacts',
+                    help='''Whether or not to include standard artifact sequences for the defined virus. 
+                    This auto-fills contaminating autointegration artifacts for the viruses defined in -v.''', 
+                    action='store_true')
+parser.add_argument('--U3', '-U3',
+                    help='''Whether or not the sequenced reads come from the U3 end of the provirus. 
+                    This is used for defining HIV-1 autointegration artifacts and 
+                    defining the 1 bp of the target site duplication.''',
+                    action='store_true')
+parser.add_argument('-nthr',
+                    type=int, 
+                    help='The number of threads to use for processing.',
+                    default=1)
+parser.add_argument('--crop_single_thr', '-crop_single_thr',
+                    help='''Boolean. 
+                    Whether or not to only use a single thread when cropping, 
+                    despite the value of nthr.
+                    This can be useful when only a handful of threads are available.
+                    When True, multiple threads are used only for alignment.''',
+                    action='store_true')
+parser.add_argument('-nm',
+                    type=str, 
+                    help='''The desired name of the dataset. 
+                    This is used for naming output files.''',
+                    required=True)
+parser.add_argument('-min_frag_len',
+                    type=int, 
+                    help='''The minimum allowed fragment length. 
+                    Defaults to 10.''',
+                    default=10)
+parser.add_argument('-max_frag_len',
+                    type=int, 
+                    help='''The maximum allowed fragment length. 
+                    Defaults to 1200.''',
+                    default=1200)
+parser.add_argument('-ltr_error_rate',
+                    type=float, 
+                    help='''The acceptable error rate in the terminal LTR sequence. 
+                    Defaults to 0.1.''',
+                    default=0.1)
+parser.add_argument('-linker_error_rate',
+                    type=float, 
+                    help='''The acceptable error rate in the terminal linker sequence.
+                    Defaults to 0.1.''',
+                    default=0.1)
+parser.add_argument('-ltr2_primer_error_rate',
+                    type=float, 
+                    help='''The acceptable error rate in the LTR primer sequence. 
+                    Defaults to 0.1.''',
+                    default=0.1)
+parser.add_argument('-linker_primer_error_rate',
+                    type=float, 
+                    help='''The acceptable error rate in the linker primer sequence. 
+                    Defaults to 0.1.''',
+                    default=0.1)
+parser.add_argument('--no_indels', '-no_indels',
+                    help='''Boolean.
+                    Boolean. When False, indels are allowed in LTR/linker matching. 
+                    When True, only substitutions are allowed. 
+                    Defaults to False.''',
+                    action='store_true')
+parser.add_argument('--no_crop', '-no_crop',
+                    help='''Boolean. 
+                    Whether or not to crop the matched LTR/linker sequences from the reads. 
+                    If set to True, the program stops before alignment.''',
+                    action='store_true')
+parser.add_argument('-bt2_path',
+                    type=str, 
+                    help='The path to the bowtie2 executable',
+                    default='bowtie2')
+parser.add_argument('-sam_path',
+                    type=str, 
+                    help='The path to the samtools executable',
+                    default='samtools')
+parser.add_argument('-bt2_idx_dir',
+                    type=str, 
+                    help='''The directory path holding the bowtie2 genome index. 
+                    Note that this should not contain the index prefix.''',
+                    required=True)
+parser.add_argument('-bt2_idx_name',
+                    type=str, 
+                    help='''The genome index prefix (e.g., hs1).''',
+                    required=True)
+parser.add_argument('-aln_mismatch_rate',
+                    type=float, 
+                    help='''The allowable mismatch rate in read alignment. 
+                    Defaults to 0.15.''',
+                    default=0.15)
+parser.add_argument('-aln_indel_rate',
+                    type=float, 
+                    help='''The allowable indel rate in read alignment. 
+                    Defaults to 0.05.''',
+                    default=0.05)
+parser.add_argument('-clip_rate',
+                    type=float, 
+                    help='''The acceptable ratio of soft-clipped bases to (actual) read length. 
+                    Defaults to 0.2.''',
+                    default=0.2)
+parser.add_argument('-min_mapq',
+                    type=int, 
+                    help='''The minimum acceptable MAPQ score.
+                    Does not apply to multimapping reads. 
+                    Defaults to 2.''',
+                    default=2)
+parser.add_argument('-match_after',
+                    type=int, 
+                    help='''The number of mismatched bases allowed at the start of read 1. Defaults to 2.''',
+                    default=2)
+parser.add_argument('-tsd',
+                    type=int, 
+                    help='''The size of the target site duplication. 
+                    Defaults to 5.''',
+                    default=5)
+parser.add_argument('--disorg', '-disorg',
+                    help='''Boolean.
+                    Whether or not move all output files to type-specific subdirectories.''',
+                    action='store_true')
+parser.add_argument('-ltr_umi_offset',
+                    type=int, 
+                    help='''The number of basepairs between the first basepair of the provided 
+                    LTR sequence to the last basepair of the UMI. Defaults to 0 
+                    (i.e., the UMI immediately precedes the given LTR sequence).''',
+                    default=0)
+parser.add_argument('-ltr_umi_len',
+                    type=int, 
+                    help='''The length of the LTR-end UMI.
+                    Defaults to 0 (no UMI present).''',
+                    default=0)
+parser.add_argument('-linker_umi_offset',
+                    type=int, 
+                    help='''The number of basepairs between the first basepair of the provided 
+                    linker sequence to the last basepair of the UMI. Defaults to 0  
+                    (i.e., the UMI immediately precedes the given linker sequence). ''',
+                    default=0)
+parser.add_argument('-linker_umi_len',
+                    type=int, 
+                    help='''The length of the linker-end UMI.
+                    Defaults to 0 (no UMI present).''',
+                    default=0)
+parser.add_argument('--no_mm', '-no_mm',
+                    help='''Boolean.
+                    Whether or not to keep multimapping reads in the final output.''',
+                    action='store_true')
+parser.add_argument('-min_qual',
+                    type=int, 
+                    help='''The minimum acceptable average base quality score. 
+                    Used to filter out low-quality reads. 
+                    Defaults to 20, corresponding to a ~1% error rate.''',
+                    default=20)
+parser.add_argument('-len_diff',
+                    type=int, 
+                    help='''The maximum allowed difference in fragment lengths for
+                    uniquely mapping reads or sequence lengths for multi-mapping reads. 
+                    Used in fuzzy duplicate identification. Defaults to 5.''',
+                    default=5)
+parser.add_argument('-umi_diff',
+                    type=int, 
+                    help='''The maximum allowed difference between UMIs to consider them 
+                    the same. Used in fuzzy duplicate identification. Defaults to 2.''',
+                    default=2)
+parser.add_argument('-seq_sim',
+                    type=float, 
+                    help='''The sequence similarity threshold. 
+                    Sequences with similarity scores greater than this value 
+                    will be considered to be duplicates. 
+                    Used to identify fuzzy duplicates in multimapping reads. 
+                    Defaults to 0.95.''',
+                    default=0.95)
+parser.add_argument('-v_idx_dir',
+                    type=str, 
+                    help='''The directory path holding the bowtie2 virus genome index. 
+                    Note that this should not contain the index prefix. 
+                    Required when random = False.''',
+                    default=None)
+parser.add_argument('-v_idx_name',
+                    type=str, 
+                    help='''The virus genome index prefix (e.g., hs1). 
+                    Required when random = False.''',
+                    default=None)
+parser.add_argument('-frag_ratio',
+                    type=float, 
+                    help='''The ratio of fragment counts used to define fuzzy matching reads. 
+                    A match is called if the higher number of counts >= (frag_ratio * lower_number) + 1.
+                    Defaults to 2.''',
+                    default=2)
+parser.add_argument('--random', '-random',
+                    help='''Boolean.
+                    Whether or not the data being analyzed is theoretical random 
+                    integration site data generated in silico.''',
+                    action='store_true')
+parser.add_argument('-genome_fasta',
+                    type=str, 
+                    help='''The file path to the genome fasta file. 
+                    The file must be either bgzip compressed or uncompressed.''',
+                    default=None)
+parser.add_argument('-genome_fasta_index',
+                    type=str, 
+                    help='''The file path to the genome fasta index file. 
+                    This is not strictly necessary if the genome fasta index file is named 
+                    <genome_fasta>.fai for an uncompressed genome_fasta file, or 
+                    <genome_fasta>.gzi for a bgzip compressed genome_fasta file.''',
+                    default=None)
+parser.add_argument('-num_bits',
+                    type=int, 
+                    help='''The number of bits in the generated simhash used 
+                    for fuzzy matching. Defaults to 64. Must be divisble by 8.''',
+                    default=64)
+parser.add_argument('-token_size',
+                    type=int, 
+                    help='''The token size for simhash generation. Defaults to 5.''',
+                    default=5)
+parser.add_argument('-mm_search_sensitivity',
+                    type=int,
+                    help='''Defines the maximum allowed Hamming distance between SimHashes. 
+                    The higher the value the more fragments will be checked for possible 
+                    fuzzy matching, and vice versa. Defaults to 10.''',
+                    default=10)
+parser.add_argument('-misprime_mismatch',
+                    type=int, 
+                    help='''The number of mismatches allowed when searching for mispriming. 
+                    Defaults to 3.''',
+                    default=3)
+
+args = parser.parse_args()
+
+def zipped(file):
+    if os.path.exists(file):
+        with open(file, 'rb') as zip_test:
+            return zip_test.read(2) == b'\x1f\x8b'
+    else:
+        return file.endswith('.gz')
+            
+def write_chunks(tmp_files_R1, tmp_files_R2, nthr, i):
+    
+    file1 = open_file(filename = args.r1, mode = 'rt')
+    file2 = open_file(filename = args.r2, mode = 'rt')
+        
+    n_lines = sum(1 for _ in file1)
+    file1.seek(0)
+    
+    if n_lines % 4 != 0:
+        raise ValueError('Number of lines is not a multiple of 4.')
+    
+    n_entries = n_lines // 4
+    chunk_size = (n_entries // nthr) * 4
+    start_line = i * chunk_size
+    
+    if i == (nthr - 1):
+        remainder = (n_entries % nthr) * 4
+        print(f'Processing {n_lines} lines ({n_entries} reads)\n'
+            f'Utilizing {nthr} threads\n'
+            f'Chunk size = {chunk_size}\n'
+            f'Remainder = {remainder}')
+        chunk_size = chunk_size + remainder
+        
+    filen_R1 = gzip.open(tmp_files_R1[i], mode = 'a')
+    filen_R2 = gzip.open(tmp_files_R2[i], mode = 'a')
+
+    lc = 1
+    for _ in range(start_line):
+        next(file1)
+        next(file2)
+    
+    for line in zip(file1, file2):
+        if lc <= chunk_size:
+            filen_R1.write(line[0].encode('utf-8'))
+            filen_R2.write(line[1].encode('utf-8'))
+            lc += 1
+        else:
+            break
+
+    filen_R1.close()
+    filen_R2.close()
+    
+def open_file(filename, mode):
+    if zipped(filename):
+        return gzip.open(filename, mode)
+    else:
+        return open(filename, mode)
+        
+def concatenate_files(input_files, output_file):       
+    buffer_size = 1024 * 1024 * 10
+    with gzip.open(output_file, 'wb') as outfile:
+        for file_name in input_files:
+            with gzip.open(file_name, 'rb') as infile:
+                while True:
+                    buffer = infile.read(buffer_size)
+                    if not buffer:
+                        break
+                    outfile.write(buffer)
+        
+def concatenate_unix(input_files, output_file):
+    cat_cmd = 'cat {} > {}'.format(' '.join(input_files), output_file)
+    subprocess.call(cat_cmd, shell=True)
+
+def natural_key(chrom):
+    return [int(text) if text.isdigit() else text for text in regex.split(r'(\d+)', chrom)]
+
+def check_genome_compression(genome_fasta):
+    with open(genome_fasta, 'rb') as f:
+        magic_number = f.read(4)
+        if magic_number == b'\x1f\x8b\x08\x00':
+            return 'gzip'
+        elif magic_number == b'\x1f\x8b\x08\x04':
+            return 'bgzf'
+    return 'uncompressed'
+
+def fetch_sequence(coordinates, genome, U3, shift):
+    chrom = coordinates['chrom']
+    if coordinates['strand'] == '-':
+        strand = '-' if not U3 else '+'
+    else:
+        strand = '+' if not U3 else '-'
+    
+    if strand == '-':
+        start = (coordinates['end'] - shift) - 40
+        end = (coordinates['end'] - shift) + 15
+    else:
+        start = (coordinates['start'] + shift) - 15
+        end = (coordinates['start'] + shift) + 40
+        
+    sequence = genome.fetch(chrom, start, end)
+    
+    if strand == '-':
+        sequence = crop.revcomp(sequence)
+    return sequence.upper()
+
+def make_simhash(string, num_bits, token_size):
+    tokens = [string[i:(i + token_size)] for i in range(len(string) - token_size + 1)]
+    vector = [0] * num_bits  
+    
+    for token in tokens:
+        token_hash = hashlib.md5(token.encode('utf-8')).hexdigest()
+        binary_hash = bin(int(token_hash, 16))[2:].zfill(num_bits)
+        
+        for i in range(num_bits):
+            bit = binary_hash[i]
+            vector[i] += 1 if bit == '1' else -1
+    
+    return ''.join('1' if x > 0 else '0' for x in vector)
+
+def apply_simhash(key, value, string, num_bits, token_size):
+    value['hash'] = make_simhash(
+        string = string,
+        num_bits = num_bits,
+        token_size = token_size)
+    return key, value
+
+def parse_hash_matches(hash_dict):
+    ungrouped = []
+    groups = []
+
+    for key, value in hash_dict.items():
+        matches = [int(v) for v in value]
+        if len(matches) == 1:
+            ungrouped.append(matches)
+            continue
+        matches = sorted(matches)
+        groups.append(matches)
+        
+    return ungrouped, groups
+
+def merge_hash_sublists(lists):
+    graph = defaultdict(set)
+
+    for i, sublist in enumerate(lists):
+        for element in sublist:
+            graph[element].add(i)
+
+    visited = set()
+    merged_lists = []
+
+    def iterative_hash_dfs(start_index):
+        stack = [start_index]
+        component = []
+
+        while stack:
+            index = stack.pop()
+            if index not in visited:
+                visited.add(index)
+                component.extend(lists[index])
+
+                for element in lists[index]:
+                    for neighbor in graph[element]:
+                        if neighbor not in visited:
+                            stack.append(neighbor)
+
+        return component
+
+    for i in range(len(lists)):
+        if i not in visited:
+            component = iterative_hash_dfs(i)
+            merged_lists.append(sorted(set(component)))
+
+    return merged_lists
+
+if __name__ == "__main__":
+    import os
+    import sys
+    import gzip
+    import math
+    import glob
+    import shutil
+    import subprocess
+    import regex
+    from joblib import Parallel, delayed
+    import multiprocessing
+    import platform
+    from intmap import crop
+    from intmap import align
+    from intmap import process
+    from intmap import clean
+    from intmap import random
+    import pysam
+    import time
+    from Levenshtein import distance as lev_dist
+    from collections import defaultdict
+    from Bio import SeqIO
+    import hashlib
+    import faiss
+    import numpy as np
+    from itertools import chain
+    import json
+    
+    start_time = time.time()
+    
+    if args.random is True:
+        align.check_genome_idx(args.bt2_idx_dir, args.bt2_idx_name)
+        
+        if args.bt2_path != 'bowtie2':
+            align.check_executable(path = args.bt2_path, ex_name = 'bowtie2')
+        if sam_path != 'samtools':
+            align.check_executable(path = args.sam_path, ex_name = 'samtools')
+        
+        print('\n')
+        print('Sample name:', args.nm)
+        print('Parsing files', args.r1, 'and', args.r2)
+        print('Random data: True')
+        
+        if args.U3 is False:
+            print('Mapping end: U5')
+        else:
+            print('Mapping end: U3')
+            
+        print('TSD width (bp):', args.tsd)
+        print('Minimum fragment length (bp):', args.min_frag_len)
+        print('Maximum fragment length (bp):', args.max_frag_len)
+        print('Minimum alignment MAPQ score:', args.min_mapq)
+        
+        if args.no_mm is False:
+            print('Keep multimapping reads: True')
+        else:
+            print('Keep multimapping reads: False')
+
+        curr_dir = os.getcwd()
+        processed_dir = os.path.join(curr_dir, 'processed')
+        if not os.path.exists(processed_dir):
+            os.makedirs(processed_dir)
+        out_bam = os.path.join(processed_dir, '{}_aln.bam'.format(args.nm))
+        
+        print('\n')
+        
+        random.align_random(bt2_path = args.bt2_path, 
+                            sam_path = args.sam_path, 
+                            bt2_idx_dir = args.bt2_idx_dir, 
+                            bt2_idx_name = args.bt2_idx_name,
+                            file1 = args.r1, 
+                            file2 = args.r2, 
+                            name = os.path.join(processed_dir, '{}'.format(args.nm)), 
+                            nthr = args.nthr,
+                            min_frag_len = args.min_frag_len,
+                            max_frag_len = args.max_frag_len)
+        
+        print('\n')
+        print('Performing QC on aligned reads and extracting mapped coordinates...')
+        
+        frags_out = os.path.join(processed_dir, '{}_fragments.bed.gz'.format(args.nm))
+        sites_out = os.path.join(processed_dir, '{}_sites.bed.gz'.format(args.nm))
+        
+        print('Parsing bam file...')
+        read_pairs = random.process_random_bam(out_bam)
+
+        print('Processing read pairs and pruning results...')
+        processed_pairs = []
+        for read1, read2 in read_pairs:
+            tmp_pair = random.process_random_pair(read1, 
+                                                read2, 
+                                                max_frag_len = args.max_frag_len, 
+                                                min_mapq = args.min_mapq, 
+                                                no_mm = args.no_mm)
+            processed_pairs.append(tmp_pair)
+
+        processed_pairs = [pp for pp in processed_pairs if pp[0] is not None and pp[1] is not None]
+
+        print('Writing output bed files...')
+        frags_dict = {}
+        for read1_info, read2_info in processed_pairs:
+            if read1_info['strand'] == '-':
+                frag_start = read2_info['reference_start']
+                frag_end = read1_info['reference_end']
+            else:
+                frag_start = read1_info['reference_start']
+                frag_end = read2_info['reference_end']
+
+            frags_dict[read1_info['query_name']] = {
+                'chrom': read1_info['reference_name'],
+                'start': frag_start,
+                'end': frag_end,
+                'count': 1,
+                'strand': read1_info['strand'],
+                }
+            
+        shift = args.tsd - 1 if args.U3 else 0
+        
+        n_mapped = len(frags_dict)
+        
+        with (gzip.open(frags_out, 'wt') as frags, gzip.open(sites_out, 'wt') as sites):
+            for key, value in frags_dict.items():
+                frag_info = [
+                    value['chrom'],
+                    value['start'],
+                    value['end'],
+                    key,
+                    value['count'],
+                    value['strand']
+                    ]
+                
+                frags.write('\t'.join(map(str, frag_info)) + '\n')
+                
+                if value['strand'] == '-':
+                    site_start = (value['end'] - shift) - 1
+                    site_end = (value['end'] - shift)
+                    site_strand = '-' if not args.U3 else '+'
+                else:
+                    site_start = (value['start'] + shift)
+                    site_end = (value['start'] + shift) + 1
+                    site_strand = '+' if not args.U3 else '-'
+                
+                site_info = [
+                    value['chrom'],
+                    site_start,
+                    site_end,
+                    key,
+                    value['count'],
+                    site_strand
+                    ]
+                
+                sites.write('\t'.join(map(str, site_info)) + '\n')
+                
+        if not args.disorg:
+            data_types = ['alignments', 'fragments', 'sites']
+            subdirs = []
+            for i in data_types:
+                subdir = os.path.join(processed_dir, '{}'.format(i))
+                if not os.path.exists(subdir):
+                    os.makedirs(subdir)
+                subdirs.append(subdir)
+                
+            file_mapping = {
+                '{}_aln.bai'.format(args.nm): subdirs[0],
+                '{}_aln.bam'.format(args.nm): subdirs[0],
+                '{}_fragments.bed.gz'.format(args.nm): subdirs[1],
+                '{}_sites.bed.gz'.format(args.nm): subdirs[2]
+                }
+            
+            for pattern, target_dir in file_mapping.items():
+                for filepath in glob.glob(os.path.join(processed_dir, pattern)):
+                    shutil.move(filepath, target_dir)
+    else:            
+        if args.ltr_term is None:
+            parser.error('ltr_term must be defined.')
+        if args.linker_term is None:
+            parser.error('linker_term must be defined.')
+        if args.ltr1_primer is None:
+            parser.error('ltr1_primer must be defined.')
+        if args.ltr2_primer is None:
+            parser.error('ltr2_primer must be defined.')
+        if args.linker_primer is None:
+            parser.error('linker_primer must be defined.')
+        if args.genome_fasta is None:
+            parser.error('genome_fasta must be defined.')
+        if args.v_idx_dir is None:
+            parser.error('v_idx_dir must be defined.')
+        if args.v_idx_name is None:
+            parser.error('v_idx_name must be defined.')
+        
+        genome_compression = check_genome_compression(args.genome_fasta)
+        if genome_compression != 'bgzf' and genome_compression != 'uncompressed':
+            raise ValueError('The given genome fasta file must be uncompressed or bgzip compressed.')
+
+        if args.genome_fasta_index is None:
+            genome = pysam.FastaFile(filename = args.genome_fasta)
+        else:
+            if genome_compression == 'bgzf':
+                genome = pysam.FastaFile(filename = args.genome_fasta, 
+                                        filepath_index_compressed = args.genome_fasta_index)
+            elif genome_compression == 'uncompressed':
+                genome = pysam.FastaFile(filename = args.genome_fasta, 
+                                        filepath_index = args.genome_fasta_index)
+
+        crop.check_crop_input(ltr_term = args.ltr_term, 
+                            linker_term = args.linker_term, 
+                            contamination = args.c,
+                            no_crop = args.no_crop,
+                            ltr2_primer_error_rate = args.ltr2_primer_error_rate, 
+                            linker_primer_error_rate = args.ltr2_primer_error_rate,
+                            ltr1_primer = args.ltr1_primer, 
+                            ltr2_primer = args.ltr2_primer, 
+                            linker_primer = args.linker_primer)
+        
+        align.check_genome_idx(args.bt2_idx_dir, args.bt2_idx_name)
+        align.check_genome_idx(args.v_idx_dir, args.v_idx_name)
+        
+        if args.bt2_path != 'bowtie2':
+            align.check_executable(path = args.bt2_path, ex_name = 'bowtie2')
+            
+        if args.sam_path != 'samtools':
+            align.check_executable(path = args.sam_path, ex_name = 'samtools')
+            
+        if args.num_bits % 8 != 0:
+            raise ValueError('num_bits must be a multiple of 8.')
+        
+        if args.token_size < 1:
+            raise ValueError('token_size must be >= 1.')
+        
+        if args.match_after < 0:
+            raise ValueError('match_after must be >= 0.')
+        
+        print('\n')
+        print('Sample name:', args.nm)
+        print('Parsing files', args.r1, 'and', args.r2)
+        print('Random data: False')
+        print('Base LTR-end search sequence:', args.ltr2_primer + args.ltr_term)
+        print('Base linker-end sequence:', args.linker_primer + args.linker_term)
+        print('LTR match error rate:', args.ltr_error_rate)
+        print('Linker match error rate:', args.linker_error_rate)
+        print('Round 2 LTR primer error rate:', args.ltr2_primer_error_rate)
+        print('Linker primer error rate:', args.linker_primer_error_rate)
+        
+        if args.no_indels is True:
+            print('Indels allowed in matching: False')
+        else:
+            print('Indels allowed in matching: True')
+
+        if args.U3 is False:
+            print('Mapping end: U5')
+        else:
+            print('Mapping end: U3')
+            
+        print('TSD width (bp):', args.tsd)
+        
+        print('Round 1 LTR primer sequence:', args.ltr1_primer)
+        
+        if args.remove_internal_artifacts:
+            print('Removing internal', args.v, 'artifacts')
+            
+        if args.c is not None:
+            print('Declared contamination:', ', '.join(args.c))
+            
+        if args.linker_umi_len > 0:
+            print('LTR UMI length (bp):', args.ltr_umi_len)
+            print('LTR UMI offset (bp):', args.ltr_umi_offset)
+            
+        if args.linker_umi_len > 0:
+            print('Linker UMI length (bp):', args.linker_umi_len)
+            print('Linker UMI offset (bp):', args.linker_umi_offset)
+            
+        print('Minimum fragment length (bp):', args.min_frag_len)
+        print('Maximum fragment length (bp):', args.max_frag_len)
+        print('Read 1 5\'-end alignment mismatches (bp):', args.match_after)
+        print('Allowed alignment mismatch rate:', args.aln_mismatch_rate)
+        print('Allowed alignment indel rate:', args.aln_indel_rate)
+        print('Allowed alignment soft-clip rate:', args.clip_rate)
+        print('Minimum alignment MAPQ score:', args.min_mapq)
+        print('Minimum average base quality score:', args.min_qual)
+        print('Fuzzy length difference (bp):', args.len_diff)
+        print('Fuzzy UMI mismatches (bp):', args.umi_diff)
+        print('Fuzzy sequence similarity:', args.seq_sim)
+        print('Duplicate count ratio:', args.frag_ratio)
+
+        
+        if args.no_mm is False:
+            print('Keep multimapping reads: True')
+            print('Multimapping hash bits:', args.num_bits)
+            print('Multimapping token size:', args.token_size)
+            print('Multimapping search sensitivity:', args.mm_search_sensitivity)
+        else:
+            print('Keep multimapping reads: False')
+        
+        print('Allowed mispriming mismatches (bp):', args.misprime_mismatch)
+        
+        print('\n')
+        
+        if not args.remove_internal_artifacts and args.c is None:
+            print('\n',
+                'No virus or contaminating sequence information provided.',
+                '\n',
+                'Be aware that artifacts might be retained in the output.',
+                '\n')
+        
+        curr_dir = os.getcwd()
+
+        processed_dir = os.path.join(curr_dir, 'processed')
+        if not os.path.exists(processed_dir):
+            os.makedirs(processed_dir)
+                
+        if args.crop_single_thr:
+            crop_nthr = 1
+        else:
+            crop_nthr = args.nthr
+                
+        if crop_nthr == 1:
+            file = open_file(filename = args.r1, mode = 'rt')
+            n_lines = sum(1 for _ in file)
+            if n_lines % 4 != 0:
+                raise ValueError('Number of lines is not a multiple of 4.')
+            file.close()
+            
+            print('Cropping reads...')
+            
+            print(f'Processing {n_lines} lines ({n_lines // 4} reads)\n',
+                'Utilizing 1 thread.')
+            
+            crop.crop(file1 = args.r1, 
+                    file2 = args.r2, 
+                    ltr_term = args.ltr_term, 
+                    virus = args.v, 
+                    linker_term = args.linker_term,
+                    contamination = args.c, 
+                    remove_internal_artifacts = args.remove_internal_artifacts,
+                    U3 = args.U3,
+                    name = os.path.join(processed_dir, '{}'.format(args.nm)),
+                    min_frag_len = args.min_frag_len,
+                    no_crop = args.no_crop,
+                    ltr_error_rate = args.ltr_error_rate,
+                    linker_error_rate = args.linker_error_rate,
+                    ltr_umi_offset = args.ltr_umi_offset,
+                    ltr_umi_len = args.ltr_umi_len,
+                    linker_umi_offset = args.linker_umi_offset,
+                    linker_umi_len = args.linker_umi_len,
+                    ltr2_primer_error_rate = args.ltr2_primer_error_rate, 
+                    linker_primer_error_rate = args.linker_primer_error_rate,
+                    ltr1_primer = args.ltr1_primer, 
+                    ltr2_primer = args.ltr2_primer, 
+                    linker_primer = args.linker_primer,
+                    no_indels = args.no_indels)
+
+        else:  
+            tmp_dir = os.path.join(processed_dir, '{}_crop_tmp'.format(args.nm))
+            if not os.path.exists(tmp_dir):
+                os.makedirs(tmp_dir)
+            
+            tmp_files_R1 = []
+            tmp_files_R2 = []
+            for i in range(args.nthr):
+                tmp_files_R1.append(os.path.join(tmp_dir, '{}_tmp{}'.format(args.nm, str(i).zfill(3)) + '_R1.fq.gz'))
+                tmp_files_R2.append(os.path.join(tmp_dir, '{}_tmp{}'.format(args.nm, str(i).zfill(3)) + '_R2.fq.gz'))
+            
+            print('Splitting reads into temporary files...')
+            
+            Parallel(n_jobs = args.nthr)(
+                delayed(write_chunks)(tmp_files_R1 = tmp_files_R1, 
+                                    tmp_files_R2 = tmp_files_R2, 
+                                    nthr = args.nthr, 
+                                    i = i)
+                for i in range(args.nthr))
+            
+            tmp_names = []
+            for i in range(args.nthr):
+                tmp_names.append('{}/{}_tmp{}'.format(tmp_dir, args.nm, str(i).zfill(3)))
+
+            print('\n')
+            print('Cropping reads...')
+            
+            Parallel(n_jobs = args.nthr)(
+                delayed(crop.crop)(file1 = tmp_files_R1[i], 
+                                file2 = tmp_files_R2[i], 
+                                ltr_term = args.ltr_term, 
+                                virus = args.v, 
+                                linker_term = args.linker_term,
+                                contamination = args.c, 
+                                remove_internal_artifacts = args.remove_internal_artifacts,
+                                U3 = args.U3,
+                                name = tmp_names[i],
+                                min_frag_len = args.min_frag_len,
+                                no_crop = args.no_crop,
+                                ltr_error_rate = args.ltr_error_rate,
+                                linker_error_rate = args.linker_error_rate,
+                                ltr_umi_offset = args.ltr_umi_offset,
+                                ltr_umi_len = args.ltr_umi_len,
+                                linker_umi_offset = args.linker_umi_offset,
+                                linker_umi_len = args.linker_umi_len,
+                                ltr2_primer_error_rate = args.ltr2_primer_error_rate, 
+                                linker_primer_error_rate = args.linker_primer_error_rate,
+                                ltr1_primer = args.ltr1_primer, 
+                                ltr2_primer = args.ltr2_primer, 
+                                linker_primer = args.linker_primer,
+                                no_indels = args.no_indels)
+            for i in range(args.nthr))
+            
+            inputs_R1 = sorted(glob.glob('{}/{}_tmp*_R1_cropped*'.format(tmp_dir, args.nm)))
+            inputs_R2 = sorted(glob.glob('{}/{}_tmp*_R2_cropped*'.format(tmp_dir, args.nm)))
+
+            crop_out1 = os.path.join(processed_dir, '{}_R1_cropped.fq.gz'.format(args.nm))
+            crop_out2 = os.path.join(processed_dir, '{}_R2_cropped.fq.gz'.format(args.nm))
+            
+            inputs = [inputs_R1, inputs_R2]
+            outputs = [crop_out1, crop_out2]
+            
+            print('Concatenating cropped output...')
+            
+            op_sys = platform.system()
+            if op_sys != 'Darwin' and op_sys != 'Linux':
+                if crop_nthr > 1:
+                    Parallel(n_jobs = 2)(
+                        delayed(concatenate_files)(input_files = inputs[i],
+                                                output_file = outputs[i])
+                        for i in range(2))
+                else:
+                    for i in range(2):
+                        concatenate_files(input_files = inputs[i],
+                                        output_file = outputs[i])
+            else:
+                if crop_nthr > 1:
+                    Parallel(n_jobs = 2)(
+                        delayed(concatenate_unix)(input_files = inputs[i],
+                                                output_file = outputs[i])
+                        for i in range(2))
+                else:
+                    for i in range(2):
+                        concatenate_unix(input_files = inputs[i],
+                                        output_file = outputs[i])
+                
+            for f in inputs_R1:
+                os.remove(f)
+            for f in inputs_R2:
+                os.remove(f)
+                
+            shutil.rmtree(tmp_dir)
+        
+        curr_dir = os.getcwd()
+        fq1 = os.path.join(processed_dir, '{}_R1_cropped.fq.gz'.format(args.nm))
+        fq2 = os.path.join(processed_dir, '{}_R2_cropped.fq.gz'.format(args.nm))
+        
+        with gzip.open(fq1, 'r') as file:
+            n_cropped = sum(1 for _ in file) // 4
+            
+        print('Number of reads retained after cropping:', n_cropped)
+        
+        if args.no_crop is True:
+            print('no_crop is True. Stopping because there are non-genomic sequences remaining on reads.')
+            sys.exit()
+        
+        print('\n')
+        print('Aligning cropped reads...')
+            
+        align.align(bt2_path = args.bt2_path, 
+                    sam_path = args.sam_path, 
+                    bt2_idx_dir = args.bt2_idx_dir, 
+                    bt2_idx_name = args.bt2_idx_name,
+                    v_idx_dir = args.v_idx_dir,
+                    v_idx_name = args.v_idx_name,
+                    file1 = fq1, 
+                    file2 = fq2, 
+                    name = os.path.join(processed_dir, '{}'.format(args.nm)), 
+                    nthr = args.nthr,
+                    min_frag_len = args.min_frag_len,
+                    max_frag_len = args.max_frag_len)
+        
+        print('\n')
+        print('Performing QC on aligned reads...')
+        
+        frags_out = os.path.join(processed_dir, '{}_fragments.bed.gz'.format(args.nm))
+        sites_out = os.path.join(processed_dir, '{}_sites.bed.gz'.format(args.nm))
+        bc_out = os.path.join(processed_dir, '{}_summary.txt.gz'.format(args.nm))
+        counts_out = os.path.join(processed_dir, '{}_site_counts.txt.gz'.format(args.nm))
+        out_bam = os.path.join(processed_dir, '{}_aln.bam'.format(args.nm))
+        out_dup = os.path.join(processed_dir, '{}_duplicates.json.gz'.format(args.nm))
+        out_mp = os.path.join(processed_dir, '{}_misprimed.fa.gz'.format(args.nm))
+        
+        print('Parsing bam file...')
+        read_pairs = process.process_bam(out_bam)
+
+        print('Processing read pairs...')
+        min_qual = 10 ** (args.min_qual / -10)
+        processed_pairs = []
+        for read1, read2 in read_pairs:
+            tmp_pair = process.process_read_pair(read1, 
+                                                read2, 
+                                                aln_mismatch_rate = args.aln_mismatch_rate, 
+                                                aln_indel_rate = args.aln_indel_rate, 
+                                                max_frag_len = args.max_frag_len, 
+                                                clip_rate = args.clip_rate, 
+                                                min_mapq = args.min_mapq, 
+                                                U3 = args.U3, 
+                                                no_mm = args.no_mm, 
+                                                min_qual = min_qual,
+                                                match_after = args.match_after)
+            processed_pairs.append(tmp_pair)
+
+        processed_pairs = [pp for pp in processed_pairs if pp[0] is not None and pp[1] is not None]
+        n_pairs_qc = len(processed_pairs)
+        pairs_qc_perc = (n_pairs_qc / len(read_pairs)) * 100
+        print(f'Number of pairs that pass QC: {n_pairs_qc} ({pairs_qc_perc:.2f}%)')
+
+        print('\n')
+        print('Handling duplicate fragments...')
+        frags_dict = {}
+        for read1_info, read2_info in processed_pairs:
+            if read1_info['strand'] == '-':
+                frag_start = read2_info['reference_start']
+                frag_end = read1_info['reference_end']
+            else:
+                frag_start = read1_info['reference_start']
+                frag_end = read2_info['reference_end']
+                
+            combined_qual = (read1_info['mean_quality'] + read2_info['mean_quality']) / 2
+
+            frags_dict[read1_info['query_name']] = {
+                'chrom': read1_info['reference_name'],
+                'start': frag_start,
+                'end': frag_end,
+                'count': read1_info['duplicate_count'],
+                'strand': read1_info['strand'],
+                'ltr_umi': read1_info['ltr_umi'],
+                'linker_umi': read1_info['linker_umi'],
+                'seq1': read1_info['sequence'], 
+                'seq2': read2_info['sequence'],
+                'multi': (True if (read1_info['multimapping'] or read2_info['multimapping']) else False),
+                'mean_qual': -10 * math.log10(combined_qual),
+                'ltr_match': read1_info['ltr_match'],
+                'linker_match': read1_info['linker_match']
+                }
+            
+        del read_pairs
+        del processed_pairs
+            
+        unique_all = {}
+        multi_all = {}
+        for key, value in frags_dict.items():
+            if value['multi']:
+                multi_all[key] = value
+            else:
+                unique_all[key] = value
+                
+        del frags_dict
+        
+        n_unique = len(unique_all)
+        n_multi = len(multi_all)
+        print('Starting number of uniquely mapping fragments:', n_unique)
+
+        # Put unique reads into a dictionary with (chrom, strand) as keys.
+        # The value associated with each key is a list of dictionaries containing
+        # read information.
+        unique_all_split = defaultdict(list)
+        for read_key, info in unique_all.items():
+            key = (info['chrom'], info['strand'])
+            value = {'chrom': info['chrom'],
+                    'start': info['start'], 
+                    'end': info['end'],
+                    'count': info['count'],
+                    'strand': info['strand'],
+                    'ltr_umi': info['ltr_umi'],
+                    'linker_umi': info['linker_umi'],
+                    'seq1': info['seq1'], 
+                    'seq2': info['seq2'],
+                    'multi': info['multi'],
+                    'mean_qual': info['mean_qual'],
+                    'ltr_match': info['ltr_match'],
+                    'linker_match': info['linker_match'],
+                    'read': read_key}
+            
+            if key not in unique_all_split:
+                unique_all_split[key] = [value]
+            else:
+                unique_all_split[key].append(value)
+                
+        del unique_all
+                
+        # Make the dictionary into a list for easy parallelization
+        unique_all_split_list = []
+        for key, value in unique_all_split.items():
+            unique_all_split_list.append({key: value})
+            
+        del unique_all_split
+        
+        print('Collapsing unique exact matches...')
+        # Run unique_exact_matches() for each dictionary in list
+        ue_kept_list = Parallel(n_jobs = min(len(unique_all_split_list), args.nthr))(
+            delayed(clean.unique_exact_matches)(
+                input_dict = unique_all_split_list[entry]) 
+            for entry in range(len(unique_all_split_list)))
+        
+        del unique_all_split_list
+        
+        # Create the kept dictionary for unique reads.
+        # This contains read information for each unique fragment with
+        # exact matches collapsed into the read with the highest quality score
+        unique_exact_kept = {}
+        for dd in ue_kept_list:
+            unique_exact_kept.update(dd)
+
+        # Convert unique_exact_kept to a list of dictionaries for parallelization.
+        ue_kept_list = []
+        for key, value in unique_exact_kept.items():
+            ue_kept_list.append({key: value})
+            
+        del unique_exact_kept
+        
+        print('Looking for unique fuzzy matches...')
+        uf_kept_list = Parallel(n_jobs = min(len(ue_kept_list), args.nthr))(
+            delayed(clean.unique_fuzzy_matches)(
+                input_dict = ue_kept_list[entry], 
+                len_diff = args.len_diff, 
+                umi_diff = args.umi_diff, 
+                frag_ratio = args.frag_ratio) 
+            for entry in range(len(ue_kept_list)))
+
+        unique_fuzzy_kept = {}
+        unique_fuzzy_dup = {}
+        for kept, dup in uf_kept_list:
+            unique_fuzzy_kept.update(kept)
+            for key, value in dup.items():
+                if key not in unique_fuzzy_dup:
+                    unique_fuzzy_dup[key] = value
+                else:
+                    unique_fuzzy_dup[key].extend(value)
+            
+        del ue_kept_list
+        del uf_kept_list
+            
+        # Initialize the dictionary to hold the final kept reads
+        kept_dict = {}
+        
+        # Add kept unique reads to kept_dict
+        for split_key, info_list in unique_fuzzy_kept.items():
+            for info in info_list:
+                key = info['read']
+                value = {'chrom': info['chrom'],
+                        'start': info['start'], 
+                        'end': info['end'],
+                        'count': info['count'],
+                        'strand': info['strand'],
+                        'ltr_umi': info['ltr_umi'],
+                        'linker_umi': info['linker_umi'],
+                        'seq1': info['seq1'], 
+                        'seq2': info['seq2'],
+                        'multi': info['multi'],
+                        'mean_qual': info['mean_qual'],
+                        'ltr_match': info['ltr_match'],
+                        'linker_match': info['linker_match']}
+                kept_dict[key] = value
+
+        # At this point, len(kept_dict) = len(kept unique fragments)
+        unique_perc = (len(kept_dict) / n_unique) * 100
+        print(f'{len(kept_dict)} uniquely mapping fragments retained ({unique_perc:.2f}%)')
+        del unique_fuzzy_kept
+        
+        dup_dict = {}
+        for key, value in unique_fuzzy_dup.items():
+            dup_dict.update({key: value})
+        
+        if not args.no_mm:
+            print('\n')
+            print('Starting number of multimapping fragments:', n_multi)
+            print('Collapsing multimapping exact matches...')
+            # Collapse exact multimapping reads
+            multi_exact_kept = clean.multi_exact_matches(input_dict = multi_all)
+            
+            del multi_all
+
+            print('Hashing multimapping sequences for fuzzy matching...')
+            # Create simhashes for all multimapping reads
+            multi_exact_hashed = Parallel(n_jobs = args.nthr)(
+                delayed(apply_simhash)(
+                    key = key, 
+                    value = value, 
+                    string = (value['ltr_umi'] + value['linker_umi'] + 
+                                value['seq1'] + value['seq2']), 
+                    num_bits = args.num_bits,
+                    token_size = args.token_size) 
+                for key, value in multi_exact_kept.items())
+
+            for key, updated_value in multi_exact_hashed:
+                multi_exact_kept[key] = updated_value
+                
+            del multi_exact_hashed
+
+            # Make simhash list
+            simhash_list = []
+            for key, value in multi_exact_kept.items():
+                simhash_list.append(value['hash'])
+
+            # Define hash index parameters
+            nb = len(simhash_list)
+            dim = args.num_bits
+            db = np.empty((nb, dim // 8), dtype = 'uint8')
+
+            print('Building hash index...')
+            for i, binary_string in enumerate(simhash_list):
+                db[i] = [int(binary_string[j:j + 8], 2) for j in range(0, dim, 8)]
+
+            hash_index = faiss.IndexBinaryFlat(dim)
+            hash_index.add(db)
+
+            print('Calculating hash distances...')
+            hash_distances, hash_indices = hash_index.search(db, k = min(500, len(simhash_list)))
+            
+            del simhash_list
+            del db
+            del hash_index
+            
+            print('Grouping similar hashes...')
+            hash_matches = {}
+            for i in range(len(hash_distances)):
+                filtered_hash_indices = [hash_indices[i][j] for j in 
+                                        range(len(hash_distances[i])) 
+                                        if hash_distances[i][j] <= args.mm_search_sensitivity]
+                hash_matches[i] = filtered_hash_indices
+                
+            del hash_distances
+            del hash_indices
+                
+            mm_solo, mm_groups = parse_hash_matches(hash_matches)
+            del hash_matches
+            mm_solo = [index for sublist in mm_solo for index in sublist]
+            mm_groups = list(map(list, set(map(tuple, mm_groups))))
+            mm_groups = merge_hash_sublists(mm_groups)
+
+            mm_exact_items = list(multi_exact_kept.items())
+
+            # Add ungrouped multimapping reads to kept_dict
+            for index in mm_solo:
+                items = mm_exact_items[index]
+                kept_dict.update({items[0]: items[1]})
+            
+            n_mm_solo = len(mm_solo)
+            del mm_exact_items
+            del mm_solo
+
+            print('Looking for multimapping fuzzy matches...')
+            multi_fuzzy_kept, multi_fuzzy_dup = clean.multi_fuzzy_matches(
+                groups=mm_groups, 
+                input_dict=multi_exact_kept, 
+                umi_diff=args.umi_diff, 
+                frag_ratio=args.frag_ratio, 
+                sim_threshold=args.seq_sim,
+                nthr = args.nthr
+                )
+            
+            del multi_exact_kept
+            
+            n_mm_fuzz = len(multi_fuzzy_kept)
+            for key, value in multi_fuzzy_kept.items():
+                kept_dict.update({key: value})
+                
+            for key, value in multi_fuzzy_dup.items():
+                dup_dict.update({key: value})
+                
+            del multi_fuzzy_kept
+            
+            multi_perc = ((n_mm_solo + n_mm_fuzz) / n_multi) * 100
+            print(f'{(n_mm_solo + n_mm_fuzz)} multimapping fragments retained ({multi_perc:.2f}%)')
+
+        print('\n')
+        print('Looking for mispriming...')
+        shift = args.tsd - 1 if args.U3 else 0
+        
+        ltr1_primer = args.ltr1_primer
+        ltr1_primer = ltr1_primer.replace(' ', '').upper()[-10:]
+        ltr1_primer_pattern = '({}){{s<={}}}'.format(ltr1_primer, args.misprime_mismatch)
+        ltr1_primer_regex = regex.compile(ltr1_primer_pattern)
+
+        n_prior = len(kept_dict)
+        n_misprime = 0
+        misprime_reads = []
+        for key, value in list(kept_dict.items()):
+            seq = fetch_sequence(coordinates = value, genome = genome,
+                                U3 = args.U3, shift = shift)
+            
+            if regex.search(ltr1_primer_regex, seq):
+                del kept_dict[key]
+                misprime_reads.append((key, seq))
+                n_misprime += 1
+                
+        mp_perc = (n_misprime / n_prior) * 100
+        print(f'Removing {n_misprime} fragments due to potential mispriming ({mp_perc:.2f}% of total)')
+        n_mapped = len(kept_dict)
+        print(n_mapped, 'fragments remaining')
+                
+        if n_mapped > 0:
+            kept_sorted = sorted(
+                kept_dict.items(),
+                key=lambda item: (natural_key(item[1]['chrom']), item[1]['start'], item[1]['end'])
+                )
+            kept_frags = dict(kept_sorted)
+            del kept_sorted
+
+            with (gzip.open(frags_out, 'wt') as frags, gzip.open(sites_out, 'wt') as sites, 
+                    gzip.open(bc_out, 'wt') as bc):
+                bc_cols = ['read_name', 'chrom', 'frag_start', 'frag_end',
+                            'frag_strand', 'frag_count', 'multimapping', 'ltr_umi', 'linker_umi',
+                            'ltr_match', 'linker_match', 'site_pos', 'site_strand']
+                bc.write('\t'.join(bc_cols) + '\n')
+                
+                site_dict = {}
+                
+                for key, value in kept_frags.items():
+                    frag_info = [
+                        value['chrom'],
+                        value['start'],
+                        value['end'],
+                        key,
+                        value['count'],
+                        value['strand']
+                        ]
+                    
+                    frags.write('\t'.join(map(str, frag_info)) + '\n')
+                    
+                    if value['strand'] == '-':
+                        site_start = (value['end'] - shift) - 1
+                        site_end = (value['end'] - shift)
+                        site_strand = '-' if not args.U3 else '+'
+                    else:
+                        site_start = (value['start'] + shift)
+                        site_end = (value['start'] + shift) + 1
+                        site_strand = '+' if not args.U3 else '-'
+                    
+                    site_info = [
+                        value['chrom'],
+                        site_start,
+                        site_end,
+                        key,
+                        value['count'],
+                        site_strand
+                        ]
+                    
+                    sites.write('\t'.join(map(str, site_info)) + '\n')
+                    
+                    site_dict[key] = {
+                        'chrom': site_info[0],
+                        'start': site_info[1],
+                        'end': site_info[2],
+                        'strand': site_info[5]
+                    }
+                    
+                    bc_info = [
+                        key,
+                        value['chrom'],
+                        value['start'],
+                        value['end'],
+                        value['strand'],
+                        value['count'],
+                        value['multi'],
+                        value['ltr_umi'],
+                        value['linker_umi'],
+                        value['ltr_match'],
+                        value['linker_match'],
+                        site_start if site_strand == '+' else site_end,
+                        site_strand
+                        ]
+                    
+                    bc.write('\t'.join(map(str, bc_info)) + '\n')
+                    
+            site_counts = defaultdict(int)
+            
+            for value in site_dict.values():
+                item_key = (value['chrom'], value['start'], value['end'], value['strand'])
+                site_counts[item_key] += 1
+            
+            collapsed_sites = []
+            for (chrom, start, end, strand), count in site_counts.items():
+                collapsed_sites.append({
+                    'chrom': chrom,
+                    'position': start if strand == '+' else end,
+                    'strand': strand,
+                    'count': count
+                })
+                
+            with gzip.open(counts_out, 'wt') as counts:
+                for value in collapsed_sites:
+                    collapsed_info = [value['chrom'], value['position'],
+                                    value['strand'], value['count']]
+                    
+                    counts.write('\t'.join(map(str, collapsed_info)) + '\n')
+                    
+            with gzip.open(out_mp, 'wt') as mp:
+                for entry in misprime_reads:
+                    mp.write('>' + entry[0] + '\n' + entry[1] + '\n')
+                    
+            with gzip.open(out_dup, 'wt', encoding = 'utf-8') as dups:
+                json.dump(dup_dict, dups, indent = 4)
+
+        else:
+            with (gzip.open(frags_out, 'wt') as frags, gzip.open(sites_out, 'wt') as sites, 
+                    gzip.open(bc_out, 'wt') as bc, gzip.open(counts_out, 'wt') as counts,
+                    gzip.open(out_mp, 'wt') as mp, gzip.open(out_dup, 'wt') as dups):
+                pass
+            print('\n')
+            print('No sequences passed QC. No integration sites found...')
+        
+        if not args.disorg:
+            data_types = ['alignments', 'cropped_reads', 'fragments', 'sites', 'removed']
+            subdirs = []
+            for i in data_types:
+                subdir = os.path.join(processed_dir, '{}'.format(i))
+                if not os.path.exists(subdir):
+                    os.makedirs(subdir)
+                subdirs.append(subdir)
+                
+            file_mapping = {
+                '{}_aln.bai'.format(args.nm): subdirs[0],
+                '{}_aln.bam'.format(args.nm): subdirs[0],
+                '{}_fragments.bed.gz'.format(args.nm): subdirs[2],
+                '{}_sites.bed.gz'.format(args.nm): subdirs[3],
+                '{}_summary.txt.gz'.format(args.nm): subdirs[2],
+                '{}_*_cropped.fq.gz'.format(args.nm): subdirs[1],
+                '{}_site_counts.txt.gz'.format(args.nm): subdirs[3],
+                '{}_misprimed.fa.gz'.format(args.nm): subdirs[4],
+                '{}_duplicates.json.gz'.format(args.nm): subdirs[4]
+                }
+            
+            for pattern, target_dir in file_mapping.items():
+                for filepath in glob.glob(os.path.join(processed_dir, pattern)):
+                    shutil.move(filepath, target_dir)
+
+    end_time = time.time()
+    elapsed_time = round((end_time - start_time) / 60, 3)
+    print('\n')
+    print('*** DONE with sample', args.nm, '***')
+    print('Sites mapped:', n_mapped)
+    print('Elapsed time:', elapsed_time, 'minutes')
+    print('\n')

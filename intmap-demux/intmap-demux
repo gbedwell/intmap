@@ -1,0 +1,192 @@
+#!/usr/local/bin/python
+
+import argparse
+parser = argparse.ArgumentParser(prog = 'intmap-demux',
+                                description='''Demultiplexes integration site sequencing reads
+                                                based on paired LTR- and linker-end sequences.''')
+parser.add_argument('-r1',
+                    type=str, 
+                    help='Forward/R1 read file.', 
+                    default=None, 
+                    required=True)
+parser.add_argument('-r2',
+                    type=str, 
+                    help='Reverse/R2 read file.', 
+                    default=None, 
+                    required=True)
+parser.add_argument('-bc_ltr',
+                    type=str, 
+                    help='''LTR-end barcode fasta file. 
+                    All fasta entries should be unique.''', 
+                    default=None, 
+                    required=True)
+parser.add_argument('-bc_linker',
+                    type=str, 
+                    help='''Linker-end barcode fasta file. 
+                    All fasta entries should be unique.''', 
+                    default=None)
+parser.add_argument('-nthr',
+                    type=int, help='The number of threads to use for processing.',
+                    default=1)
+parser.add_argument('-e',
+                    type=float, 
+                    help='''The acceptable error rate for sequence matching. 
+                    Defaults to 0.1.''',
+                    default=0.1)
+parser.add_argument('--keep_all', '-keep_all',
+                    help='''Whether or not to keep all of the demultiplexed pairs.
+                    Usually unnecessary. By default, only the relevant pairs are kept.''',
+                    action='store_true')
+parser.add_argument('-cutadapt_path',
+                    type=str, 
+                    help='The path to the cutadapt executable',
+                    default='cutadapt')
+parser.add_argument('--ltr_only', '-ltr_only',
+                    help='Whether or not to only use the LTR barcode for demultiplexing.',
+                    action='store_true')
+parser.add_argument('--no_index', '-no_index',
+                    help='Whether or not to build a barcode index. Defaults to False.',
+                    action='store_true')
+
+args = parser.parse_args()
+
+def check_executable(path, ex_name):
+    if os.path.isfile(path) and os.access(path, os.X_OK):
+        if os.path.basename(path) == ex_name:
+            return path
+        else:
+            raise ValueError('Given executable does not appear to be {}.'.format(ex_name))
+    
+    if os.path.isdir(path):
+        path = os.path.join(path, ex_name)
+        if os.path.isfile(path) and os.access(path, os.X_OK):
+            return path
+        else:
+            raise ValueError('A {} executable does not exist at the given location.'.format(ex_name))
+        
+def fasta_headers(file):
+    nm = []
+    for record in SeqIO.parse(file, "fasta"):
+        nm.append(record.description)
+    return nm
+
+def unique_seqs(file):
+    seq_count = {}
+    dups = []
+
+    for record in SeqIO.parse(file, "fasta"):
+        sequence = str(record.seq)
+        if sequence in seq_count:
+            if seq_count[sequence] == 1:
+                dups.append(sequence)
+            seq_count[sequence] += 1
+        else:
+            seq_count[sequence] = 1
+    
+    if dups:
+        raise ValueError("The following sequences were found more than once: {}".format(", ".join(dups)))
+
+def zipped(file):
+    if os.path.exists(file):
+        with open(file, 'rb') as zip_test:
+            return zip_test.read(2) == b'\x1f\x8b'
+    else:
+        return file.endswith('.gz')
+
+if __name__ == "__main__":
+    
+    import os
+    import subprocess
+    import glob
+    import shutil
+    import re
+    from Bio import SeqIO
+    import warnings
+    
+    nm1 = fasta_headers(file = args.bc_ltr)
+    
+    if args.ltr_only is False:
+        nm2 = fasta_headers(file = args.bc_linker)
+        
+        if nm1 != nm2:
+            raise ValueError('The fasta headers in bc_ltr and bc_linker must match.')
+    
+    if args.cutadapt_path != 'cutadapt':
+        cutadapt_path = check_executable(path = args.cutadapt_path, ex_name = 'cutadapt')
+    else:
+        cutadapt_path = args.cutadapt_path
+        
+    if len(nm1) > 5 and args.nthr > 2:
+        print('Warning: The number of barcodes is > 5 and the number of threads is > 2.\n'
+            'If demultiplexing hangs (i.e., no progress after some time), try reducing the number of threads.\n'
+            'This is an issue internal to cutadapt.\n'
+            'See: https://github.com/marcelm/cutadapt/issues/613\n')
+
+    curr_dir = os.getcwd()
+
+    dmx_dir = os.path.join(curr_dir, r'{}'.format('demux'))
+    if not os.path.exists(dmx_dir):
+        os.makedirs(dmx_dir)
+    
+    if args.keep_all is False and args.ltr_only is False:
+        tmp_dir = os.path.join(dmx_dir, r'{}'.format('tmp'))
+        if not os.path.exists(tmp_dir):
+            os.makedirs(tmp_dir)
+    elif args.ltr_only is False:
+        tmp_dir = dmx_dir
+        
+    if zipped(file = args.r1):
+        out_ext = '.fq.gz'
+    else:
+        out_ext = ".fq"
+    
+    if args.ltr_only is True:
+        d1 = dmx_dir + '/{name}_R1' + out_ext
+        d2 = dmx_dir + '/{name}_R2' + out_ext
+        
+        if args.no_index:
+            dmx_cmd = ('{} -e {} --no-indels --discard-untrimmed --action=none -j {} '
+                    '-g ^file:{} -o {} -p {} --no-index '
+                    '{} {}').format(
+                    cutadapt_path, args.e, args.nthr, args.bc_ltr, d1, d2, args.r1, args.r2)            
+        else:
+            dmx_cmd = ('{} -e {} --no-indels --discard-untrimmed --action=none -j {} '
+                    '-g ^file:{} -o {} -p {} '
+                    '{} {}').format(
+                    cutadapt_path, args.e, args.nthr, args.bc_ltr, d1, d2, args.r1, args.r2)
+    else:
+        d1 = tmp_dir + '/{name1}-{name2}_R1' + out_ext
+        d2 = tmp_dir + '/{name1}-{name2}_R2' + out_ext
+    
+        if args.no_index:
+            dmx_cmd = ('{} -e {} --no-indels --discard-untrimmed --action=none -j {} '
+                    '-g ^file:{} -G ^file:{} -o {} -p {} --no-index '
+                    '{} {}').format(
+                        cutadapt_path, args.e, args.nthr, args.bc_ltr, args.bc_linker, d1, d2, args.r1, args.r2)
+        else:
+            dmx_cmd = ('{} -e {} --no-indels --discard-untrimmed --action=none -j {} '
+                    '-g ^file:{} -G ^file:{} -o {} -p {} '
+                    '{} {}').format(
+                        cutadapt_path, args.e, args.nthr, args.bc_ltr, args.bc_linker, d1, d2, args.r1, args.r2)
+            
+    subprocess.call(dmx_cmd, shell=True)
+            
+    if args.keep_all is False:
+        out_nm = []
+        for i in nm1:
+            tmp_nm = i + '-' + i + '_*'
+            out_nm.append(tmp_nm)
+        
+        keep = [file for i in out_nm for file in glob.glob(tmp_dir + '/' + i)]
+        
+        for file in keep:
+            pattern = r'^(.+?)-(.+?)_([R][12])\.(fq|fq\.gz)$'
+            pmatch = re.match(pattern, os.path.basename(file))
+            new_name = pmatch.group(1) + '_' + pmatch.group(3) + '.' + pmatch.group(4)
+            dest = os.path.join(dmx_dir, new_name)
+            shutil.move(file, dest)
+            
+        shutil.rmtree(tmp_dir)
+    
+
+
