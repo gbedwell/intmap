@@ -194,7 +194,7 @@ parser.add_argument('-min_qual',
                     type=int, 
                     help='''The minimum acceptable average base quality score. 
                     Used to filter out low-quality reads. 
-                    Defaults to 20, corresponding to a ~1% error rate.''',
+                    Defaults to 20, corresponding to a ~1-percent error rate.''',
                     default=20)
 parser.add_argument('-len_diff',
                     type=int, 
@@ -256,14 +256,14 @@ parser.add_argument('-num_bits',
                     default=64)
 parser.add_argument('-token_size',
                     type=int, 
-                    help='''The token size for simhash generation. Defaults to 5.''',
-                    default=5)
+                    help='''The token size for simhash generation. Defaults to 3.''',
+                    default=3)
 parser.add_argument('-mm_search_sensitivity',
                     type=int,
                     help='''Defines the maximum allowed Hamming distance between SimHashes. 
                     The higher the value the more fragments will be checked for possible 
-                    fuzzy matching, and vice versa. Defaults to 10.''',
-                    default=10)
+                    fuzzy matching, and vice versa. Defaults to 8.''',
+                    default=8)
 parser.add_argument('-misprime_mismatch',
                     type=int, 
                     help='''The number of mismatches allowed when searching for mispriming. 
@@ -443,6 +443,45 @@ def merge_hash_sublists(lists):
 
     return merged_lists
 
+def chunk_hashes(distances, indices, nthr):
+    n = math.ceil(len(distances) / nthr)
+    for i in range(0, len(distances), n):
+        yield distances[i:i + n], indices[i:i + n]
+
+def filter_chunk(chunk_distances, chunk_indices, sensitivity):
+    results = {}
+    for i in range(len(chunk_distances)):
+        filtered_hash_indices = [
+            chunk_indices[i][j] for j in range(len(chunk_distances[i]))
+            if chunk_distances[i][j] <= sensitivity
+        ]
+        results[i] = filtered_hash_indices
+    return results
+
+def group_similar_hashes(hash_distances, hash_indices, nthr, sensitivity):
+    
+    chunks = list(chunk_hashes(
+        distances = hash_distances, 
+        indices = hash_indices, 
+        nthr = nthr))
+    
+    results = Parallel(n_jobs = nthr)(
+        delayed(filter_chunk)(
+            chunk_distances = chunk_distances, 
+            chunk_indices = chunk_indices, 
+            sensitivity = sensitivity)
+        for chunk_distances, chunk_indices in chunks
+    )
+
+    hash_matches = {}
+    chunk_offset = 0
+    for chunk_result in results:
+        for key, value in chunk_result.items():
+            hash_matches[key + chunk_offset] = value
+        chunk_offset += len(chunk_result)
+    
+    return hash_matches
+
 if __name__ == "__main__":
     import os
     import sys
@@ -478,7 +517,7 @@ if __name__ == "__main__":
         
         if args.bt2_path != 'bowtie2':
             align.check_executable(path = args.bt2_path, ex_name = 'bowtie2')
-        if sam_path != 'samtools':
+        if args.sam_path != 'samtools':
             align.check_executable(path = args.sam_path, ex_name = 'samtools')
         
         print('\n')
@@ -724,12 +763,12 @@ if __name__ == "__main__":
         print('Minimum average base quality score:', args.min_qual)
         print('Fuzzy length difference (bp):', args.len_diff)
         print('Fuzzy UMI mismatches (bp):', args.umi_diff)
-        print('Fuzzy sequence similarity:', args.seq_sim)
         print('Duplicate count ratio:', args.frag_ratio)
 
         
         if args.no_mm is False:
             print('Keep multimapping reads: True')
+            print('Multimapping sequence similarity:', args.seq_sim)
             print('Multimapping hash bits:', args.num_bits)
             print('Multimapping token size:', args.token_size)
             print('Multimapping search sensitivity:', args.mm_search_sensitivity)
@@ -1153,19 +1192,19 @@ if __name__ == "__main__":
             hash_index.add(db)
 
             print('Calculating hash distances...')
-            hash_distances, hash_indices = hash_index.search(db, k = min(500, len(simhash_list)))
+            hash_distances, hash_indices = hash_index.search(db, k = min(200, len(simhash_list)))
             
             del simhash_list
             del db
             del hash_index
             
             print('Grouping similar hashes...')
-            hash_matches = {}
-            for i in range(len(hash_distances)):
-                filtered_hash_indices = [hash_indices[i][j] for j in 
-                                        range(len(hash_distances[i])) 
-                                        if hash_distances[i][j] <= args.mm_search_sensitivity]
-                hash_matches[i] = filtered_hash_indices
+            hash_matches = group_similar_hashes(
+                hash_distances = hash_distances, 
+                hash_indices = hash_indices, 
+                nthr = args.nthr,
+                sensitivity = args.mm_search_sensitivity
+                )
                 
             del hash_distances
             del hash_indices

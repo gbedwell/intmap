@@ -6,12 +6,11 @@ intmap/clean.py
 intmap/crop.py
 intmap/intmap
 intmap/process.py
+intmap/random.py
 intmap-demux/__init__.py
 intmap-demux/intmap-demux
 intmap-multi/__init__.py
 intmap-multi/intmap-multi
-intmap-random/__init__.py
-intmap-random/intmap-random
 intmap.egg-info/PKG-INFO
 intmap.egg-info/SOURCES.txt
 intmap.egg-info/dependency_links.txt

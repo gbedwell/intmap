@@ -240,7 +240,7 @@ def multimap_comparisons(index_list, threshold, greater_than=False):
     graph = defaultdict(set)
 
     for (i, j), score in index_list:
-        if ((greater_than and score >= threshold) or 
+        if ((greater_than and score > threshold) or 
             (not greater_than and score <= threshold)):
             graph[i].add(j)
             graph[j].add(i)
@@ -300,10 +300,10 @@ def process_mm_fuzzy_group(group, input_dict, umi_diff, frag_ratio, sim_threshol
     sim_idx = []
     for i in range(n):
         for j in range(i + 1, n):
-            seq_sim = seq_similarity(seqs[i], seqs[j])
-            sim_idx.append(((i, j), seq_sim))
+            obs_seq_sim = seq_similarity(seqs[i], seqs[j])
+            sim_idx.append(((i, j), obs_seq_sim))
             
-    # Filter for similarity scores >= sim_threshold
+    # Filter for similarity scores > sim_threshold
     # Add indices for reads that don't satisfy the similarity threshold to kept_indices
     sim_groups = multimap_comparisons(index_list = sim_idx, threshold = sim_threshold, greater_than = True)
     sim_flat = [item for sublist in sim_groups for item in sublist]

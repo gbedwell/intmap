@@ -61,15 +61,8 @@ def process_random_read(read, max_frag_len, min_mapq, no_mm):
     cig_split = regex.findall('\\d+|\\D', cigar)
     if cig_split[1] != 'M' and len(cig_split) != 2:
         return None
-
-    mapq = read.mapping_quality
-    if mapq < min_mapq:
-        return None
     
-    tlen = read.template_length
-    if abs(tlen) > max_frag_len:
-        return None
-    
+    # Make sure AS and XS tags make sense
     as_tag = read.get_tag('AS')
     if read.has_tag('XS'):
         xs_tag = read.get_tag('XS')
@@ -78,18 +71,30 @@ def process_random_read(read, max_frag_len, min_mapq, no_mm):
     else:
         xs_tag = None
     
-    if no_mm:
-        if as_tag == xs_tag:
-            return None
+    mapq = read.mapping_quality
+    
+    multimapping = False
+    if (as_tag == xs_tag and (mapq == 1 or mapq == 0)):
+        multimapping = True
+    
+    # Option to remove multimapping reads
+    if no_mm and multimapping:
+        return None
+        
+    # Filter by MAPQ
+    # Only applied to uniquely mapping reads
+    if not multimapping and mapq < min_mapq:
+        return None
+    
+    tlen = read.template_length
+    if abs(tlen) > max_frag_len:
+        return None
 
     edit_dist = read.get_tag('NM')
     if edit_dist > 0:
         return None
     else:
         strand = '-' if tlen < 0 else '+'
-        multimapping = False
-        if read.mapping_quality == 0 or read.mapping_quality == 1:
-            multimapping = True if as_tag == xs_tag else False
         return {
             'reference_name': read.reference_name,
             'reference_start': read.reference_start,

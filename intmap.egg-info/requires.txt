@@ -2,3 +2,5 @@ biopython
 joblib
 pysam
 python-Levenshtein
+numpy
+faiss-cpu

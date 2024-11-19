@@ -11,3 +11,5 @@ Requires-Dist: biopython
 Requires-Dist: joblib
 Requires-Dist: pysam
 Requires-Dist: python-Levenshtein
+Requires-Dist: numpy
+Requires-Dist: faiss-cpu

@@ -33,8 +33,8 @@ def check_crop_input(ltr_term, linker_term, ltr1_primer, ltr2_primer, linker_pri
     if ltr2_char != '':
         raise ValueError('Declared round 2 LTR primer may only contain A,T,G, and C nucleotides.')
 
-    if len(ltr2_check) < 10:
-        raise ValueError('Declared round 2 LTR primer must be at least 10 nucleotides long.')
+    if len(ltr2_check) < 8:
+        raise ValueError('Declared round 2 LTR primer must be at least 8 nucleotides long.')
     
     if ltr2_primer_error_rate > 0.3:
         raise ValueError('Round 2 LTR primer error rate cannot be > 0.3.')
@@ -44,8 +44,8 @@ def check_crop_input(ltr_term, linker_term, ltr1_primer, ltr2_primer, linker_pri
     if lp_char != '':
         raise ValueError('Declared linker primer may only contain A,T,G, and C nucleotides.')
 
-    if len(lp_check) < 10:
-        raise ValueError('Declared linker primer must be at least 10 nucleotides long.')
+    if len(lp_check) < 8:
+        raise ValueError('Declared linker primer must be at least 8 nucleotides long.')
     
     if linker_primer_error_rate > 0.3:
         raise ValueError('Linker primer error rate cannot be > 0.3.')
@@ -218,7 +218,7 @@ def crop(file1, file2, ltr_term, virus, linker_term, ltr1_primer, ltr2_primer, l
                 
             if ltr_umi_len > 0:
                 ltr_umi_end = ltr_pos - ltr_umi_offset
-                ltr_umi = seq2[(ltr_umi_end - ltr_umi_len):ltr_umi_end]
+                ltr_umi = seq1[(ltr_umi_end - ltr_umi_len):ltr_umi_end]
             else:
                 ltr_umi = 'N'
                 
