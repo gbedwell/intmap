@@ -42,8 +42,8 @@ def process_bam(out_bam):
 # Check mismatch rate, indel rate, fragment length, clip rate, MAPQ, and base quality.abs
 # Return None if read does not pass QC.
 # Also defines multimapping vs. unique reads, fragment UMIs, sequenced portion of fragments, etc.
-def process_read(read, aln_mismatch_rate, aln_indel_rate, max_frag_len, 
-                clip_rate, min_mapq, U3, no_mm, min_qual, match_after):
+def process_read(read, aln_mismatch_rate, aln_indel_rate, max_frag_len,
+                min_mapq, U3, no_mm, min_qual, match_after):
     
     # Ensure that each read starts on a match/mismatch (M)
     # (i.e., not an insertion, deletion, or is not soft-clipped)
@@ -71,20 +71,6 @@ def process_read(read, aln_mismatch_rate, aln_indel_rate, max_frag_len,
                     break
             if start_mm > match_after:
                 return None
-    
-    # Calculate the soft-clipped ratio
-    cig_tups = read.cigartuples
-    cig_counts = {i: 0 for i in range(10)}
-    for identifier, count in cig_tups:
-        cig_counts[identifier] += count
-    count_m = cig_counts[0]
-    count_i = cig_counts[1]
-    count_d = cig_counts[2]
-    count_s = cig_counts[4]
-    
-    clip_ratio = count_s / (count_m + count_i - count_d + count_s)
-    if clip_ratio > clip_rate:
-        return None
     
     # Make sure AS and XS tags make sense
     as_tag = read.get_tag('AS')
@@ -199,12 +185,11 @@ def process_read(read, aln_mismatch_rate, aln_indel_rate, max_frag_len,
 
 # Perform QC on each read pair
 def process_read_pair(read1, read2, aln_mismatch_rate, aln_indel_rate, max_frag_len, 
-                        clip_rate, min_mapq, U3, no_mm, min_qual, match_after):
+                        min_mapq, U3, no_mm, min_qual, match_after):
     read1_info = process_read(read = read1, 
                             aln_mismatch_rate = aln_mismatch_rate, 
                             aln_indel_rate = aln_indel_rate,
                             max_frag_len = max_frag_len,
-                            clip_rate = clip_rate,
                             min_mapq = min_mapq,
                             U3 = U3,
                             no_mm = no_mm,
@@ -212,10 +197,9 @@ def process_read_pair(read1, read2, aln_mismatch_rate, aln_indel_rate, max_frag_
                             match_after = match_after)
     
     read2_info = process_read(read=read2, 
-                            aln_mismatch_rate = aln_mismatch_rate, 
+                            aln_mismatch_rate = aln_mismatch_rate,
                             aln_indel_rate = aln_indel_rate,
                             max_frag_len = max_frag_len,
-                            clip_rate = clip_rate,
                             min_mapq = min_mapq,
                             U3 = U3,
                             no_mm = no_mm,

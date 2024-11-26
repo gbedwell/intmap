@@ -16,8 +16,9 @@ setup(
 		'biopython',
         'joblib',
         'pysam',
-        'python-Levenshtein',
+        'RapidFuzz',
         'numpy',
-        'faiss-cpu'
+        'faiss-cpu',
+        'datasketch'
         ]
     )

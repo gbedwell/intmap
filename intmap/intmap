@@ -140,11 +140,6 @@ parser.add_argument('-aln_indel_rate',
                     help='''The allowable indel rate in read alignment. 
                     Defaults to 0.05.''',
                     default=0.05)
-parser.add_argument('-clip_rate',
-                    type=float, 
-                    help='''The acceptable ratio of soft-clipped bases to (actual) read length. 
-                    Defaults to 0.2.''',
-                    default=0.2)
 parser.add_argument('-min_mapq',
                     type=int, 
                     help='''The minimum acceptable MAPQ score.
@@ -251,19 +246,19 @@ parser.add_argument('-genome_fasta_index',
                     default=None)
 parser.add_argument('-num_bits',
                     type=int, 
-                    help='''The number of bits in the generated simhash used 
+                    help='''The number of bits in the generated minhash used 
                     for fuzzy matching. Defaults to 64. Must be divisble by 8.''',
                     default=64)
 parser.add_argument('-token_size',
                     type=int, 
-                    help='''The token size for simhash generation. Defaults to 3.''',
-                    default=3)
+                    help='''The token size for minhash generation. Defaults to 2.''',
+                    default=2)
 parser.add_argument('-mm_search_sensitivity',
                     type=int,
-                    help='''Defines the maximum allowed Hamming distance between SimHashes. 
+                    help='''Defines the maximum allowed Hamming distance between minhashes. 
                     The higher the value the more fragments will be checked for possible 
-                    fuzzy matching, and vice versa. Defaults to 8.''',
-                    default=8)
+                    fuzzy matching, and vice versa. Defaults to 2.''',
+                    default=2)
 parser.add_argument('-misprime_mismatch',
                     type=int, 
                     help='''The number of mismatches allowed when searching for mispriming. 
@@ -374,25 +369,17 @@ def fetch_sequence(coordinates, genome, U3, shift):
         sequence = crop.revcomp(sequence)
     return sequence.upper()
 
-def make_simhash(string, num_bits, token_size):
-    tokens = [string[i:(i + token_size)] for i in range(len(string) - token_size + 1)]
-    vector = [0] * num_bits  
+def apply_minhash(key, value, string, num_bits, token_size):
+    minhash = MinHash(num_perm = num_bits)
+    
+    tokens = [string[i:i + token_size] for i in range(len(string) - token_size + 1)]
     
     for token in tokens:
-        token_hash = hashlib.md5(token.encode('utf-8')).hexdigest()
-        binary_hash = bin(int(token_hash, 16))[2:].zfill(num_bits)
+        minhash.update(token.encode('utf8'))
         
-        for i in range(num_bits):
-            bit = binary_hash[i]
-            vector[i] += 1 if bit == '1' else -1
+    minhash_bin = ''.join(['1' if h % 2 == 0 else '0' for h in minhash.hashvalues])
     
-    return ''.join('1' if x > 0 else '0' for x in vector)
-
-def apply_simhash(key, value, string, num_bits, token_size):
-    value['hash'] = make_simhash(
-        string = string,
-        num_bits = num_bits,
-        token_size = token_size)
+    value['hash'] = minhash_bin
     return key, value
 
 def parse_hash_matches(hash_dict):
@@ -501,7 +488,7 @@ if __name__ == "__main__":
     from intmap import random
     import pysam
     import time
-    from Levenshtein import distance as lev_dist
+    from rapidfuzz.distance import Levenshtein
     from collections import defaultdict
     from Bio import SeqIO
     import hashlib
@@ -509,6 +496,7 @@ if __name__ == "__main__":
     import numpy as np
     from itertools import chain
     import json
+    from datasketch import MinHash
     
     start_time = time.time()
     
@@ -758,7 +746,6 @@ if __name__ == "__main__":
         print('Read 1 5\'-end alignment mismatches (bp):', args.match_after)
         print('Allowed alignment mismatch rate:', args.aln_mismatch_rate)
         print('Allowed alignment indel rate:', args.aln_indel_rate)
-        print('Allowed alignment soft-clip rate:', args.clip_rate)
         print('Minimum alignment MAPQ score:', args.min_mapq)
         print('Minimum average base quality score:', args.min_qual)
         print('Fuzzy length difference (bp):', args.len_diff)
@@ -941,19 +928,19 @@ if __name__ == "__main__":
         
         print('\n')
         print('Aligning cropped reads...')
-            
-        align.align(bt2_path = args.bt2_path, 
-                    sam_path = args.sam_path, 
-                    bt2_idx_dir = args.bt2_idx_dir, 
-                    bt2_idx_name = args.bt2_idx_name,
-                    v_idx_dir = args.v_idx_dir,
-                    v_idx_name = args.v_idx_name,
-                    file1 = fq1, 
-                    file2 = fq2, 
-                    name = os.path.join(processed_dir, '{}'.format(args.nm)), 
-                    nthr = args.nthr,
-                    min_frag_len = args.min_frag_len,
-                    max_frag_len = args.max_frag_len)
+                    
+        align.align_global(bt2_path = args.bt2_path, 
+                            sam_path = args.sam_path, 
+                            bt2_idx_dir = args.bt2_idx_dir, 
+                            bt2_idx_name = args.bt2_idx_name,
+                            v_idx_dir = args.v_idx_dir,
+                            v_idx_name = args.v_idx_name,
+                            file1 = fq1, 
+                            file2 = fq2, 
+                            name = os.path.join(processed_dir, '{}'.format(args.nm)), 
+                            nthr = args.nthr,
+                            min_frag_len = args.min_frag_len,
+                            max_frag_len = args.max_frag_len)
         
         print('\n')
         print('Performing QC on aligned reads...')
@@ -978,7 +965,6 @@ if __name__ == "__main__":
                                                 aln_mismatch_rate = args.aln_mismatch_rate, 
                                                 aln_indel_rate = args.aln_indel_rate, 
                                                 max_frag_len = args.max_frag_len, 
-                                                clip_rate = args.clip_rate, 
                                                 min_mapq = args.min_mapq, 
                                                 U3 = args.U3, 
                                                 no_mm = args.no_mm, 
@@ -1158,15 +1144,14 @@ if __name__ == "__main__":
             del multi_all
 
             print('Hashing multimapping sequences for fuzzy matching...')
-            # Create simhashes for all multimapping reads
-            multi_exact_hashed = Parallel(n_jobs = args.nthr)(
-                delayed(apply_simhash)(
-                    key = key, 
-                    value = value, 
-                    string = (value['ltr_umi'] + value['linker_umi'] + 
-                                value['seq1'] + value['seq2']), 
-                    num_bits = args.num_bits,
-                    token_size = args.token_size) 
+            # Create minhashes for all multimapping reads
+            multi_exact_hashed = Parallel(n_jobs=args.nthr)(
+                delayed(apply_minhash)(
+                    key=key, 
+                    value=value, 
+                    string=(value['ltr_umi'] + value['linker_umi'] + value['seq1'] + value['seq2']), 
+                    num_bits=args.num_bits,
+                    token_size=args.token_size) 
                 for key, value in multi_exact_kept.items())
 
             for key, updated_value in multi_exact_hashed:
@@ -1174,27 +1159,27 @@ if __name__ == "__main__":
                 
             del multi_exact_hashed
 
-            # Make simhash list
-            simhash_list = []
+            # Make minhash list
+            minhash_list = []
             for key, value in multi_exact_kept.items():
-                simhash_list.append(value['hash'])
+                minhash_list.append(value['hash'])
 
             # Define hash index parameters
-            nb = len(simhash_list)
+            nb = len(minhash_list)
             dim = args.num_bits
             db = np.empty((nb, dim // 8), dtype = 'uint8')
 
             print('Building hash index...')
-            for i, binary_string in enumerate(simhash_list):
+            for i, binary_string in enumerate(minhash_list):
                 db[i] = [int(binary_string[j:j + 8], 2) for j in range(0, dim, 8)]
 
             hash_index = faiss.IndexBinaryFlat(dim)
             hash_index.add(db)
 
             print('Calculating hash distances...')
-            hash_distances, hash_indices = hash_index.search(db, k = min(200, len(simhash_list)))
+            hash_distances, hash_indices = hash_index.search(db, k = min(100, len(minhash_list)))
             
-            del simhash_list
+            del minhash_list
             del db
             del hash_index
             

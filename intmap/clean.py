@@ -1,5 +1,5 @@
 import math
-from Levenshtein import distance as lev_dist
+from rapidfuzz.distance import Levenshtein
 from collections import defaultdict
 import numpy as np
 import random
@@ -16,9 +16,7 @@ def hamming_distance(seq1, seq2):
 # Calculate sequence similarity based on maximum sequence length
 # and the Levenshtein distance
 def seq_similarity(seq1, seq2):
-    max_len = max(len(seq1), len(seq2))
-    similarity = 1 - (lev_dist(seq1, seq2) / max_len)
-    return similarity
+    return 1 - Levenshtein.normalized_distance(seq1, seq2)
 
 # Define unique exact matching function
 # For each key in input_dict, count the number of identical fragments.
@@ -277,11 +275,14 @@ def chunk_groups(groups, nthr):
         yield groups[i:i + n]
 
 def process_mm_fuzzy_group(group, input_dict, umi_diff, frag_ratio, sim_threshold):
+    len_group = 0
+    
     tmp_dict = {}
     # Create temporary dictionary holding fragment information
     for index in group:
         items = list(input_dict.items())[index]
         tmp_dict.update({items[0]: items[1]})
+        len_group += 1
 
     # Make key and value lists for easy index-based access
     group_values = []
@@ -302,7 +303,7 @@ def process_mm_fuzzy_group(group, input_dict, umi_diff, frag_ratio, sim_threshol
         for j in range(i + 1, n):
             obs_seq_sim = seq_similarity(seqs[i], seqs[j])
             sim_idx.append(((i, j), obs_seq_sim))
-            
+
     # Filter for similarity scores > sim_threshold
     # Add indices for reads that don't satisfy the similarity threshold to kept_indices
     sim_groups = multimap_comparisons(index_list = sim_idx, threshold = sim_threshold, greater_than = True)
