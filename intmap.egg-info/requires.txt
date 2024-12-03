@@ -1,6 +1,7 @@
 biopython
 joblib
 pysam
-python-Levenshtein
+RapidFuzz
 numpy
 faiss-cpu
+datasketch

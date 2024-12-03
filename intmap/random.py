@@ -8,21 +8,20 @@ import subprocess
 def align_random(bt2_path, sam_path, bt2_idx_dir, bt2_idx_name, 
                 file1, file2, name, min_frag_len, max_frag_len, nthr):
     
-    bt2_idx = '{}/{}'.format(bt2_idx_dir, bt2_idx_name)
+    bt2_idx = f'{bt2_idx_dir}/{bt2_idx_name}'
         
     final_out = name + '_aln.bam'
     index_out = name + '_aln.bai'
 
-    bt2_cmd = ('{} --very-sensitive -x {} -1 {} -2 {} -p {} -I {} -X {} -f '
-            '--sam-append-comment --no-mixed --no-discordant --no-unal | ').format(
-            bt2_path, bt2_idx, file1, file2, nthr, min_frag_len, max_frag_len)
+    bt2_cmd = (f'{bt2_path} --very-sensitive -x {bt2_idx} -1 {file1} -2 {file2} -p {nthr} -I {min_frag_len} -X {max_frag_len} -f '
+                '--sam-append-comment --no-mixed --no-discordant --no-unal | ')
     
-    bt2_to_bam = '{} view -@ {} -h -b | '.format(sam_path, nthr)
-    sort_cmd = '{} sort -@ {} -o {} -'.format(sam_path, nthr, final_out)
+    bt2_to_bam = f'{sam_path} view -@ {nthr} -h -b | '
+    sort_cmd = f'{sam_path} sort -@ {nthr} -o {final_out} -'
     
     bt2_cmd = bt2_cmd + bt2_to_bam + sort_cmd
     
-    idx_cmd = '{} index -b -@ {} -o {} {}'.format(sam_path, nthr, index_out, final_out)
+    idx_cmd = f'{sam_path} index -b -@ {nthr} -o {index_out} {final_out}'
 
     print('Aligning reads with bowtie2...')
     subprocess.call(bt2_cmd, shell=True)

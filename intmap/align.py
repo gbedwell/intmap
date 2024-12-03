@@ -18,7 +18,7 @@ def check_executable(path, ex_name):
         if os.path.basename(path) == ex_name:
             return path
         else:
-            raise ValueError('Given executable does not appear to be {}.'.format(ex_name))
+            raise ValueError(f'Given executable does not appear to be {ex_name}.')
     
     if os.path.isdir(path):
         path = os.path.join(path, ex_name)
@@ -32,9 +32,9 @@ def align_global(bt2_path, sam_path, bt2_idx_dir, bt2_idx_name,
                 file1, file2, name, min_frag_len, max_frag_len, nthr,
                 v_idx_dir, v_idx_name):
     
-    bt2_idx = '{}/{}'.format(bt2_idx_dir, bt2_idx_name)
+    bt2_idx = f'{bt2_idx_dir}/{bt2_idx_name}'
     
-    v_idx = '{}/{}'.format(v_idx_dir, v_idx_name)
+    v_idx = f'{v_idx_dir}/{v_idx_name}'
         
     nonv_R1 = name + '_non_viral_R1.fq'
     nonv_R2 = name + '_non_viral_R2.fq'
@@ -43,26 +43,23 @@ def align_global(bt2_path, sam_path, bt2_idx_dir, bt2_idx_name,
     final_out = name + '_aln.bam'
     index_out = name + '_aln.bai'
     
-    v_aln_cmd = ('{} --very-sensitive -x {} -1 {} -2 {} -p {} -I {} -X {} '
-            '--sam-append-comment --no-mixed --no-discordant | ').format(
-            bt2_path, v_idx, file1, file2, nthr, min_frag_len, max_frag_len)
-    rm_v_cmd1 = '{} view -@ {} -h -f 4 -b - | '.format(sam_path, nthr)
-    rm_v_cmd2 = '{} collate -O -@ {} - | '.format(sam_path, nthr)
-    rm_v_cmd3 = '{} fastq -@ {} -T RX,OX -1 {} -2 {} -0 {} -n -s {} -'.format(sam_path, nthr, nonv_R1, 
-                                                                                nonv_R2, nonv_null, nonv_single)
+    v_aln_cmd = (f'{bt2_path} --very-sensitive -x {v_idx} -1 {file1} -2 {file2} -p {nthr} -I {min_frag_len} -X {max_frag_len} '
+                    '--sam-append-comment --no-mixed --no-discordant | ')
+    rm_v_cmd1 = f'{sam_path} view -@ {nthr} -h -f 4 -b - | '
+    rm_v_cmd2 = f'{sam_path} collate -O -@ {nthr} - | '
+    rm_v_cmd3 = f'{sam_path} fastq -@ {nthr} -T RX,OX -1 {nonv_R1} -2 {nonv_R2} -0 {nonv_null} -n -s {nonv_single} -'
     
     remove_viral_cmd = v_aln_cmd + rm_v_cmd1 + rm_v_cmd2 + rm_v_cmd3
 
-    bt2_cmd1 = ('{} --very-sensitive -x {} -1 {} -2 {} -p {} -I {} -X {} '
-            '--sam-append-comment --no-unal --no-mixed --no-discordant | ').format(
-            bt2_path, bt2_idx, nonv_R1, nonv_R2, nthr, min_frag_len, max_frag_len)
+    bt2_cmd1 = (f'{bt2_path} --very-sensitive -x {bt2_idx} -1 {nonv_R1} -2 {nonv_R2} -p {nthr} -I {min_frag_len} -X {max_frag_len} '
+                '--sam-append-comment --no-unal --no-mixed --no-discordant | ')
     
-    bt2_cmd2 = '{} view -@ {} -h -f 2 -F 2308 -b | '.format(sam_path, nthr)
-    bt2_cmd3 = '{} sort -@ {} -o {} -'.format(sam_path, nthr, final_out)
+    bt2_cmd2 = f'{sam_path} view -@ {nthr} -h -f 2 -F 2308 -b | '
+    bt2_cmd3 = f'{sam_path} sort -@ {nthr} -o {final_out} -'
     
     global_cmd = bt2_cmd1 + bt2_cmd2 + bt2_cmd3
     
-    idx_cmd = '{} index -b -@ {} {} -o {}'.format(sam_path, nthr, final_out, index_out)
+    idx_cmd = f'{sam_path} index -b -@ {nthr} {final_out} -o {index_out}'
         
     print('Removing viral reads from cropped output...')
     subprocess.call(remove_viral_cmd, shell=True)

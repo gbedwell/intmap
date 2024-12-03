@@ -1,7 +1,7 @@
 #!/bin/bash
 
-CONDA_PATH=$(which conda)
-if [ -z "$CONDA_PATH" ]; then
+conda_path=$(which conda)
+if [ -z "$conda_path" ]; then
     echo
     echo "conda executable not found. Exiting."
     echo
@@ -19,28 +19,40 @@ if [ -z "$CONDA_PATH" ]; then
     exit 1
 fi
 
-CONDA_BASE=$(which conda | sed 's|/bin/conda||')
-source "$(echo $CONDA_BASE)/etc/profile.d/conda.sh"
+# conda_base=$(which conda | sed 's|/bin/conda||')
+conda_base=$(which conda | sed 's|/bin/conda||; s|/condabin/conda||')
+source "$(echo $conda_base)/etc/profile.d/conda.sh"
 
-if conda env list | grep '^intmap\s'; then
+if conda env list | grep -q '^intmap\s'; then
     echo
     echo "The 'intmap' environment already exists. Skipping creation."
 else
     echo
-    echo 'Creating the intmap virtual environment...' &&
+    echo 'Creating the intmap virtual environment...'
     echo
-    conda env create -f intmap.yaml &&
+    conda env create -f intmap.yaml
 fi
 
 echo
-echo 'Installing the intmap package...' &&
+echo 'Installing the intmap package...'
 echo
-conda activate intmap &&
+
+if ! conda list | grep -q '^intmap\s'; then
+    env_active=0
+    conda activate intmap
+else
+    env_active=1
+fi
+
 # --use-pep517 included per pip recommendation
 # regarding deprecation of setup.py develop
 # See: https://github.com/pypa/pip/issues/11457
 pip install -e . --use-pep517 &&
-conda deactivate &&
+
+if [ $env_active -eq 0 ]; then
+    conda deactivate
+fi
+
 echo
-echo 'The intmap package is now installed in the intmap virtual environment!' &&
+echo 'The intmap package is now installed in the intmap virtual environment!'
 echo "Type 'conda activate intmap' into your terminal to access the intmap package."

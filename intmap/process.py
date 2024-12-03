@@ -31,10 +31,9 @@ def process_bam(out_bam):
                         read_pairs.append((read1, read2))
                         n_pairs += 1
                         
-    print('Number of aligned reads:', n_reads)
-    print('Number of proper pairs:', n_pairs)
-    print(f'Proper pair percentage: {(((n_pairs * 2) / n_reads) * 100):.2f}%')
-
+    print(f'Number of aligned reads: {n_reads}')
+    print(f'Number of proper pairs: {n_pairs} ({(((n_pairs * 2) / n_reads) * 100):.2f}%)')
+    
     bamfile.close()
     return read_pairs
 

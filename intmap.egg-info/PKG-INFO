@@ -10,6 +10,7 @@ Requires-Python: >=3.10
 Requires-Dist: biopython
 Requires-Dist: joblib
 Requires-Dist: pysam
-Requires-Dist: python-Levenshtein
+Requires-Dist: RapidFuzz
 Requires-Dist: numpy
 Requires-Dist: faiss-cpu
+Requires-Dist: datasketch

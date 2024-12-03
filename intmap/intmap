@@ -14,11 +14,11 @@ parser.add_argument('-r2',
                     help='Reverse/R2 read file.', 
                     default=None, 
                     required=True)
-parser.add_argument('-ltr_term',
+parser.add_argument('-ltr3',
                     type=str, 
                     help='LTR sequence to match.', 
                     default=None)
-parser.add_argument('-linker_term',
+parser.add_argument('-linker3',
                     type=str, 
                     help='Linker sequence to match.', 
                     default=None)
@@ -38,12 +38,12 @@ parser.add_argument('-ltr1_primer',
                     Used to control for mispriming during fragment amplification. 
                     Must be at least 10 bp.''',
                     default=None)
-parser.add_argument('-ltr2_primer',
+parser.add_argument('-ltr5',
                     type=str,  
                     help='''The 3' end of the second round LTR primer. 
                     Must be at least 10 bp.''',
                     default=None)
-parser.add_argument('-linker_primer',
+parser.add_argument('-linker5',
                     type=str,  
                     help='''The 3' end of the linker primer. Must be at least 10 bp.''',
                     default=None)
@@ -60,13 +60,6 @@ parser.add_argument('-nthr',
                     type=int, 
                     help='The number of threads to use for processing.',
                     default=1)
-parser.add_argument('--crop_single_thr', '-crop_single_thr',
-                    help='''Boolean. 
-                    Whether or not to only use a single thread when cropping, 
-                    despite the value of nthr.
-                    This can be useful when only a handful of threads are available.
-                    When True, multiple threads are used only for alignment.''',
-                    action='store_true')
 parser.add_argument('-nm',
                     type=str, 
                     help='''The desired name of the dataset. 
@@ -82,32 +75,31 @@ parser.add_argument('-max_frag_len',
                     help='''The maximum allowed fragment length. 
                     Defaults to 1200.''',
                     default=1200)
-parser.add_argument('-ltr_error_rate',
+parser.add_argument('-ltr3_error_rate',
                     type=float, 
                     help='''The acceptable error rate in the terminal LTR sequence. 
                     Defaults to 0.1.''',
                     default=0.1)
-parser.add_argument('-linker_error_rate',
+parser.add_argument('-linker3_error_rate',
                     type=float, 
                     help='''The acceptable error rate in the terminal linker sequence.
                     Defaults to 0.1.''',
                     default=0.1)
-parser.add_argument('-ltr2_primer_error_rate',
+parser.add_argument('-ltr5_error_rate',
                     type=float, 
                     help='''The acceptable error rate in the LTR primer sequence. 
                     Defaults to 0.1.''',
                     default=0.1)
-parser.add_argument('-linker_primer_error_rate',
+parser.add_argument('-linker5_error_rate',
                     type=float, 
                     help='''The acceptable error rate in the linker primer sequence. 
                     Defaults to 0.1.''',
                     default=0.1)
-parser.add_argument('--no_indels', '-no_indels',
-                    help='''Boolean.
-                    Boolean. When False, indels are allowed in LTR/linker matching. 
-                    When True, only substitutions are allowed. 
-                    Defaults to False.''',
-                    action='store_true')
+parser.add_argument('-crop_chunk_size',
+                    type=int, 
+                    help='''The chunk size for read cropping. 
+                    Defaults to 5000.''',
+                    default=5000)
 parser.add_argument('--no_crop', '-no_crop',
                     help='''Boolean. 
                     Whether or not to crop the matched LTR/linker sequences from the reads. 
@@ -273,70 +265,24 @@ def zipped(file):
             return zip_test.read(2) == b'\x1f\x8b'
     else:
         return file.endswith('.gz')
-            
-def write_chunks(tmp_files_R1, tmp_files_R2, nthr, i):
     
-    file1 = open_file(filename = args.r1, mode = 'rt')
-    file2 = open_file(filename = args.r2, mode = 'rt')
-        
-    n_lines = sum(1 for _ in file1)
-    file1.seek(0)
-    
-    if n_lines % 4 != 0:
-        raise ValueError('Number of lines is not a multiple of 4.')
-    
-    n_entries = n_lines // 4
-    chunk_size = (n_entries // nthr) * 4
-    start_line = i * chunk_size
-    
-    if i == (nthr - 1):
-        remainder = (n_entries % nthr) * 4
-        print(f'Processing {n_lines} lines ({n_entries} reads)\n'
-            f'Utilizing {nthr} threads\n'
-            f'Chunk size = {chunk_size}\n'
-            f'Remainder = {remainder}')
-        chunk_size = chunk_size + remainder
-        
-    filen_R1 = gzip.open(tmp_files_R1[i], mode = 'a')
-    filen_R2 = gzip.open(tmp_files_R2[i], mode = 'a')
-
-    lc = 1
-    for _ in range(start_line):
-        next(file1)
-        next(file2)
-    
-    for line in zip(file1, file2):
-        if lc <= chunk_size:
-            filen_R1.write(line[0].encode('utf-8'))
-            filen_R2.write(line[1].encode('utf-8'))
-            lc += 1
+def ensure_open(file):
+    if isinstance(file, (str, bytes)):
+        if zipped(file):
+            return gzip.open(file, 'rt')
         else:
-            break
-
-    filen_R1.close()
-    filen_R2.close()
+            return open(file, 'rt')
+    elif isinstance(file, io.IOBase) and not file.closed:
+        return file
+    else:
+        raise ValueError("Invalid file input or file is closed")
     
 def open_file(filename, mode):
     if zipped(filename):
         return gzip.open(filename, mode)
     else:
         return open(filename, mode)
-        
-def concatenate_files(input_files, output_file):       
-    buffer_size = 1024 * 1024 * 10
-    with gzip.open(output_file, 'wb') as outfile:
-        for file_name in input_files:
-            with gzip.open(file_name, 'rb') as infile:
-                while True:
-                    buffer = infile.read(buffer_size)
-                    if not buffer:
-                        break
-                    outfile.write(buffer)
-        
-def concatenate_unix(input_files, output_file):
-    cat_cmd = 'cat {} > {}'.format(' '.join(input_files), output_file)
-    subprocess.call(cat_cmd, shell=True)
-
+    
 def natural_key(chrom):
     return [int(text) if text.isdigit() else text for text in regex.split(r'(\d+)', chrom)]
 
@@ -494,9 +440,10 @@ if __name__ == "__main__":
     import hashlib
     import faiss
     import numpy as np
-    from itertools import chain
+    from itertools import chain, tee, count
     import json
     from datasketch import MinHash
+    
     
     start_time = time.time()
     
@@ -518,9 +465,9 @@ if __name__ == "__main__":
         else:
             print('Mapping end: U3')
             
-        print('TSD width (bp):', args.tsd)
-        print('Minimum fragment length (bp):', args.min_frag_len)
-        print('Maximum fragment length (bp):', args.max_frag_len)
+        print(f'TSD width: {args.tsd} bp')
+        print(f'Minimum fragment length: {args.min_frag_len} bp')
+        print(f'Maximum fragment length: {args.max_frag_len} bp')
         print('Minimum alignment MAPQ score:', args.min_mapq)
         
         if args.no_mm is False:
@@ -532,7 +479,7 @@ if __name__ == "__main__":
         processed_dir = os.path.join(curr_dir, 'processed')
         if not os.path.exists(processed_dir):
             os.makedirs(processed_dir)
-        out_bam = os.path.join(processed_dir, '{}_aln.bam'.format(args.nm))
+        out_bam = os.path.join(processed_dir, f'{args.nm}_aln.bam')
         
         print('\n')
         
@@ -542,7 +489,7 @@ if __name__ == "__main__":
                             bt2_idx_name = args.bt2_idx_name,
                             file1 = args.r1, 
                             file2 = args.r2, 
-                            name = os.path.join(processed_dir, '{}'.format(args.nm)), 
+                            name = os.path.join(processed_dir, f'{args.nm}'), 
                             nthr = args.nthr,
                             min_frag_len = args.min_frag_len,
                             max_frag_len = args.max_frag_len)
@@ -550,8 +497,8 @@ if __name__ == "__main__":
         print('\n')
         print('Performing QC on aligned reads and extracting mapped coordinates...')
         
-        frags_out = os.path.join(processed_dir, '{}_fragments.bed.gz'.format(args.nm))
-        sites_out = os.path.join(processed_dir, '{}_sites.bed.gz'.format(args.nm))
+        frags_out = os.path.join(processed_dir, f'{args.nm}_fragments.bed.gz')
+        sites_out = os.path.join(processed_dir, f'{args.nm}_sites.bed.gz')
         
         print('Parsing bam file...')
         read_pairs = random.process_random_bam(out_bam)
@@ -627,32 +574,32 @@ if __name__ == "__main__":
             data_types = ['alignments', 'fragments', 'sites']
             subdirs = []
             for i in data_types:
-                subdir = os.path.join(processed_dir, '{}'.format(i))
+                subdir = os.path.join(processed_dir, f'{i}')
                 if not os.path.exists(subdir):
                     os.makedirs(subdir)
                 subdirs.append(subdir)
                 
             file_mapping = {
-                '{}_aln.bai'.format(args.nm): subdirs[0],
-                '{}_aln.bam'.format(args.nm): subdirs[0],
-                '{}_fragments.bed.gz'.format(args.nm): subdirs[1],
-                '{}_sites.bed.gz'.format(args.nm): subdirs[2]
+                f'{args.nm}_aln.bai': subdirs[0],
+                f'{args.nm}_aln.bam': subdirs[0],
+                f'{args.nm}_fragments.bed.gz': subdirs[1],
+                f'{args.nm}_sites.bed.gz': subdirs[2]
                 }
             
             for pattern, target_dir in file_mapping.items():
                 for filepath in glob.glob(os.path.join(processed_dir, pattern)):
                     shutil.move(filepath, target_dir)
     else:            
-        if args.ltr_term is None:
-            parser.error('ltr_term must be defined.')
-        if args.linker_term is None:
-            parser.error('linker_term must be defined.')
+        if args.ltr3 is None:
+            parser.error('ltr3 must be defined.')
+        if args.linker3 is None:
+            parser.error('linker3 must be defined.')
         if args.ltr1_primer is None:
             parser.error('ltr1_primer must be defined.')
-        if args.ltr2_primer is None:
-            parser.error('ltr2_primer must be defined.')
-        if args.linker_primer is None:
-            parser.error('linker_primer must be defined.')
+        if args.ltr5 is None:
+            parser.error('ltr5 must be defined.')
+        if args.linker5 is None:
+            parser.error('linker5 must be defined.')
         if args.genome_fasta is None:
             parser.error('genome_fasta must be defined.')
         if args.v_idx_dir is None:
@@ -674,15 +621,15 @@ if __name__ == "__main__":
                 genome = pysam.FastaFile(filename = args.genome_fasta, 
                                         filepath_index = args.genome_fasta_index)
 
-        crop.check_crop_input(ltr_term = args.ltr_term, 
-                            linker_term = args.linker_term, 
+        crop.check_crop_input(ltr3 = args.ltr3, 
+                            linker3 = args.linker3, 
                             contamination = args.c,
                             no_crop = args.no_crop,
-                            ltr2_primer_error_rate = args.ltr2_primer_error_rate, 
-                            linker_primer_error_rate = args.ltr2_primer_error_rate,
+                            ltr5_error_rate = args.ltr5_error_rate, 
+                            linker5_error_rate = args.ltr5_error_rate,
                             ltr1_primer = args.ltr1_primer, 
-                            ltr2_primer = args.ltr2_primer, 
-                            linker_primer = args.linker_primer)
+                            ltr5 = args.ltr5, 
+                            linker5 = args.linker5)
         
         align.check_genome_idx(args.bt2_idx_dir, args.bt2_idx_name)
         align.check_genome_idx(args.v_idx_dir, args.v_idx_name)
@@ -706,24 +653,20 @@ if __name__ == "__main__":
         print('Sample name:', args.nm)
         print('Parsing files', args.r1, 'and', args.r2)
         print('Random data: False')
-        print('Base LTR-end search sequence:', args.ltr2_primer + args.ltr_term)
-        print('Base linker-end sequence:', args.linker_primer + args.linker_term)
-        print('LTR match error rate:', args.ltr_error_rate)
-        print('Linker match error rate:', args.linker_error_rate)
-        print('Round 2 LTR primer error rate:', args.ltr2_primer_error_rate)
-        print('Linker primer error rate:', args.linker_primer_error_rate)
-        
-        if args.no_indels is True:
-            print('Indels allowed in matching: False')
-        else:
-            print('Indels allowed in matching: True')
+        print('Base LTR-end search sequence:', args.ltr5 + args.ltr3)
+        print('Base linker-end search sequence:', args.linker5 + args.linker3)
+        print('5\' LTR match error rate:', args.ltr5_error_rate)
+        print('3\' LTR match error rate:', args.ltr3_error_rate)
+        print('5\' linker match error rate:', args.linker5_error_rate)
+        print('3\' linker match error rate:', args.linker3_error_rate)
+        print(f'FASTQ processing chunk size: {args.crop_chunk_size} reads')
 
         if args.U3 is False:
             print('Mapping end: U5')
         else:
             print('Mapping end: U3')
             
-        print('TSD width (bp):', args.tsd)
+        print(f'TSD width: {args.tsd} bp')
         
         print('Round 1 LTR primer sequence:', args.ltr1_primer)
         
@@ -731,38 +674,38 @@ if __name__ == "__main__":
             print('Removing internal', args.v, 'artifacts')
             
         if args.c is not None:
-            print('Declared contamination:', ', '.join(args.c))
+            print(f"Declared contamination: {', '.join(args.c)}")
             
         if args.linker_umi_len > 0:
-            print('LTR UMI length (bp):', args.ltr_umi_len)
-            print('LTR UMI offset (bp):', args.ltr_umi_offset)
+            print(f'LTR UMI length: {args.ltr_umi_len} bp')
+            print(f'LTR UMI offset: {args.ltr_umi_offset} bp')
             
         if args.linker_umi_len > 0:
-            print('Linker UMI length (bp):', args.linker_umi_len)
-            print('Linker UMI offset (bp):', args.linker_umi_offset)
+            print(f'Linker UMI length: {args.linker_umi_len} bp')
+            print(f'Linker UMI offset: {args.linker_umi_offset} bp')
             
-        print('Minimum fragment length (bp):', args.min_frag_len)
-        print('Maximum fragment length (bp):', args.max_frag_len)
-        print('Read 1 5\'-end alignment mismatches (bp):', args.match_after)
+        print(f'Minimum fragment length: {args.min_frag_len} bp')
+        print(f'Maximum fragment length: {args.max_frag_len} bp')
+        print(f'Read 1 5\'-end alignment mismatches: {args.match_after} bp')
         print('Allowed alignment mismatch rate:', args.aln_mismatch_rate)
         print('Allowed alignment indel rate:', args.aln_indel_rate)
         print('Minimum alignment MAPQ score:', args.min_mapq)
         print('Minimum average base quality score:', args.min_qual)
-        print('Fuzzy length difference (bp):', args.len_diff)
-        print('Fuzzy UMI mismatches (bp):', args.umi_diff)
+        print(f'Fuzzy length difference: {args.len_diff} bp')
+        print(f'Fuzzy UMI mismatches: {args.umi_diff} bp')
         print('Duplicate count ratio:', args.frag_ratio)
 
         
         if args.no_mm is False:
             print('Keep multimapping reads: True')
             print('Multimapping sequence similarity:', args.seq_sim)
-            print('Multimapping hash bits:', args.num_bits)
-            print('Multimapping token size:', args.token_size)
+            print(f'Multimapping hash length: {args.num_bits} bits')
+            print(f'Multimapping token size: {args.token_size} bp')
             print('Multimapping search sensitivity:', args.mm_search_sensitivity)
         else:
             print('Keep multimapping reads: False')
         
-        print('Allowed mispriming mismatches (bp):', args.misprime_mismatch)
+        print(f'Allowed mispriming mismatches: {args.misprime_mismatch} bp')
         
         print('\n')
         
@@ -778,149 +721,51 @@ if __name__ == "__main__":
         processed_dir = os.path.join(curr_dir, 'processed')
         if not os.path.exists(processed_dir):
             os.makedirs(processed_dir)
-                
-        if args.crop_single_thr:
-            crop_nthr = 1
-        else:
-            crop_nthr = args.nthr
-                
-        if crop_nthr == 1:
-            file = open_file(filename = args.r1, mode = 'rt')
-            n_lines = sum(1 for _ in file)
-            if n_lines % 4 != 0:
-                raise ValueError('Number of lines is not a multiple of 4.')
-            file.close()
-            
-            print('Cropping reads...')
-            
-            print(f'Processing {n_lines} lines ({n_lines // 4} reads)\n',
-                'Utilizing 1 thread.')
-            
-            crop.crop(file1 = args.r1, 
-                    file2 = args.r2, 
-                    ltr_term = args.ltr_term, 
-                    virus = args.v, 
-                    linker_term = args.linker_term,
-                    contamination = args.c, 
-                    remove_internal_artifacts = args.remove_internal_artifacts,
-                    U3 = args.U3,
-                    name = os.path.join(processed_dir, '{}'.format(args.nm)),
-                    min_frag_len = args.min_frag_len,
-                    no_crop = args.no_crop,
-                    ltr_error_rate = args.ltr_error_rate,
-                    linker_error_rate = args.linker_error_rate,
-                    ltr_umi_offset = args.ltr_umi_offset,
-                    ltr_umi_len = args.ltr_umi_len,
-                    linker_umi_offset = args.linker_umi_offset,
-                    linker_umi_len = args.linker_umi_len,
-                    ltr2_primer_error_rate = args.ltr2_primer_error_rate, 
-                    linker_primer_error_rate = args.linker_primer_error_rate,
-                    ltr1_primer = args.ltr1_primer, 
-                    ltr2_primer = args.ltr2_primer, 
-                    linker_primer = args.linker_primer,
-                    no_indels = args.no_indels)
 
-        else:  
-            tmp_dir = os.path.join(processed_dir, '{}_crop_tmp'.format(args.nm))
-            if not os.path.exists(tmp_dir):
-                os.makedirs(tmp_dir)
+        file = open_file(filename = args.r1, mode = 'rt')
+        n_lines = sum(1 for _ in file)
+        if n_lines % 4 != 0:
+            raise ValueError('Number of lines is not a multiple of 4.')
+        file.close()
+        n_reads = n_lines // 4
             
-            tmp_files_R1 = []
-            tmp_files_R2 = []
-            for i in range(args.nthr):
-                tmp_files_R1.append(os.path.join(tmp_dir, '{}_tmp{}'.format(args.nm, str(i).zfill(3)) + '_R1.fq.gz'))
-                tmp_files_R2.append(os.path.join(tmp_dir, '{}_tmp{}'.format(args.nm, str(i).zfill(3)) + '_R2.fq.gz'))
+        print(f'Processing {n_reads} reads...')
+        print('Cropping LTR and linker sequences...')
             
-            print('Splitting reads into temporary files...')
-            
-            Parallel(n_jobs = args.nthr)(
-                delayed(write_chunks)(tmp_files_R1 = tmp_files_R1, 
-                                    tmp_files_R2 = tmp_files_R2, 
-                                    nthr = args.nthr, 
-                                    i = i)
-                for i in range(args.nthr))
-            
-            tmp_names = []
-            for i in range(args.nthr):
-                tmp_names.append('{}/{}_tmp{}'.format(tmp_dir, args.nm, str(i).zfill(3)))
-
-            print('\n')
-            print('Cropping reads...')
-            
-            Parallel(n_jobs = args.nthr)(
-                delayed(crop.crop)(file1 = tmp_files_R1[i], 
-                                file2 = tmp_files_R2[i], 
-                                ltr_term = args.ltr_term, 
-                                virus = args.v, 
-                                linker_term = args.linker_term,
-                                contamination = args.c, 
-                                remove_internal_artifacts = args.remove_internal_artifacts,
-                                U3 = args.U3,
-                                name = tmp_names[i],
-                                min_frag_len = args.min_frag_len,
-                                no_crop = args.no_crop,
-                                ltr_error_rate = args.ltr_error_rate,
-                                linker_error_rate = args.linker_error_rate,
-                                ltr_umi_offset = args.ltr_umi_offset,
-                                ltr_umi_len = args.ltr_umi_len,
-                                linker_umi_offset = args.linker_umi_offset,
-                                linker_umi_len = args.linker_umi_len,
-                                ltr2_primer_error_rate = args.ltr2_primer_error_rate, 
-                                linker_primer_error_rate = args.linker_primer_error_rate,
-                                ltr1_primer = args.ltr1_primer, 
-                                ltr2_primer = args.ltr2_primer, 
-                                linker_primer = args.linker_primer,
-                                no_indels = args.no_indels)
-            for i in range(args.nthr))
-            
-            inputs_R1 = sorted(glob.glob('{}/{}_tmp*_R1_cropped*'.format(tmp_dir, args.nm)))
-            inputs_R2 = sorted(glob.glob('{}/{}_tmp*_R2_cropped*'.format(tmp_dir, args.nm)))
-
-            crop_out1 = os.path.join(processed_dir, '{}_R1_cropped.fq.gz'.format(args.nm))
-            crop_out2 = os.path.join(processed_dir, '{}_R2_cropped.fq.gz'.format(args.nm))
-            
-            inputs = [inputs_R1, inputs_R2]
-            outputs = [crop_out1, crop_out2]
-            
-            print('Concatenating cropped output...')
-            
-            op_sys = platform.system()
-            if op_sys != 'Darwin' and op_sys != 'Linux':
-                if crop_nthr > 1:
-                    Parallel(n_jobs = 2)(
-                        delayed(concatenate_files)(input_files = inputs[i],
-                                                output_file = outputs[i])
-                        for i in range(2))
-                else:
-                    for i in range(2):
-                        concatenate_files(input_files = inputs[i],
-                                        output_file = outputs[i])
-            else:
-                if crop_nthr > 1:
-                    Parallel(n_jobs = 2)(
-                        delayed(concatenate_unix)(input_files = inputs[i],
-                                                output_file = outputs[i])
-                        for i in range(2))
-                else:
-                    for i in range(2):
-                        concatenate_unix(input_files = inputs[i],
-                                        output_file = outputs[i])
-                
-            for f in inputs_R1:
-                os.remove(f)
-            for f in inputs_R2:
-                os.remove(f)
-                
-            shutil.rmtree(tmp_dir)
+        crop.crop(file1 = args.r1, 
+                file2 = args.r2, 
+                ltr3 = args.ltr3, 
+                virus = args.v, 
+                linker3 = args.linker3,
+                contamination = args.c, 
+                remove_internal_artifacts = args.remove_internal_artifacts,
+                U3 = args.U3,
+                name = os.path.join(processed_dir, '{}'.format(args.nm)),
+                min_frag_len = args.min_frag_len,
+                no_crop = args.no_crop,
+                ltr3_error_rate = args.ltr3_error_rate,
+                linker3_error_rate = args.linker3_error_rate,
+                ltr_umi_offset = args.ltr_umi_offset,
+                ltr_umi_len = args.ltr_umi_len,
+                linker_umi_offset = args.linker_umi_offset,
+                linker_umi_len = args.linker_umi_len,
+                ltr5_error_rate = args.ltr5_error_rate, 
+                linker5_error_rate = args.linker5_error_rate,
+                ltr1_primer = args.ltr1_primer, 
+                ltr5 = args.ltr5, 
+                linker5 = args.linker5,
+                chunk_size = args.crop_chunk_size, 
+                nthr = args.nthr, 
+                processed_dir = processed_dir)
         
-        curr_dir = os.getcwd()
-        fq1 = os.path.join(processed_dir, '{}_R1_cropped.fq.gz'.format(args.nm))
-        fq2 = os.path.join(processed_dir, '{}_R2_cropped.fq.gz'.format(args.nm))
+        fq1 = os.path.join(processed_dir, f'{args.nm}_R1_cropped.fq.gz')
+        fq2 = os.path.join(processed_dir, f'{args.nm}_R2_cropped.fq.gz')
         
         with gzip.open(fq1, 'r') as file:
             n_cropped = sum(1 for _ in file) // 4
-            
-        print('Number of reads retained after cropping:', n_cropped)
+        
+        crop_perc = (n_cropped / n_reads) * 100
+        print(f'Number of reads retained after cropping: {n_cropped} ({crop_perc:.2f}%)')
         
         if args.no_crop is True:
             print('no_crop is True. Stopping because there are non-genomic sequences remaining on reads.')
@@ -945,13 +790,13 @@ if __name__ == "__main__":
         print('\n')
         print('Performing QC on aligned reads...')
         
-        frags_out = os.path.join(processed_dir, '{}_fragments.bed.gz'.format(args.nm))
-        sites_out = os.path.join(processed_dir, '{}_sites.bed.gz'.format(args.nm))
-        bc_out = os.path.join(processed_dir, '{}_summary.txt.gz'.format(args.nm))
-        counts_out = os.path.join(processed_dir, '{}_site_counts.txt.gz'.format(args.nm))
-        out_bam = os.path.join(processed_dir, '{}_aln.bam'.format(args.nm))
-        out_dup = os.path.join(processed_dir, '{}_duplicates.json.gz'.format(args.nm))
-        out_mp = os.path.join(processed_dir, '{}_misprimed.fa.gz'.format(args.nm))
+        frags_out = os.path.join(processed_dir, f'{args.nm}_fragments.bed.gz')
+        sites_out = os.path.join(processed_dir, f'{args.nm}_sites.bed.gz')
+        bc_out = os.path.join(processed_dir, f'{args.nm}_summary.txt.gz')
+        counts_out = os.path.join(processed_dir, f'{args.nm}_site_counts.txt.gz')
+        out_bam = os.path.join(processed_dir, f'{args.nm}_aln.bam')
+        out_dup = os.path.join(processed_dir, f'{args.nm}_duplicates.json.gz')
+        out_mp = os.path.join(processed_dir, f'{args.nm}_misprimed.fa.gz')
         
         print('Parsing bam file...')
         read_pairs = process.process_bam(out_bam)
