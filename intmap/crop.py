@@ -1,5 +1,8 @@
 #!/usr/local/bin/python
 
+# TO-DO: Enable pattern matching with LTR/linker UMIs?
+# Could accomodate anchored barcodes, such as NNNNNAGTCNNNNN
+    
 import os 
 import sys
 import getopt
@@ -39,7 +42,7 @@ def check_crop_input(ltr3, linker3, ltr1_primer, ltr5, linker5,
     if ltr2_char != '':
         raise ValueError('Declared round 2 LTR primer may only contain A,T,G, and C nucleotides.')
 
-    if len(ltr2_check) < 8:
+    if len(ltr2_check) < 5:
         raise ValueError('Declared round 2 LTR primer must be at least 8 nucleotides long.')
     
     if ltr5_error_rate > 0.3:
@@ -50,7 +53,7 @@ def check_crop_input(ltr3, linker3, ltr1_primer, ltr5, linker5,
     if lp_char != '':
         raise ValueError('Declared linker primer may only contain A,T,G, and C nucleotides.')
 
-    if len(lp_check) < 8:
+    if len(lp_check) < 5:
         raise ValueError('Declared linker primer must be at least 8 nucleotides long.')
     
     if linker5_error_rate > 0.3:
@@ -164,10 +167,10 @@ def find_priority_matches(patterns, sequence):
             return list(pattern.finditer(sequence))[-1]
     return None
 
-def crop_chunk(chunk, ltr_regex_list, linker_regex_list, ltr_rc_regex, linker_rc_regex,
+def crop_chunk(chunk, ltr_regex_list, linker_regex_list, ltr_rc_regex_list, linker_rc_regex_list,
                 min_frag_len, no_crop, name, short_nm, contam_patterns, ltr_umi_len,
-                ltr_umi_offset, linker_umi_len, linker_umi_offset,
-                crop1_file, crop2_file):
+                ltr_umi_offset, ltr_umi_pattern, linker_umi_len, linker_umi_offset,
+                linker_umi_pattern, crop1_file, crop2_file):
 
     with gzip.open(crop1_file, 'wt') as crop1, gzip.open(crop2_file, 'wt') as crop2:
         for head1, seq1, opt1, qual1, head2, seq2, opt2, qual2 in chunk:
@@ -190,23 +193,50 @@ def crop_chunk(chunk, ltr_regex_list, linker_regex_list, ltr_rc_regex, linker_rc
             linker_found = seq2[linker_start:linker_end]
             linker_len = len(linker_found)
             
-            if not linker_hit:
-                continue
-            
             ltr_umi = seq1[(ltr_start - ltr_umi_offset - ltr_umi_len):(ltr_start - ltr_umi_offset)] if ltr_umi_len > 0 else 'N'
             linker_umi = seq2[(linker_start - linker_umi_offset - linker_umi_len):(linker_start - linker_umi_offset)] if linker_umi_len > 0 else 'N'
             
-            linker_in_R1 = linker_rc_regex.search(seq1)
+            if ltr_umi_pattern:
+                if ltr_umi == 'N':
+                    raise Exception("LTR UMI is not defined. Cannot look for pattern.")
+                else:
+                    ltr_umi_regex_pattern = regex.sub(r'N+', lambda m: f"[ATGC]{{{len(m.group())}}}", ltr_umi_pattern)
+                    ltr_umi_match = regex.search(ltr_umi_regex_pattern, ltr_umi)
+                    if not ltr_umi_match:
+                        continue
+            
+            if linker_umi_pattern:
+                if linker_umi == 'N':
+                    raise Exception("Linker UMI is not defined. Cannot look for pattern.")
+                else:
+                    linker_umi_regex_pattern = regex.sub(r'N+', lambda m: f"[ATGC]{{{len(m.group())}}}", linker_umi_pattern)
+                    linker_umi_match = regex.search(linker_umi_regex_pattern, linker_umi)
+                    if not linker_umi_match:
+                        continue
+            
+            linker_in_R1 = find_priority_matches(linker_rc_regex_list, seq1)
             if linker_in_R1:
-                rlim_seq1 = linker_in_R1.span()[0]    
+                rlim_seq1 = linker_in_R1.span()[0]
             else:
                 rlim_seq1 = len(seq1)
-
-            ltr_in_R2 = ltr_rc_regex.search(seq2)
+                
+            ltr_in_R2 = find_priority_matches(ltr_rc_regex_list, seq2)
             if ltr_in_R2:
                 rlim_seq2 = ltr_in_R2.span()[0]
             else:
                 rlim_seq2 = len(seq2)
+                
+            # linker_in_R1 = linker_rc_regex.search(seq1)
+            # if linker_in_R1:
+            #     rlim_seq1 = linker_in_R1.span()[0]    
+            # else:
+            #     rlim_seq1 = len(seq1)
+
+            # ltr_in_R2 = ltr_rc_regex.search(seq2)
+            # if ltr_in_R2:
+            #     rlim_seq2 = ltr_in_R2.span()[0]
+            # else:
+            #     rlim_seq2 = len(seq2)
 
             if no_crop:
                 seq1_cropped = seq1[ltr_start:rlim_seq1]
@@ -215,19 +245,20 @@ def crop_chunk(chunk, ltr_regex_list, linker_regex_list, ltr_rc_regex, linker_rc
                 qual1_cropped = qual1[ltr_start:rlim_seq1]
                 qual2_cropped = qual2[linker_start:rlim_seq2]
             else:
-                seq1_cropped = seq1[ltr_start + ltr_len:rlim_seq1]
-                seq2_cropped = seq2[linker_start + linker_len:rlim_seq2]
+                seq1_cropped = seq1[(ltr_start + ltr_len):rlim_seq1]
+                seq2_cropped = seq2[(linker_start + linker_len):rlim_seq2]
                 contam_check = seq1_cropped
-                qual1_cropped = qual1[ltr_start + ltr_len:rlim_seq1]
-                qual2_cropped = qual2[linker_start + linker_len:rlim_seq2]
-                
-            k = 0
+                qual1_cropped = qual1[(ltr_start + ltr_len):rlim_seq1]
+                qual2_cropped = qual2[(linker_start + linker_len):rlim_seq2]
+            
             toss = False
-            while k < len(contam_patterns) and toss != True:
-                element = contam_patterns[k]
-                if regex.match(element, contam_check):
-                    toss = True 
-                k += 1
+            if contam_patterns:    
+                k = 0
+                while k < len(contam_patterns) and toss != True:
+                    element = contam_patterns[k]
+                    if regex.match(element, contam_check):
+                        toss = True 
+                    k += 1
 
             if ((len(seq1_cropped) < (min_frag_len + (ltr_len if no_crop is True else 0))) | 
                 (len(seq2_cropped) < (min_frag_len + (linker_len if no_crop is True else 0))) |
@@ -242,16 +273,14 @@ def crop_chunk(chunk, ltr_regex_list, linker_regex_list, ltr_rc_regex, linker_rc
             crop2.write(f'{seq2_cropped}\n{opt2}\n{qual2_cropped}\n')
 
 def crop(file1, file2, ltr3, virus, linker3, ltr1_primer, ltr5, linker5, 
-        contamination, remove_internal_artifacts, U3, name, min_frag_len, no_crop, ltr3_error_rate, 
-        linker3_error_rate, ltr5_error_rate, linker5_error_rate, ltr_umi_offset, ltr_umi_len, linker_umi_offset, 
-        linker_umi_len, chunk_size, nthr, processed_dir):
+        contamination, U3, name, min_frag_len, no_crop, ltr3_error_rate, 
+        linker3_error_rate, ltr5_error_rate, linker5_error_rate, ltr_umi_offset, 
+        ltr_umi_len, ltr_umi_pattern, linker_umi_offset, linker_umi_len, linker_umi_pattern,
+        chunk_size, nthr, processed_dir):
 
     short_nm = name.rpartition('/')[-1] if '/' in name else name
 
-    if remove_internal_artifacts:
-        if virus is None:
-            raise ValueError('Cannot define standard artifacts when the virus is not defined.')
-
+    if virus:
         virus_artifacts = {
             'HIV1': ['GTCCCCCCTTTTCTT' if U3 else 'GTGGCGCCCGAA'],
             'HIV-1': ['GTCCCCCCTTTTCTT' if U3 else 'GTGGCGCCCGAA'],
@@ -286,7 +315,15 @@ def crop(file1, file2, ltr3, virus, linker3, ltr1_primer, ltr5, linker5,
     ltr_regex_list = [ltr_regex_exact, ltr_regex_sub, ltr_regex_indel]
     
     ltr_rc = revcomp(ltr5 + ltr3)[:11]
-    ltr_rc_regex = regex.compile(f'({ltr_rc}){{e<=1}}')
+    
+    ltr_rc_pattern_exact = prepare_exact_pattern(ltr_rc)
+    ltr_rc_regex_exact = regex.compile(ltr_rc)
+    ltr_rc_pattern_sub = prepare_pattern(ltr_rc, 0.1, error_type = "s")
+    ltr_rc_regex_sub = regex.compile(ltr_rc_pattern_sub)
+    ltr_rc_pattern_indel = prepare_pattern(ltr_rc, 0.1, error_type = "e")
+    ltr_rc_regex_indel = regex.compile(ltr_rc_pattern_indel)
+    
+    ltr_rc_regex_list = [ltr_rc_regex_exact, ltr_rc_regex_sub, ltr_rc_regex_indel]
 
     linker3_pattern_exact = prepare_exact_pattern(linker3)
     linker5_pattern_exact = prepare_exact_pattern(linker5)
@@ -303,10 +340,20 @@ def crop(file1, file2, ltr3, virus, linker3, ltr1_primer, ltr5, linker5,
     linker_regex_list = [linker_regex_exact, linker_regex_sub, linker_regex_indel]
 
     linker_rc = revcomp(linker5 + linker3)[:11]
-    linker_rc_regex = regex.compile(f'({linker_rc}){{e<=1}}')
-
+    
+    linker_rc_pattern_exact = prepare_exact_pattern(linker_rc)
+    linker_rc_regex_exact = regex.compile(linker_rc)
+    linker_rc_pattern_sub = prepare_pattern(linker_rc, 0.1, error_type = "s")
+    linker_rc_regex_sub = regex.compile(linker_rc_pattern_sub)
+    linker_rc_pattern_indel = prepare_pattern(linker_rc, 0.1, error_type = "e")
+    linker_rc_regex_indel = regex.compile(linker_rc_pattern_indel)
+    
+    linker_rc_regex_list = [linker_rc_regex_exact, linker_rc_regex_sub, linker_rc_regex_indel]
+    
     if art:
-        contam_patterns = [regex.compile(f'({cc}){{e<={math.floor(len(cc) * 0.3)}}}') for cc in art]
+        contam_patterns = [regex.compile(f'({cc}){{e<={math.floor(len(cc) * 0.2)}}}') for cc in art]
+    else:
+        contam_patterns = None
 
     chunk_generator = chunk_fastq(file1, file2, chunk_size = chunk_size)
     chunk_gen, chunk_count = tee(chunk_generator)
@@ -324,10 +371,10 @@ def crop(file1, file2, ltr3, virus, linker3, ltr1_primer, ltr5, linker5,
 
     Parallel(n_jobs = nthr)(
         delayed(crop_chunk)(
-            chunk, ltr_regex_list, linker_regex_list, ltr_rc_regex, linker_rc_regex,
+            chunk, ltr_regex_list, linker_regex_list, ltr_rc_regex_list, linker_rc_regex_list,
             min_frag_len, no_crop, name, short_nm, contam_patterns, ltr_umi_len,
-            ltr_umi_offset, linker_umi_len, linker_umi_offset,
-            tmp_files_R1[i], tmp_files_R2[i]
+            ltr_umi_offset, ltr_umi_pattern, linker_umi_len, linker_umi_offset, 
+            linker_umi_pattern, tmp_files_R1[i], tmp_files_R2[i]
         )
         for i, chunk in enumerate(chunk_gen)
     )

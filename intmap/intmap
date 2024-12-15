@@ -47,10 +47,6 @@ parser.add_argument('-linker5',
                     type=str,  
                     help='''The 3' end of the linker primer. Must be at least 10 bp.''',
                     default=None)
-parser.add_argument('--remove_internal_artifacts', '-remove_internal_artifacts',
-                    help='''Whether or not to include standard artifact sequences for the defined virus. 
-                    This auto-fills contaminating autointegration artifacts for the viruses defined in -v.''', 
-                    action='store_true')
 parser.add_argument('--U3', '-U3',
                     help='''Whether or not the sequenced reads come from the U3 end of the provirus. 
                     This is used for defining HIV-1 autointegration artifacts and 
@@ -68,8 +64,8 @@ parser.add_argument('-nm',
 parser.add_argument('-min_frag_len',
                     type=int, 
                     help='''The minimum allowed fragment length. 
-                    Defaults to 10.''',
-                    default=10)
+                    Defaults to 20.''',
+                    default=20)
 parser.add_argument('-max_frag_len',
                     type=int, 
                     help='''The maximum allowed fragment length. 
@@ -162,6 +158,12 @@ parser.add_argument('-ltr_umi_len',
                     help='''The length of the LTR-end UMI.
                     Defaults to 0 (no UMI present).''',
                     default=0)
+parser.add_argument('-ltr_umi_pattern',
+                    type=str, 
+                    help='''Any pattern that defines the LTR UMI. For example, 4 random bases, followed 
+                    by 4 known bases, followed by 4 random bases should be given as NNNNGGCANNNN. 
+                    Reads whose UMI does not match the given pattern are removed.''',
+                    default=None)
 parser.add_argument('-linker_umi_offset',
                     type=int, 
                     help='''The number of basepairs between the first basepair of the provided 
@@ -173,6 +175,12 @@ parser.add_argument('-linker_umi_len',
                     help='''The length of the linker-end UMI.
                     Defaults to 0 (no UMI present).''',
                     default=0)
+parser.add_argument('-linker_umi_pattern',
+                    type=str, 
+                    help='''Any pattern that defines the linker UMI. For example, 4 random bases, followed 
+                    by 4 known bases, followed by 4 random bases should be given as NNNNGGCANNNN. 
+                    Reads whose UMI does not match the given pattern are removed.''',
+                    default=None)
 parser.add_argument('--no_mm', '-no_mm',
                     help='''Boolean.
                     Whether or not to keep multimapping reads in the final output.''',
@@ -217,8 +225,8 @@ parser.add_argument('-frag_ratio',
                     type=float, 
                     help='''The ratio of fragment counts used to define fuzzy matching reads. 
                     A match is called if the higher number of counts >= (frag_ratio * lower_number) + 1.
-                    Defaults to 2.''',
-                    default=2)
+                    Defaults to 1.''',
+                    default=1)
 parser.add_argument('--random', '-random',
                     help='''Boolean.
                     Whether or not the data being analyzed is theoretical random 
@@ -256,6 +264,11 @@ parser.add_argument('-misprime_mismatch',
                     help='''The number of mismatches allowed when searching for mispriming. 
                     Defaults to 3.''',
                     default=3)
+parser.add_argument('-win_len',
+                    type=int, 
+                    help='''The size of the window around multimapping sites to count the number 
+                    of unique fragments. Defaults to 2500.''',
+                    default=2500)
 
 args = parser.parse_args()
 
@@ -345,34 +358,35 @@ def parse_hash_matches(hash_dict):
 def merge_hash_sublists(lists):
     graph = defaultdict(set)
 
+    # Build the graph
     for i, sublist in enumerate(lists):
         for element in sublist:
             graph[element].add(i)
 
-    visited = set()
+    visited_sublists = set()
+    visited_elements = set()
     merged_lists = []
 
     def iterative_hash_dfs(start_index):
         stack = [start_index]
-        component = []
+        component = set()
 
         while stack:
             index = stack.pop()
-            if index not in visited:
-                visited.add(index)
-                component.extend(lists[index])
-
+            if index not in visited_sublists:
+                visited_sublists.add(index)
                 for element in lists[index]:
-                    for neighbor in graph[element]:
-                        if neighbor not in visited:
-                            stack.append(neighbor)
+                    if element not in visited_elements:
+                        component.add(element)
+                        visited_elements.add(element)
+                        stack.extend(graph[element])
 
-        return component
+        return sorted(component)
 
     for i in range(len(lists)):
-        if i not in visited:
-            component = iterative_hash_dfs(i)
-            merged_lists.append(sorted(set(component)))
+        if i not in visited_sublists:
+            merged_group = iterative_hash_dfs(i)
+            merged_lists.append(merged_group)
 
     return merged_lists
 
@@ -382,14 +396,16 @@ def chunk_hashes(distances, indices, nthr):
         yield distances[i:i + n], indices[i:i + n]
 
 def filter_chunk(chunk_distances, chunk_indices, sensitivity):
-    results = {}
-    for i in range(len(chunk_distances)):
-        filtered_hash_indices = [
-            chunk_indices[i][j] for j in range(len(chunk_distances[i]))
-            if chunk_distances[i][j] <= sensitivity
-        ]
-        results[i] = filtered_hash_indices
-    return results
+    chunk_distances = np.array(chunk_distances)
+    chunk_indices = np.array(chunk_indices)
+
+    mask = chunk_distances <= sensitivity
+
+    filtered_results = {
+        i: chunk_indices[i][mask[i]].tolist() for i in range(len(chunk_distances))
+        }
+
+    return filtered_results
 
 def group_similar_hashes(hash_distances, hash_indices, nthr, sensitivity):
     
@@ -606,6 +622,8 @@ if __name__ == "__main__":
             parser.error('v_idx_dir must be defined.')
         if args.v_idx_name is None:
             parser.error('v_idx_name must be defined.')
+        if args.frag_ratio < 1:
+            parser.error('frag_ratio must be >= 1.')
         
         genome_compression = check_genome_compression(args.genome_fasta)
         if genome_compression != 'bgzf' and genome_compression != 'uncompressed':
@@ -653,6 +671,7 @@ if __name__ == "__main__":
         print('Sample name:', args.nm)
         print('Parsing files', args.r1, 'and', args.r2)
         print('Random data: False')
+        print(f'Number of threads: {args.nthr}')
         print('Base LTR-end search sequence:', args.ltr5 + args.ltr3)
         print('Base linker-end search sequence:', args.linker5 + args.linker3)
         print('5\' LTR match error rate:', args.ltr5_error_rate)
@@ -670,19 +689,25 @@ if __name__ == "__main__":
         
         print('Round 1 LTR primer sequence:', args.ltr1_primer)
         
-        if args.remove_internal_artifacts:
+        if args.v:
             print('Removing internal', args.v, 'artifacts')
             
         if args.c is not None:
             print(f"Declared contamination: {', '.join(args.c)}")
             
-        if args.linker_umi_len > 0:
+        if args.ltr_umi_len > 0:
             print(f'LTR UMI length: {args.ltr_umi_len} bp')
             print(f'LTR UMI offset: {args.ltr_umi_offset} bp')
+            
+        if args.ltr_umi_pattern:
+            print(f'LTR UMI pattern: {args.ltr_umi_pattern}')
             
         if args.linker_umi_len > 0:
             print(f'Linker UMI length: {args.linker_umi_len} bp')
             print(f'Linker UMI offset: {args.linker_umi_offset} bp')
+            
+        if args.linker_umi_pattern:
+            print(f'Linker UMI pattern: {args.linker_umi_pattern}')
             
         print(f'Minimum fragment length: {args.min_frag_len} bp')
         print(f'Maximum fragment length: {args.max_frag_len} bp')
@@ -701,20 +726,14 @@ if __name__ == "__main__":
             print('Multimapping sequence similarity:', args.seq_sim)
             print(f'Multimapping hash length: {args.num_bits} bits')
             print(f'Multimapping token size: {args.token_size} bp')
-            print('Multimapping search sensitivity:', args.mm_search_sensitivity)
+            print(f'Multimapping search sensitivity: {args.mm_search_sensitivity}')
+            print(f'Multimapping search window size: {args.win_len} bp')
         else:
             print('Keep multimapping reads: False')
         
         print(f'Allowed mispriming mismatches: {args.misprime_mismatch} bp')
         
         print('\n')
-        
-        if not args.remove_internal_artifacts and args.c is None:
-            print('\n',
-                'No virus or contaminating sequence information provided.',
-                '\n',
-                'Be aware that artifacts might be retained in the output.',
-                '\n')
         
         curr_dir = os.getcwd()
 
@@ -738,7 +757,6 @@ if __name__ == "__main__":
                 virus = args.v, 
                 linker3 = args.linker3,
                 contamination = args.c, 
-                remove_internal_artifacts = args.remove_internal_artifacts,
                 U3 = args.U3,
                 name = os.path.join(processed_dir, '{}'.format(args.nm)),
                 min_frag_len = args.min_frag_len,
@@ -747,8 +765,10 @@ if __name__ == "__main__":
                 linker3_error_rate = args.linker3_error_rate,
                 ltr_umi_offset = args.ltr_umi_offset,
                 ltr_umi_len = args.ltr_umi_len,
+                ltr_umi_pattern = args.ltr_umi_pattern,
                 linker_umi_offset = args.linker_umi_offset,
                 linker_umi_len = args.linker_umi_len,
+                linker_umi_pattern = args.linker_umi_pattern,
                 ltr5_error_rate = args.ltr5_error_rate, 
                 linker5_error_rate = args.linker5_error_rate,
                 ltr1_primer = args.ltr1_primer, 
@@ -766,6 +786,10 @@ if __name__ == "__main__":
         
         crop_perc = (n_cropped / n_reads) * 100
         print(f'Number of reads retained after cropping: {n_cropped} ({crop_perc:.2f}%)')
+        
+        if n_cropped == 0:
+            print('No reads retained after cropping. Exiting.')
+            sys.exit()
         
         if args.no_crop is True:
             print('no_crop is True. Stopping because there are non-genomic sequences remaining on reads.')
@@ -793,7 +817,7 @@ if __name__ == "__main__":
         frags_out = os.path.join(processed_dir, f'{args.nm}_fragments.bed.gz')
         sites_out = os.path.join(processed_dir, f'{args.nm}_sites.bed.gz')
         bc_out = os.path.join(processed_dir, f'{args.nm}_summary.txt.gz')
-        counts_out = os.path.join(processed_dir, f'{args.nm}_site_counts.txt.gz')
+        counts_out = os.path.join(processed_dir, f'{args.nm}_unique_sites.bed.gz')
         out_bam = os.path.join(processed_dir, f'{args.nm}_aln.bam')
         out_dup = os.path.join(processed_dir, f'{args.nm}_duplicates.json.gz')
         out_mp = os.path.join(processed_dir, f'{args.nm}_misprimed.fa.gz')
@@ -821,6 +845,11 @@ if __name__ == "__main__":
         n_pairs_qc = len(processed_pairs)
         pairs_qc_perc = (n_pairs_qc / len(read_pairs)) * 100
         print(f'Number of pairs that pass QC: {n_pairs_qc} ({pairs_qc_perc:.2f}%)')
+        
+        if n_pairs_qc == 0:
+            # To-do: Clean up any files generated before this point.
+            print(f'\nNo pairs pass QC. Exiting.')
+            sys.exit()
 
         print('\n')
         print('Handling duplicate fragments...')
@@ -925,7 +954,7 @@ if __name__ == "__main__":
             ue_kept_list.append({key: value})
             
         del unique_exact_kept
-        
+
         print('Looking for unique fuzzy matches...')
         uf_kept_list = Parallel(n_jobs = min(len(ue_kept_list), args.nthr))(
             delayed(clean.unique_fuzzy_matches)(
@@ -944,7 +973,7 @@ if __name__ == "__main__":
                     unique_fuzzy_dup[key] = value
                 else:
                     unique_fuzzy_dup[key].extend(value)
-            
+
         del ue_kept_list
         del uf_kept_list
             
@@ -978,8 +1007,10 @@ if __name__ == "__main__":
         dup_dict = {}
         for key, value in unique_fuzzy_dup.items():
             dup_dict.update({key: value})
+            
+        del unique_fuzzy_dup
         
-        if not args.no_mm:
+        if n_multi > 0 and not args.no_mm:
             print('\n')
             print('Starting number of multimapping fragments:', n_multi)
             print('Collapsing multimapping exact matches...')
@@ -990,18 +1021,18 @@ if __name__ == "__main__":
 
             print('Hashing multimapping sequences for fuzzy matching...')
             # Create minhashes for all multimapping reads
-            multi_exact_hashed = Parallel(n_jobs=args.nthr)(
+            multi_exact_hashed = Parallel(n_jobs = args.nthr)(
                 delayed(apply_minhash)(
-                    key=key, 
-                    value=value, 
-                    string=(value['ltr_umi'] + value['linker_umi'] + value['seq1'] + value['seq2']), 
-                    num_bits=args.num_bits,
-                    token_size=args.token_size) 
+                    key = key, 
+                    value = value, 
+                    string = (value['seq1'] + value['seq2']), 
+                    num_bits = args.num_bits,
+                    token_size = args.token_size) 
                 for key, value in multi_exact_kept.items())
 
             for key, updated_value in multi_exact_hashed:
                 multi_exact_kept[key] = updated_value
-                
+
             del multi_exact_hashed
 
             # Make minhash list
@@ -1022,7 +1053,7 @@ if __name__ == "__main__":
             hash_index.add(db)
 
             print('Calculating hash distances...')
-            hash_distances, hash_indices = hash_index.search(db, k = min(100, len(minhash_list)))
+            hash_distances, hash_indices = hash_index.search(db, k = min(25000, len(minhash_list)))
             
             del minhash_list
             del db
@@ -1047,12 +1078,12 @@ if __name__ == "__main__":
 
             mm_exact_items = list(multi_exact_kept.items())
 
-            # Add ungrouped multimapping reads to kept_dict
+            # Add ungrouped multimapping reads to mm_kept_dict
+            mm_kept_dict = {}
             for index in mm_solo:
                 items = mm_exact_items[index]
-                kept_dict.update({items[0]: items[1]})
+                mm_kept_dict.update({items[0]: items[1]})
             
-            n_mm_solo = len(mm_solo)
             del mm_exact_items
             del mm_solo
 
@@ -1068,18 +1099,109 @@ if __name__ == "__main__":
             
             del multi_exact_kept
             
-            n_mm_fuzz = len(multi_fuzzy_kept)
             for key, value in multi_fuzzy_kept.items():
-                kept_dict.update({key: value})
-                
+                mm_kept_dict.update({key: value})
+
             for key, value in multi_fuzzy_dup.items():
                 dup_dict.update({key: value})
                 
             del multi_fuzzy_kept
+            del multi_fuzzy_dup
             
-            multi_perc = ((n_mm_solo + n_mm_fuzz) / n_multi) * 100
-            print(f'{(n_mm_solo + n_mm_fuzz)} multimapping fragments retained ({multi_perc:.2f}%)')
+            multi_perc = (len(mm_kept_dict) / n_multi) * 100
+            print(f'{len(mm_kept_dict)} multimapping fragments retained ({multi_perc:.2f}%)')
 
+            print('\n')
+            print('Cleaning up multimapping reads...')
+            print('Checking for concordance with uniquely mapping reads...')
+            relocated_mm, total_relocated = clean.verify_mm_parallel(
+                mm_kept_dict = mm_kept_dict, 
+                um_kept_dict = kept_dict, 
+                seq_sim = args.seq_sim, 
+                nthr = args.nthr, 
+                chunk_size = args.crop_chunk_size, 
+                prefix_length = 5)
+
+            relocate_perc = (total_relocated / len(mm_kept_dict)) * 100
+            print(f'{total_relocated} multimapping fragments relocated ({relocate_perc:.2f}%)')     
+
+            print('Handling similar multimapping fragments...')
+            print('Hashing LTR-end sequences...')
+            relocated_hashed = Parallel(n_jobs=args.nthr)(
+                delayed(apply_minhash)(
+                    key=key, 
+                    value=value, 
+                    string=(value['seq1']), 
+                    num_bits=args.num_bits,
+                    token_size=args.token_size) 
+                for key, value in relocated_mm.items())
+
+            for key, hashed_value in relocated_hashed:
+                relocated_mm[key] = hashed_value
+            del relocated_hashed
+                        
+            s1_minhash_list = []
+            for key, value in relocated_mm.items():
+                s1_minhash_list.append(value['hash'])
+
+            nb = len(s1_minhash_list)
+            dim = args.num_bits
+            db = np.empty((nb, dim // 8), dtype = 'uint8')
+
+            for i, binary_string in enumerate(s1_minhash_list):
+                db[i] = [int(binary_string[j:j + 8], 2) for j in range(0, dim, 8)]
+
+            print('Building hash index...')
+            s1_hash_index = faiss.IndexBinaryFlat(dim)
+            s1_hash_index.add(db)
+
+            print('Calculating hash distances...')
+            s1_hash_distances, s1_hash_indices = s1_hash_index.search(db, k = min(25000, len(s1_minhash_list)))
+
+            del s1_minhash_list
+            del db
+            del s1_hash_index
+
+            print('Grouping similar hashes...')
+            s1_hash_matches = group_similar_hashes(
+                hash_distances = s1_hash_distances, 
+                hash_indices = s1_hash_indices, 
+                nthr = args.nthr,
+                sensitivity = args.mm_search_sensitivity
+                )
+            
+            s1_mm_solo, s1_mm_groups = parse_hash_matches(s1_hash_matches)
+            del s1_hash_matches
+            s1_mm_solo = [index for sublist in s1_mm_solo for index in sublist]
+            mm_groups = list(map(list, set(map(tuple, s1_mm_groups))))
+            s1_mm_groups = merge_hash_sublists(s1_mm_groups)
+            
+            relocated_items = list(relocated_mm.items())
+            
+            final_mm_dict = {}
+            for index in s1_mm_solo:
+                items = relocated_items[index]
+                final_mm_dict.update({items[0]: items[1]})
+            
+            print('Processing grouped multimapping fragments...')
+            multi_frag_groups = clean.multi_frag_matches(
+                groups = s1_mm_groups, 
+                input_dict = relocated_mm, 
+                sim_threshold = args.seq_sim,
+                nthr = args.nthr,
+                unique_dict = kept_dict,
+                win_len = args.win_len
+            )
+
+            for key, value in multi_frag_groups.items():
+                final_mm_dict.update({key: value})
+
+            for key, value in final_mm_dict.items():
+                kept_dict[key] = value
+        elif n_multi == 0:
+            print('\n')
+            print('No multimapping reads found.')
+            
         print('\n')
         print('Looking for mispriming...')
         shift = args.tsd - 1 if args.U3 else 0
@@ -1093,6 +1215,8 @@ if __name__ == "__main__":
         n_misprime = 0
         misprime_reads = []
         for key, value in list(kept_dict.items()):
+            if not isinstance(value, dict):
+                print(f'key: {key} value: {value}')
             seq = fetch_sequence(coordinates = value, genome = genome,
                                 U3 = args.U3, shift = shift)
             
@@ -1165,7 +1289,7 @@ if __name__ == "__main__":
                     bc_info = [
                         key,
                         value['chrom'],
-                        value['start'],
+                        value['start'] + 1,
                         value['end'],
                         value['strand'],
                         value['count'],
@@ -1174,7 +1298,7 @@ if __name__ == "__main__":
                         value['linker_umi'],
                         value['ltr_match'],
                         value['linker_match'],
-                        site_start if site_strand == '+' else site_end,
+                        (site_start + 1) if site_strand == '+' else site_end,
                         site_strand
                         ]
                     
@@ -1190,15 +1314,17 @@ if __name__ == "__main__":
             for (chrom, start, end, strand), count in site_counts.items():
                 collapsed_sites.append({
                     'chrom': chrom,
-                    'position': start if strand == '+' else end,
-                    'strand': strand,
-                    'count': count
+                    'start': start,
+                    'end': end,
+                    'name': '.',
+                    'count': count,
+                    'strand': strand
                 })
                 
             with gzip.open(counts_out, 'wt') as counts:
                 for value in collapsed_sites:
-                    collapsed_info = [value['chrom'], value['position'],
-                                    value['strand'], value['count']]
+                    collapsed_info = [value['chrom'], value['start'], value['end'],
+                                    value['name'], value['count'], value['strand']]
                     
                     counts.write('\t'.join(map(str, collapsed_info)) + '\n')
                     
@@ -1225,7 +1351,7 @@ if __name__ == "__main__":
                 if not os.path.exists(subdir):
                     os.makedirs(subdir)
                 subdirs.append(subdir)
-                
+
             file_mapping = {
                 '{}_aln.bai'.format(args.nm): subdirs[0],
                 '{}_aln.bam'.format(args.nm): subdirs[0],
@@ -1233,7 +1359,7 @@ if __name__ == "__main__":
                 '{}_sites.bed.gz'.format(args.nm): subdirs[3],
                 '{}_summary.txt.gz'.format(args.nm): subdirs[2],
                 '{}_*_cropped.fq.gz'.format(args.nm): subdirs[1],
-                '{}_site_counts.txt.gz'.format(args.nm): subdirs[3],
+                '{}_unique_sites.bed.gz'.format(args.nm): subdirs[3],
                 '{}_misprimed.fa.gz'.format(args.nm): subdirs[4],
                 '{}_duplicates.json.gz'.format(args.nm): subdirs[4]
                 }

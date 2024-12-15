@@ -128,19 +128,8 @@ def process_read(read, aln_mismatch_rate, aln_indel_rate, max_frag_len,
                 # All filtering is done at this point
                 # Fill-in read information
                 strand = '-' if tlen < 0 else '+'
-                
-                bcs = read.get_tag('RX').split('-')
-                
-                if U3:
-                    # Define LTR UMI relative to provirus orientation
-                    # and linker UMI relative to the top strand.
-                    # Because cropping operates on the sequenced strand,
-                    # UMIs from reverse strand must be corrected for orientation.
-                    ltr_umi = crop.revcomp(bcs[0])
-                    linker_umi = bcs[1]
-                else:
-                    ltr_umi = bcs[0]
-                    linker_umi = crop.revcomp(bcs[1])
+                                
+                ltr_umi, linker_umi = read.get_tag('RX').split('-')
 
                 # Define sequences relative to sequenced strand
                 # Since BAM files report everything relative to the forward strand,

@@ -2,7 +2,7 @@ from setuptools import setup
 
 setup(
 	name='intmap',
-	version='1.0.0',
+	version='0.1.0',
 	author='Greg Bedwell',
 	author_email='gregoryjbedwell@gmail.com',
 	packages=['intmap','intmap-demux','intmap-multi'],
