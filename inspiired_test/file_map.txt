@@ -1,0 +1,4 @@
+clone1_R1.fq.gz, test1_R1.fq.gz
+clone1_R2.fq.gz, test1_R2.fq.gz
+clone2_R1.fq.gz, test2_R1.fq.gz
+clone2_R2.fq.gz, test2_R2.fq.gz

@@ -504,7 +504,7 @@ def seq_sim_trimmed(seq1, seq2, sim_threshold):
         trimmed_seq1 = seq1[:min_length]
         trimmed_seq2 = seq2[:min_length]
         sim_score = seq_similarity(trimmed_seq1, trimmed_seq2)
-        hamming_dist = hamming_distance(trimmed_seq1[:5], trimmed_seq2[:5])
+        hamming_dist = hamming_distance(trimmed_seq1[:10], trimmed_seq2[:10])
         return sim_score if (sim_score > sim_threshold and hamming_dist <= 2) else 0
 
 def process_mm_frag_group(group, input_dict, sim_threshold, unique_dict, win_len):
@@ -553,9 +553,9 @@ def process_mm_frag_group(group, input_dict, sim_threshold, unique_dict, win_len
                 best_seq_id = seq_id
                 break
             
-            current_pos = int(read_data['start'] if read_data['strand'] == '+' else read_data['end'])
+            current_pos = read_data['start'] if read_data['strand'] == '+' else read_data['end']
             unique_positions = [
-                int(um_read['start']) if um_read['strand'] == '+' else int(um_read['end'])
+                um_read['start'] if um_read['strand'] == '+' else int(um_read['end'])
                 for um_read in unique_dict.values()
                 ]
 

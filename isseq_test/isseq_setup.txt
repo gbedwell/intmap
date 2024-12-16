@@ -1,0 +1,21 @@
+34
+r1, r2, ltr5, ltr3, linker5, linker3, ltr1_primer, c, nm, nthr, bt2_idx_dir, bt2_idx_name, v_idx_dir, v_idx_name, genome_fasta, linker_umi_offset, linker_umi_len, no_mm, linker_umi_pattern
+demux/0-100-250ng_1_R1.fq.gz,demux/0-100-250ng_2_R1.fq.gz,demux/0-100-500ng_1_R1.fq.gz,demux/1-90-250ng_1_R1.fq.gz,demux/1-90-250ng_2_R1.fq.gz,demux/1-90-500ng_1_R1.fq.gz,demux/10-90-250ng_1_R1.fq.gz,demux/10-90-250ng_2_R1.fq.gz,demux/10-90-500ng_1_R1.fq.gz,demux/100-0-250ng_1_R1.fq.gz,demux/100-0-250ng_2_R1.fq.gz,demux/100-0-500ng_1_R1.fq.gz,demux/50-50-250ng_1_R1.fq.gz,demux/50-50-250ng_2_R1.fq.gz,demux/50-50-500ng_1_R1.fq.gz,demux/75-25-250ng_1_R1.fq.gz,demux/75-25-250ng_2_R1.fq.gz,demux/75-25-500ng_1_R1.fq.gz,demux/CL.6_R1.fq.gz,demux/CL.H4_R1.fq.gz,demux/EP.LIG_2_R1.fq.gz,demux/EP.LIG_R1.fq.gz,demux/H2O_1_R1.fq.gz,demux/H2O_2_R1.fq.gz,demux/MOI30.CL.B6_R1.fq.gz,demux/MOI30.CL.B7_R1.fq.gz,demux/MOI30.CL.C9_R1.fq.gz,demux/MOI30.CL.E1_R1.fq.gz,demux/MOI50.CL.B9_R1.fq.gz,demux/MOI50.CL.E6_R1.fq.gz,demux/MOI50.CL.H6_R1.fq.gz,demux/UT-250ng_1_R1.fq.gz,demux/UT-500ng_1_R1.fq.gz,demux/WT_R1.fq.gz
+demux/0-100-250ng_1_R2.fq.gz,demux/0-100-250ng_2_R2.fq.gz,demux/0-100-500ng_1_R2.fq.gz,demux/1-90-250ng_1_R2.fq.gz,demux/1-90-250ng_2_R2.fq.gz,demux/1-90-500ng_1_R2.fq.gz,demux/10-90-250ng_1_R2.fq.gz,demux/10-90-250ng_2_R2.fq.gz,demux/10-90-500ng_1_R2.fq.gz,demux/100-0-250ng_1_R2.fq.gz,demux/100-0-250ng_2_R2.fq.gz,demux/100-0-500ng_1_R2.fq.gz,demux/50-50-250ng_1_R2.fq.gz,demux/50-50-250ng_2_R2.fq.gz,demux/50-50-500ng_1_R2.fq.gz,demux/75-25-250ng_1_R2.fq.gz,demux/75-25-250ng_2_R2.fq.gz,demux/75-25-500ng_1_R2.fq.gz,demux/CL.6_R2.fq.gz,demux/CL.H4_R2.fq.gz,demux/EP.LIG_2_R2.fq.gz,demux/EP.LIG_R2.fq.gz,demux/H2O_1_R2.fq.gz,demux/H2O_2_R2.fq.gz,demux/MOI30.CL.B6_R2.fq.gz,demux/MOI30.CL.B7_R2.fq.gz,demux/MOI30.CL.C9_R2.fq.gz,demux/MOI30.CL.E1_R2.fq.gz,demux/MOI50.CL.B9_R2.fq.gz,demux/MOI50.CL.E6_R2.fq.gz,demux/MOI50.CL.H6_R2.fq.gz,demux/UT-250ng_1_R2.fq.gz,demux/UT-500ng_1_R2.fq.gz,demux/WT_R2.fq.gz
+AGTCAGTGTGGA
+AAATCTCTAGCA
+AGATCTGGAA
+TGAACTGGCC
+TTGAGTGCTTCA
+TGGCGCCCGAAC
+0-100-250ng_1,0-100-250ng_2,0-100-500ng_1,1-90-250ng_1,1-90-250ng_2,1-90-500ng_1,10-90-250ng_1,10-90-250ng_2,10-90-500ng_1,100-0-250ng_1,100-0-250ng_2,100-0-500ng_1,50-50-250ng_1,50-50-250ng_2,50-50-500ng_1,75-25-250ng_1,75-25-250ng_2,75-25-500ng_1,CL.6,CL.H4,EP.LIG_2,EP.LIG,H2O_1,H2O_2,MOI30.CL.B6,MOI30.CL.B7,MOI30.CL.C9,MOI30.CL.E1,MOI50.CL.B9,MOI50.CL.E6,MOI50.CL.H6,UT-250ng_1,UT-500ng_1,WT
+4
+/Users/gbedwell/Documents/github/T2T_genome/indexes/bowtie2
+hs1
+/Users/gbedwell/Desktop/isseq_test/pRRLSIN
+pRRLSIN
+/Users/gbedwell/Documents/github/T2T_genome/UCSC/hs1.fa.bgz
+0
+18
+False
+NNNNNNGTAAGGNNNNNN

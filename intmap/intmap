@@ -667,6 +667,9 @@ if __name__ == "__main__":
         if args.match_after < 0:
             raise ValueError('match_after must be >= 0.')
         
+        if args.min_frag_len < 10:
+            raise ValueError('min_frag_len must be > 10.')
+        
         print('\n')
         print('Sample name:', args.nm)
         print('Parsing files', args.r1, 'and', args.r2)
@@ -788,7 +791,10 @@ if __name__ == "__main__":
         print(f'Number of reads retained after cropping: {n_cropped} ({crop_perc:.2f}%)')
         
         if n_cropped == 0:
-            print('No reads retained after cropping. Exiting.')
+            print('\n')
+            print('No reads were retained after cropping. Exiting.')
+            os.remove(fq1)
+            os.remove(fq2)
             sys.exit()
         
         if args.no_crop is True:
@@ -847,143 +853,60 @@ if __name__ == "__main__":
         print(f'Number of pairs that pass QC: {n_pairs_qc} ({pairs_qc_perc:.2f}%)')
         
         if n_pairs_qc == 0:
-            # To-do: Clean up any files generated before this point.
-            print(f'\nNo pairs pass QC. Exiting.')
-            sys.exit()
-
-        print('\n')
-        print('Handling duplicate fragments...')
-        frags_dict = {}
-        for read1_info, read2_info in processed_pairs:
-            if read1_info['strand'] == '-':
-                frag_start = read2_info['reference_start']
-                frag_end = read1_info['reference_end']
-            else:
-                frag_start = read1_info['reference_start']
-                frag_end = read2_info['reference_end']
-                
-            combined_qual = (read1_info['mean_quality'] + read2_info['mean_quality']) / 2
-
-            frags_dict[read1_info['query_name']] = {
-                'chrom': read1_info['reference_name'],
-                'start': frag_start,
-                'end': frag_end,
-                'count': read1_info['duplicate_count'],
-                'strand': read1_info['strand'],
-                'ltr_umi': read1_info['ltr_umi'],
-                'linker_umi': read1_info['linker_umi'],
-                'seq1': read1_info['sequence'], 
-                'seq2': read2_info['sequence'],
-                'multi': (True if (read1_info['multimapping'] or read2_info['multimapping']) else False),
-                'mean_qual': -10 * math.log10(combined_qual),
-                'ltr_match': read1_info['ltr_match'],
-                'linker_match': read1_info['linker_match']
-                }
-            
-        del read_pairs
-        del processed_pairs
-            
-        unique_all = {}
-        multi_all = {}
-        for key, value in frags_dict.items():
-            if value['multi']:
-                multi_all[key] = value
-            else:
-                unique_all[key] = value
-                
-        del frags_dict
-        
-        n_unique = len(unique_all)
-        n_multi = len(multi_all)
-        print('Starting number of uniquely mapping fragments:', n_unique)
-
-        # Put unique reads into a dictionary with (chrom, strand) as keys.
-        # The value associated with each key is a list of dictionaries containing
-        # read information.
-        unique_all_split = defaultdict(list)
-        for read_key, info in unique_all.items():
-            key = (info['chrom'], info['strand'])
-            value = {'chrom': info['chrom'],
-                    'start': info['start'], 
-                    'end': info['end'],
-                    'count': info['count'],
-                    'strand': info['strand'],
-                    'ltr_umi': info['ltr_umi'],
-                    'linker_umi': info['linker_umi'],
-                    'seq1': info['seq1'], 
-                    'seq2': info['seq2'],
-                    'multi': info['multi'],
-                    'mean_qual': info['mean_qual'],
-                    'ltr_match': info['ltr_match'],
-                    'linker_match': info['linker_match'],
-                    'read': read_key}
-            
-            if key not in unique_all_split:
-                unique_all_split[key] = [value]
-            else:
-                unique_all_split[key].append(value)
-                
-        del unique_all
-                
-        # Make the dictionary into a list for easy parallelization
-        unique_all_split_list = []
-        for key, value in unique_all_split.items():
-            unique_all_split_list.append({key: value})
-            
-        del unique_all_split
-        
-        print('Collapsing unique exact matches...')
-        # Run unique_exact_matches() for each dictionary in list
-        ue_kept_list = Parallel(n_jobs = min(len(unique_all_split_list), args.nthr))(
-            delayed(clean.unique_exact_matches)(
-                input_dict = unique_all_split_list[entry]) 
-            for entry in range(len(unique_all_split_list)))
-        
-        del unique_all_split_list
-        
-        # Create the kept dictionary for unique reads.
-        # This contains read information for each unique fragment with
-        # exact matches collapsed into the read with the highest quality score
-        unique_exact_kept = {}
-        for dd in ue_kept_list:
-            unique_exact_kept.update(dd)
-
-        # Convert unique_exact_kept to a list of dictionaries for parallelization.
-        ue_kept_list = []
-        for key, value in unique_exact_kept.items():
-            ue_kept_list.append({key: value})
-            
-        del unique_exact_kept
-
-        print('Looking for unique fuzzy matches...')
-        uf_kept_list = Parallel(n_jobs = min(len(ue_kept_list), args.nthr))(
-            delayed(clean.unique_fuzzy_matches)(
-                input_dict = ue_kept_list[entry], 
-                len_diff = args.len_diff, 
-                umi_diff = args.umi_diff, 
-                frag_ratio = args.frag_ratio) 
-            for entry in range(len(ue_kept_list)))
-
-        unique_fuzzy_kept = {}
-        unique_fuzzy_dup = {}
-        for kept, dup in uf_kept_list:
-            unique_fuzzy_kept.update(kept)
-            for key, value in dup.items():
-                if key not in unique_fuzzy_dup:
-                    unique_fuzzy_dup[key] = value
+            n_mapped = 0
+        else:
+            print('\n')
+            print('Handling duplicate fragments...')
+            frags_dict = {}
+            for read1_info, read2_info in processed_pairs:
+                if read1_info['strand'] == '-':
+                    frag_start = read2_info['reference_start']
+                    frag_end = read1_info['reference_end']
                 else:
-                    unique_fuzzy_dup[key].extend(value)
+                    frag_start = read1_info['reference_start']
+                    frag_end = read2_info['reference_end']
+                    
+                combined_qual = (read1_info['mean_quality'] + read2_info['mean_quality']) / 2
 
-        del ue_kept_list
-        del uf_kept_list
+                frags_dict[read1_info['query_name']] = {
+                    'chrom': read1_info['reference_name'],
+                    'start': frag_start,
+                    'end': frag_end,
+                    'count': read1_info['duplicate_count'],
+                    'strand': read1_info['strand'],
+                    'ltr_umi': read1_info['ltr_umi'],
+                    'linker_umi': read1_info['linker_umi'],
+                    'seq1': read1_info['sequence'], 
+                    'seq2': read2_info['sequence'],
+                    'multi': (True if (read1_info['multimapping'] or read2_info['multimapping']) else False),
+                    'mean_qual': -10 * math.log10(combined_qual),
+                    'ltr_match': read1_info['ltr_match'],
+                    'linker_match': read1_info['linker_match']
+                    }
+                
+            del read_pairs
+            del processed_pairs
+                
+            unique_all = {}
+            multi_all = {}
+            for key, value in frags_dict.items():
+                if value['multi']:
+                    multi_all[key] = value
+                else:
+                    unique_all[key] = value
+                    
+            del frags_dict
             
-        # Initialize the dictionary to hold the final kept reads
-        kept_dict = {}
-        
-        # Add kept unique reads to kept_dict
-        for split_key, info_list in unique_fuzzy_kept.items():
-            for info in info_list:
-                key = info['read']
+            n_unique = len(unique_all)
+            n_multi = len(multi_all)
+            print('Starting number of uniquely mapping fragments:', n_unique)
+
+            # Put unique reads into a dictionary with (chrom, strand) as keys.
+            # The value associated with each key is a list of dictionaries containing
+            # read information.
+            unique_all_split = defaultdict(list)
+            for read_key, info in unique_all.items():
+                key = (info['chrom'], info['strand'])
                 value = {'chrom': info['chrom'],
                         'start': info['start'], 
                         'end': info['end'],
@@ -996,239 +919,320 @@ if __name__ == "__main__":
                         'multi': info['multi'],
                         'mean_qual': info['mean_qual'],
                         'ltr_match': info['ltr_match'],
-                        'linker_match': info['linker_match']}
-                kept_dict[key] = value
-
-        # At this point, len(kept_dict) = len(kept unique fragments)
-        unique_perc = (len(kept_dict) / n_unique) * 100
-        print(f'{len(kept_dict)} uniquely mapping fragments retained ({unique_perc:.2f}%)')
-        del unique_fuzzy_kept
-        
-        dup_dict = {}
-        for key, value in unique_fuzzy_dup.items():
-            dup_dict.update({key: value})
-            
-        del unique_fuzzy_dup
-        
-        if n_multi > 0 and not args.no_mm:
-            print('\n')
-            print('Starting number of multimapping fragments:', n_multi)
-            print('Collapsing multimapping exact matches...')
-            # Collapse exact multimapping reads
-            multi_exact_kept = clean.multi_exact_matches(input_dict = multi_all)
-            
-            del multi_all
-
-            print('Hashing multimapping sequences for fuzzy matching...')
-            # Create minhashes for all multimapping reads
-            multi_exact_hashed = Parallel(n_jobs = args.nthr)(
-                delayed(apply_minhash)(
-                    key = key, 
-                    value = value, 
-                    string = (value['seq1'] + value['seq2']), 
-                    num_bits = args.num_bits,
-                    token_size = args.token_size) 
-                for key, value in multi_exact_kept.items())
-
-            for key, updated_value in multi_exact_hashed:
-                multi_exact_kept[key] = updated_value
-
-            del multi_exact_hashed
-
-            # Make minhash list
-            minhash_list = []
-            for key, value in multi_exact_kept.items():
-                minhash_list.append(value['hash'])
-
-            # Define hash index parameters
-            nb = len(minhash_list)
-            dim = args.num_bits
-            db = np.empty((nb, dim // 8), dtype = 'uint8')
-
-            print('Building hash index...')
-            for i, binary_string in enumerate(minhash_list):
-                db[i] = [int(binary_string[j:j + 8], 2) for j in range(0, dim, 8)]
-
-            hash_index = faiss.IndexBinaryFlat(dim)
-            hash_index.add(db)
-
-            print('Calculating hash distances...')
-            hash_distances, hash_indices = hash_index.search(db, k = min(25000, len(minhash_list)))
-            
-            del minhash_list
-            del db
-            del hash_index
-            
-            print('Grouping similar hashes...')
-            hash_matches = group_similar_hashes(
-                hash_distances = hash_distances, 
-                hash_indices = hash_indices, 
-                nthr = args.nthr,
-                sensitivity = args.mm_search_sensitivity
-                )
+                        'linker_match': info['linker_match'],
+                        'read': read_key}
                 
-            del hash_distances
-            del hash_indices
+                if key not in unique_all_split:
+                    unique_all_split[key] = [value]
+                else:
+                    unique_all_split[key].append(value)
+                    
+            del unique_all
+                    
+            # Make the dictionary into a list for easy parallelization
+            unique_all_split_list = []
+            for key, value in unique_all_split.items():
+                unique_all_split_list.append({key: value})
                 
-            mm_solo, mm_groups = parse_hash_matches(hash_matches)
-            del hash_matches
-            mm_solo = [index for sublist in mm_solo for index in sublist]
-            mm_groups = list(map(list, set(map(tuple, mm_groups))))
-            mm_groups = merge_hash_sublists(mm_groups)
-
-            mm_exact_items = list(multi_exact_kept.items())
-
-            # Add ungrouped multimapping reads to mm_kept_dict
-            mm_kept_dict = {}
-            for index in mm_solo:
-                items = mm_exact_items[index]
-                mm_kept_dict.update({items[0]: items[1]})
+            del unique_all_split
             
-            del mm_exact_items
-            del mm_solo
-
-            print('Looking for multimapping fuzzy matches...')
-            multi_fuzzy_kept, multi_fuzzy_dup = clean.multi_fuzzy_matches(
-                groups=mm_groups, 
-                input_dict=multi_exact_kept, 
-                umi_diff=args.umi_diff, 
-                frag_ratio=args.frag_ratio, 
-                sim_threshold=args.seq_sim,
-                nthr = args.nthr
-                )
+            print('Collapsing unique exact matches...')
+            # Run unique_exact_matches() for each dictionary in list
+            ue_kept_list = Parallel(n_jobs = min(len(unique_all_split_list), args.nthr))(
+                delayed(clean.unique_exact_matches)(
+                    input_dict = unique_all_split_list[entry]) 
+                for entry in range(len(unique_all_split_list)))
             
-            del multi_exact_kept
+            del unique_all_split_list
             
-            for key, value in multi_fuzzy_kept.items():
-                mm_kept_dict.update({key: value})
+            # Create the kept dictionary for unique reads.
+            # This contains read information for each unique fragment with
+            # exact matches collapsed into the read with the highest quality score
+            unique_exact_kept = {}
+            for dd in ue_kept_list:
+                unique_exact_kept.update(dd)
 
-            for key, value in multi_fuzzy_dup.items():
+            # Convert unique_exact_kept to a list of dictionaries for parallelization.
+            ue_kept_list = []
+            for key, value in unique_exact_kept.items():
+                ue_kept_list.append({key: value})
+                
+            del unique_exact_kept
+
+            print('Looking for unique fuzzy matches...')
+            uf_kept_list = Parallel(n_jobs = min(len(ue_kept_list), args.nthr))(
+                delayed(clean.unique_fuzzy_matches)(
+                    input_dict = ue_kept_list[entry], 
+                    len_diff = args.len_diff, 
+                    umi_diff = args.umi_diff, 
+                    frag_ratio = args.frag_ratio) 
+                for entry in range(len(ue_kept_list)))
+
+            unique_fuzzy_kept = {}
+            unique_fuzzy_dup = {}
+            for kept, dup in uf_kept_list:
+                unique_fuzzy_kept.update(kept)
+                for key, value in dup.items():
+                    if key not in unique_fuzzy_dup:
+                        unique_fuzzy_dup[key] = value
+                    else:
+                        unique_fuzzy_dup[key].extend(value)
+
+            del ue_kept_list
+            del uf_kept_list
+                
+            # Initialize the dictionary to hold the final kept reads
+            kept_dict = {}
+            
+            # Add kept unique reads to kept_dict
+            for split_key, info_list in unique_fuzzy_kept.items():
+                for info in info_list:
+                    key = info['read']
+                    value = {'chrom': info['chrom'],
+                            'start': info['start'], 
+                            'end': info['end'],
+                            'count': info['count'],
+                            'strand': info['strand'],
+                            'ltr_umi': info['ltr_umi'],
+                            'linker_umi': info['linker_umi'],
+                            'seq1': info['seq1'], 
+                            'seq2': info['seq2'],
+                            'multi': info['multi'],
+                            'mean_qual': info['mean_qual'],
+                            'ltr_match': info['ltr_match'],
+                            'linker_match': info['linker_match']}
+                    kept_dict[key] = value
+
+            # At this point, len(kept_dict) = len(kept unique fragments)
+            unique_perc = (len(kept_dict) / n_unique) * 100
+            print(f'{len(kept_dict)} uniquely mapping fragments retained ({unique_perc:.2f}%)')
+            del unique_fuzzy_kept
+            
+            dup_dict = {}
+            for key, value in unique_fuzzy_dup.items():
                 dup_dict.update({key: value})
                 
-            del multi_fuzzy_kept
-            del multi_fuzzy_dup
+            del unique_fuzzy_dup
             
-            multi_perc = (len(mm_kept_dict) / n_multi) * 100
-            print(f'{len(mm_kept_dict)} multimapping fragments retained ({multi_perc:.2f}%)')
-
-            print('\n')
-            print('Cleaning up multimapping reads...')
-            print('Checking for concordance with uniquely mapping reads...')
-            relocated_mm, total_relocated = clean.verify_mm_parallel(
-                mm_kept_dict = mm_kept_dict, 
-                um_kept_dict = kept_dict, 
-                seq_sim = args.seq_sim, 
-                nthr = args.nthr, 
-                chunk_size = args.crop_chunk_size, 
-                prefix_length = 5)
-
-            relocate_perc = (total_relocated / len(mm_kept_dict)) * 100
-            print(f'{total_relocated} multimapping fragments relocated ({relocate_perc:.2f}%)')     
-
-            print('Handling similar multimapping fragments...')
-            print('Hashing LTR-end sequences...')
-            relocated_hashed = Parallel(n_jobs=args.nthr)(
-                delayed(apply_minhash)(
-                    key=key, 
-                    value=value, 
-                    string=(value['seq1']), 
-                    num_bits=args.num_bits,
-                    token_size=args.token_size) 
-                for key, value in relocated_mm.items())
-
-            for key, hashed_value in relocated_hashed:
-                relocated_mm[key] = hashed_value
-            del relocated_hashed
-                        
-            s1_minhash_list = []
-            for key, value in relocated_mm.items():
-                s1_minhash_list.append(value['hash'])
-
-            nb = len(s1_minhash_list)
-            dim = args.num_bits
-            db = np.empty((nb, dim // 8), dtype = 'uint8')
-
-            for i, binary_string in enumerate(s1_minhash_list):
-                db[i] = [int(binary_string[j:j + 8], 2) for j in range(0, dim, 8)]
-
-            print('Building hash index...')
-            s1_hash_index = faiss.IndexBinaryFlat(dim)
-            s1_hash_index.add(db)
-
-            print('Calculating hash distances...')
-            s1_hash_distances, s1_hash_indices = s1_hash_index.search(db, k = min(25000, len(s1_minhash_list)))
-
-            del s1_minhash_list
-            del db
-            del s1_hash_index
-
-            print('Grouping similar hashes...')
-            s1_hash_matches = group_similar_hashes(
-                hash_distances = s1_hash_distances, 
-                hash_indices = s1_hash_indices, 
-                nthr = args.nthr,
-                sensitivity = args.mm_search_sensitivity
-                )
-            
-            s1_mm_solo, s1_mm_groups = parse_hash_matches(s1_hash_matches)
-            del s1_hash_matches
-            s1_mm_solo = [index for sublist in s1_mm_solo for index in sublist]
-            mm_groups = list(map(list, set(map(tuple, s1_mm_groups))))
-            s1_mm_groups = merge_hash_sublists(s1_mm_groups)
-            
-            relocated_items = list(relocated_mm.items())
-            
-            final_mm_dict = {}
-            for index in s1_mm_solo:
-                items = relocated_items[index]
-                final_mm_dict.update({items[0]: items[1]})
-            
-            print('Processing grouped multimapping fragments...')
-            multi_frag_groups = clean.multi_frag_matches(
-                groups = s1_mm_groups, 
-                input_dict = relocated_mm, 
-                sim_threshold = args.seq_sim,
-                nthr = args.nthr,
-                unique_dict = kept_dict,
-                win_len = args.win_len
-            )
-
-            for key, value in multi_frag_groups.items():
-                final_mm_dict.update({key: value})
-
-            for key, value in final_mm_dict.items():
-                kept_dict[key] = value
-        elif n_multi == 0:
-            print('\n')
-            print('No multimapping reads found.')
-            
-        print('\n')
-        print('Looking for mispriming...')
-        shift = args.tsd - 1 if args.U3 else 0
-        
-        ltr1_primer = args.ltr1_primer
-        ltr1_primer = ltr1_primer.replace(' ', '').upper()[-10:]
-        ltr1_primer_pattern = '({}){{s<={}}}'.format(ltr1_primer, args.misprime_mismatch)
-        ltr1_primer_regex = regex.compile(ltr1_primer_pattern)
-
-        n_prior = len(kept_dict)
-        n_misprime = 0
-        misprime_reads = []
-        for key, value in list(kept_dict.items()):
-            if not isinstance(value, dict):
-                print(f'key: {key} value: {value}')
-            seq = fetch_sequence(coordinates = value, genome = genome,
-                                U3 = args.U3, shift = shift)
-            
-            if regex.search(ltr1_primer_regex, seq):
-                del kept_dict[key]
-                misprime_reads.append((key, seq))
-                n_misprime += 1
+            if n_multi > 0 and not args.no_mm:
+                print('\n')
+                print('Starting number of multimapping fragments:', n_multi)
+                print('Collapsing multimapping exact matches...')
+                # Collapse exact multimapping reads
+                multi_exact_kept = clean.multi_exact_matches(input_dict = multi_all)
                 
-        mp_perc = (n_misprime / n_prior) * 100
-        print(f'Removing {n_misprime} fragments due to potential mispriming ({mp_perc:.2f}% of total)')
-        n_mapped = len(kept_dict)
-        print(n_mapped, 'fragments remaining')
+                del multi_all
+
+                print('Hashing multimapping sequences for fuzzy matching...')
+                # Create minhashes for all multimapping reads
+                multi_exact_hashed = Parallel(n_jobs = args.nthr)(
+                    delayed(apply_minhash)(
+                        key = key, 
+                        value = value, 
+                        string = (value['seq1'] + value['seq2']), 
+                        num_bits = args.num_bits,
+                        token_size = args.token_size) 
+                    for key, value in multi_exact_kept.items())
+
+                for key, updated_value in multi_exact_hashed:
+                    multi_exact_kept[key] = updated_value
+
+                del multi_exact_hashed
+
+                # Make minhash list
+                minhash_list = []
+                for key, value in multi_exact_kept.items():
+                    minhash_list.append(value['hash'])
+
+                # Define hash index parameters
+                nb = len(minhash_list)
+                dim = args.num_bits
+                db = np.empty((nb, dim // 8), dtype = 'uint8')
+
+                print('Building hash index...')
+                for i, binary_string in enumerate(minhash_list):
+                    db[i] = [int(binary_string[j:j + 8], 2) for j in range(0, dim, 8)]
+
+                hash_index = faiss.IndexBinaryFlat(dim)
+                hash_index.add(db)
+
+                print('Calculating hash distances...')
+                hash_distances, hash_indices = hash_index.search(db, k = min(25000, len(minhash_list)))
+                
+                del minhash_list
+                del db
+                del hash_index
+                
+                print('Grouping similar hashes...')
+                hash_matches = group_similar_hashes(
+                    hash_distances = hash_distances, 
+                    hash_indices = hash_indices, 
+                    nthr = args.nthr,
+                    sensitivity = args.mm_search_sensitivity
+                    )
+                    
+                del hash_distances
+                del hash_indices
+                    
+                mm_solo, mm_groups = parse_hash_matches(hash_matches)
+                del hash_matches
+                mm_solo = [index for sublist in mm_solo for index in sublist]
+                mm_groups = list(map(list, set(map(tuple, mm_groups))))
+                mm_groups = merge_hash_sublists(mm_groups)
+
+                mm_exact_items = list(multi_exact_kept.items())
+
+                # Add ungrouped multimapping reads to mm_kept_dict
+                mm_kept_dict = {}
+                for index in mm_solo:
+                    items = mm_exact_items[index]
+                    mm_kept_dict.update({items[0]: items[1]})
+                
+                del mm_exact_items
+                del mm_solo
+
+                print('Looking for multimapping fuzzy matches...')
+                multi_fuzzy_kept, multi_fuzzy_dup = clean.multi_fuzzy_matches(
+                    groups=mm_groups, 
+                    input_dict=multi_exact_kept, 
+                    umi_diff=args.umi_diff, 
+                    frag_ratio=args.frag_ratio, 
+                    sim_threshold=args.seq_sim,
+                    nthr = args.nthr
+                    )
+                
+                del multi_exact_kept
+                
+                for key, value in multi_fuzzy_kept.items():
+                    mm_kept_dict.update({key: value})
+
+                for key, value in multi_fuzzy_dup.items():
+                    dup_dict.update({key: value})
+                    
+                del multi_fuzzy_kept
+                del multi_fuzzy_dup
+                
+                multi_perc = (len(mm_kept_dict) / n_multi) * 100
+                print(f'{len(mm_kept_dict)} multimapping fragments retained ({multi_perc:.2f}%)')
+
+                print('\n')
+                print('Cleaning up multimapping reads...')
+                print('Checking for concordance with uniquely mapping reads...')
+                relocated_mm, total_relocated = clean.verify_mm_parallel(
+                    mm_kept_dict = mm_kept_dict, 
+                    um_kept_dict = kept_dict, 
+                    seq_sim = args.seq_sim, 
+                    nthr = args.nthr, 
+                    chunk_size = args.crop_chunk_size, 
+                    prefix_length = 5)
+
+                relocate_perc = (total_relocated / len(mm_kept_dict)) * 100
+                print(f'{total_relocated} multimapping fragments relocated ({relocate_perc:.2f}%)')     
+
+                print('Handling similar multimapping fragments...')
+                print('Hashing LTR-end sequences...')
+                relocated_hashed = Parallel(n_jobs=args.nthr)(
+                    delayed(apply_minhash)(
+                        key=key, 
+                        value=value, 
+                        string=(value['seq1']), 
+                        num_bits=args.num_bits,
+                        token_size=args.token_size) 
+                    for key, value in relocated_mm.items())
+
+                for key, hashed_value in relocated_hashed:
+                    relocated_mm[key] = hashed_value
+                del relocated_hashed
+                            
+                s1_minhash_list = []
+                for key, value in relocated_mm.items():
+                    s1_minhash_list.append(value['hash'])
+
+                nb = len(s1_minhash_list)
+                dim = args.num_bits
+                db = np.empty((nb, dim // 8), dtype = 'uint8')
+
+                for i, binary_string in enumerate(s1_minhash_list):
+                    db[i] = [int(binary_string[j:j + 8], 2) for j in range(0, dim, 8)]
+
+                print('Building hash index...')
+                s1_hash_index = faiss.IndexBinaryFlat(dim)
+                s1_hash_index.add(db)
+
+                print('Calculating hash distances...')
+                s1_hash_distances, s1_hash_indices = s1_hash_index.search(db, k = min(25000, len(s1_minhash_list)))
+
+                del s1_minhash_list
+                del db
+                del s1_hash_index
+
+                print('Grouping similar hashes...')
+                s1_hash_matches = group_similar_hashes(
+                    hash_distances = s1_hash_distances, 
+                    hash_indices = s1_hash_indices, 
+                    nthr = args.nthr,
+                    sensitivity = args.mm_search_sensitivity
+                    )
+                
+                s1_mm_solo, s1_mm_groups = parse_hash_matches(s1_hash_matches)
+                del s1_hash_matches
+                s1_mm_solo = [index for sublist in s1_mm_solo for index in sublist]
+                mm_groups = list(map(list, set(map(tuple, s1_mm_groups))))
+                s1_mm_groups = merge_hash_sublists(s1_mm_groups)
+                
+                relocated_items = list(relocated_mm.items())
+                
+                final_mm_dict = {}
+                for index in s1_mm_solo:
+                    items = relocated_items[index]
+                    final_mm_dict.update({items[0]: items[1]})
+                
+                print('Processing grouped multimapping fragments...')
+                multi_frag_groups = clean.multi_frag_matches(
+                    groups = s1_mm_groups, 
+                    input_dict = relocated_mm, 
+                    sim_threshold = args.seq_sim,
+                    nthr = args.nthr,
+                    unique_dict = kept_dict,
+                    win_len = args.win_len
+                )
+
+                for key, value in multi_frag_groups.items():
+                    final_mm_dict.update({key: value})
+
+                for key, value in final_mm_dict.items():
+                    kept_dict[key] = value
+            elif n_multi == 0:
+                print('\n')
+                print('No multimapping reads found.')
+                
+            print('\n')
+            print('Looking for mispriming...')
+            shift = args.tsd - 1 if args.U3 else 0
+            
+            ltr1_primer = args.ltr1_primer
+            ltr1_primer = ltr1_primer.replace(' ', '').upper()[-10:]
+            ltr1_primer_pattern = '({}){{s<={}}}'.format(ltr1_primer, args.misprime_mismatch)
+            ltr1_primer_regex = regex.compile(ltr1_primer_pattern)
+
+            n_prior = len(kept_dict)
+            n_misprime = 0
+            misprime_reads = []
+            for key, value in list(kept_dict.items()):
+                if not isinstance(value, dict):
+                    print(f'key: {key} value: {value}')
+                seq = fetch_sequence(coordinates = value, genome = genome,
+                                    U3 = args.U3, shift = shift)
+                
+                if regex.search(ltr1_primer_regex, seq):
+                    del kept_dict[key]
+                    misprime_reads.append((key, seq))
+                    n_misprime += 1
+                    
+            mp_perc = (n_misprime / n_prior) * 100
+            print(f'Removing {n_misprime} fragments due to potential mispriming ({mp_perc:.2f}% of total)')
+            n_mapped = len(kept_dict)
+            print(n_mapped, 'fragments remaining')
                 
         if n_mapped > 0:
             kept_sorted = sorted(
@@ -1340,8 +1344,14 @@ if __name__ == "__main__":
                     gzip.open(bc_out, 'wt') as bc, gzip.open(counts_out, 'wt') as counts,
                     gzip.open(out_mp, 'wt') as mp, gzip.open(out_dup, 'wt') as dups):
                 pass
-            print('\n')
-            print('No sequences passed QC. No integration sites found...')
+            if n_pairs_qc > 0:
+                print('\n')
+                print('No quality fragments were retained. No integration sites were mapped.')
+            else:
+                print('\n')
+                print('No read pairs pass initial QC. No integration sites were mapped.')
+                with open(out_bam, 'wt') as frags, open(out_bam.replace('.bam', '.bai')):
+                    pass
         
         if not args.disorg:
             data_types = ['alignments', 'cropped_reads', 'fragments', 'sites', 'removed']

@@ -1,0 +1,9 @@
+LAM-PCR-ID,PT-DONOR-MOUSE,PT-Transduction-ID,Source,Sample-Type,Research-(-R-)-Clinic-(-C-),TimePoint-R(d)-C(d),Fusion-Primer-LTR--ID,Fusion-Primer-LC--ID,Library,Sequencing-date-(mm-dd-yy),Organism,VectorType,VectorMask,Linker-Cassette,Vector,Other-Infos,Other-infos-2
+s36.1,,HL60-Research,CELL-LINE,HL60cl6-100-HL60-Poly-0,R,1,FB-P5-Rd1-LTR.16,FB-P7-Rd2-LC.15,POOL-ISA-AVRO-21-Res,2/9/22,hg38,SIN-LV,Empty-bed,LCbrcd,MND-GFP,,
+s36.2,,HL60-Research,CELL-LINE,HL60cl6-75-HL60-Poly-25,R,1,FB-P5-Rd1-LTR.16,FB-P7-Rd2-LC.16,POOL-ISA-AVRO-21-Res,2/9/22,hg38,SIN-LV,Empty-bed,LCbrcd,MND-GFP,,
+s36.3,,HL60-Research,CELL-LINE,HL60cl6-50-HL60-Poly-50,R,1,FB-P5-Rd1-LTR.16,FB-P7-Rd2-LC.17,POOL-ISA-AVRO-21-Res,2/9/22,hg38,SIN-LV,Empty-bed,LCbrcd,MND-GFP,,
+s36.4,,HL60-Research,CELL-LINE,HL60cl6-10-HL60-Poly-90,R,1,FB-P5-Rd1-LTR.16,FB-P7-Rd2-LC.18,POOL-ISA-AVRO-21-Res,2/9/22,hg38,SIN-LV,Empty-bed,LCbrcd,MND-GFP,,
+s36.5,,HL60-Research,CELL-LINE,HL60cl6-1-HL60-Poly-99,R,1,FB-P5-Rd1-LTR.16,FB-P7-Rd2-LC.19,POOL-ISA-AVRO-21-Res,2/9/22,hg38,SIN-LV,Empty-bed,LCbrcd,MND-GFP,,
+s36.6,,HL60-Research,CELL-LINE,HL60cl6-0-HL60-Poly-100,R,1,FB-P5-Rd1-LTR.16,FB-P7-Rd2-LC.20,POOL-ISA-AVRO-21-Res,2/9/22,hg38,SIN-LV,Empty-bed,LCbrcd,MND-GFP,,
+s36.7,,NEG-CTRL-1,CELL-LINE,HL60wt ,R,1,FB-P5-Rd1-LTR.16,FB-P7-Rd2-LC.21,POOL-ISA-AVRO-21-Res,2/9/22,hg38,SIN-LV,Empty-bed,LCbrcd,MND-GFP,,
+s36.8,,NEG-CTRL-2,CELL-LINE,H20-EPLIG,R,1,FB-P5-Rd1-LTR.16,FB-P7-Rd2-LC.22,POOL-ISA-AVRO-21-Res,2/9/22,hg38,SIN-LV,Empty-bed,LCbrcd,MND-GFP,,
