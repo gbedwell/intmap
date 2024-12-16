@@ -262,8 +262,8 @@ parser.add_argument('-mm_search_sensitivity',
 parser.add_argument('-misprime_mismatch',
                     type=int, 
                     help='''The number of mismatches allowed when searching for mispriming. 
-                    Defaults to 3.''',
-                    default=3)
+                    Defaults to 2.''',
+                    default=2)
 parser.add_argument('-win_len',
                     type=int, 
                     help='''The size of the window around multimapping sites to count the number 

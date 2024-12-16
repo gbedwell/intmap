@@ -12,7 +12,7 @@ HIV_CTRL_noLig.1,HIV_CTRL_noLig.2,HIV_CTRL_noLig.3,HIV_CTRL_noLig.4,HIV_CTRL_wLi
 4
 /Users/gbedwell/Documents/github/T2T_genome/indexes/bowtie2
 hs1
-/Users/gbedwell/Desktop/inspiired_test/p746vector
+/Users/gbedwell/Documents/github/intmap/inspiired_test/p746vector
 p746vector
 /Users/gbedwell/Documents/github/T2T_genome/UCSC/hs1.fa.bgz
 0

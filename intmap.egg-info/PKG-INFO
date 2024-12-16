@@ -7,6 +7,7 @@ Author: Greg Bedwell
 Author-email: gregoryjbedwell@gmail.com
 License: LICENSE.txt
 Requires-Python: >=3.10
+License-File: LICENSE
 Requires-Dist: biopython
 Requires-Dist: joblib
 Requires-Dist: pysam
