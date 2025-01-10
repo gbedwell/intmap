@@ -1,11 +1,25 @@
 import math
 from rapidfuzz.distance import Levenshtein
-from collections import defaultdict
+from collections import defaultdict, deque, Counter
 import numpy as np
 import random
-from itertools import chain
+from itertools import chain, groupby, combinations
+from operator import itemgetter
 from joblib import Parallel, delayed
 import multiprocessing
+import pybktree
+from bisect import bisect_left, bisect_right
+import random
+import hashlib
+import faiss
+
+def revcomp(seq):
+    trans = str.maketrans("acgtumrwsykvhdbnACGTUMRWSYKVHDBN", "TGCAAKYWSRMBDHVNTGCAAKYWSRMBDHVN")
+    seq_list = list(seq)
+    seq_list.reverse()
+    rev_seq = ''.join(seq_list)
+    revcomp_seq = str.translate(rev_seq, trans)
+    return revcomp_seq
 
 # Calculate Hamming distance
 def hamming_distance(seq1, seq2):
@@ -18,415 +32,557 @@ def hamming_distance(seq1, seq2):
 def seq_similarity(seq1, seq2):
     return 1 - Levenshtein.normalized_distance(seq1, seq2)
 
-# Define unique exact matching function
-# For each key in input_dict, count the number of identical fragments.
-# Identical fragments are based on start and end position and UMIs. 
+# def unique_exact_matches(input_dict):
+#     tmp_exact_kept = {}
+#     tmp_exact_dup = set()  # Store already processed reads to avoid duplicates
+        
+#     for key, entries in input_dict.items():
+#         sort_key = lambda x: (x['start'], x['end'], x['ltr_umi'], x['linker_umi'])
+#         entries.sort(key = sort_key)
+        
+#         for group_key, group_entries in groupby(entries, key = sort_key):
+#             group = list(group_entries)
+            
+#             if any(entry['read_name'] in tmp_exact_dup for entry in group):
+#                 continue
+                
+#             if len(group) > 1:
+#                 best_entry = max(group, key=lambda x: x['mean_qual'])
+#                 total_count = sum(entry['count'] for entry in group if entry != best_entry)
+#                 best_entry['count'] += total_count
+#                 tmp_exact_kept[key] = tmp_exact_kept.get(key, []) + [best_entry]
+                
+#                 for entry in group:
+#                     if entry != best_entry:
+#                         tmp_exact_dup.add(entry['read_name'])
+#             else:
+#                 tmp_exact_kept[key] = tmp_exact_kept.get(key, []) + group
+
+#     return tmp_exact_kept
+
 def unique_exact_matches(input_dict):
     tmp_exact_kept = {}
-    tmp_exact_dup = set()  # Store already processed reads to avoid duplicates
-    
-    for key, entries in input_dict.items():
-        # Sort entries by 'start' and 'end' positions
-        entries.sort(key=lambda x: (x['start'], x['end']))
-        
-        i = 0
-        while i < len(entries):
-            current_entry = entries[i]
-            current_start = current_entry['start']
-            current_end = current_entry['end']
-            current_umi1 = current_entry['ltr_umi']
-            current_umi2 = current_entry['linker_umi']
-            
-            if current_entry['read'] in tmp_exact_dup:
-                i += 1
-                continue
+    tmp_exact_dup = set()
 
-            # Group all entries with the same start, end, and UMI values
-            group = [current_entry]
+    for key, entries in input_dict.items():
+        entries.sort(key = itemgetter('start', 'end', 'ltr_umi', 'linker_umi'))
+        
+        for group_key, group_entries in groupby(entries, key=itemgetter('start', 'end', 'ltr_umi', 'linker_umi')):
+            group = list(group_entries)
+
+            if any(entry['read_name'] in tmp_exact_dup for entry in group):
+                continue
             
-            j = i + 1
-            while j < len(entries):
-                next_entry = entries[j]
-                
-                # Compare start, end, and UMI values
-                if (next_entry['start'] == current_start and 
-                    next_entry['end'] == current_end and
-                    next_entry['ltr_umi'] == current_umi1 and 
-                    next_entry['linker_umi'] == current_umi2):
-                    
-                    group.append(next_entry)
-                else:
-                    break
-                j += 1
-            
-            # Determine the entry with the highest quality in the group
             if len(group) > 1:
-                best_entry = max(group, key=lambda x: x['mean_qual'])
-                total_count = sum(entry['count'] for entry in group if entry != best_entry)
-                best_entry['count'] += total_count
-                tmp_exact_kept[key] = tmp_exact_kept.get(key, []) + [best_entry]
-                
-                # Mark all other entries as duplicates
-                for entry in group:
-                    if entry != best_entry:
-                        tmp_exact_dup.add(entry['read'])
+                best_entry = max(group, key = itemgetter('mean_qual'))
+                best_entry['count'] += sum(entry['count'] for entry in group if entry != best_entry)
+                tmp_exact_kept.setdefault(key, []).append(best_entry)
+
+                tmp_exact_dup.update(entry['read_name'] for entry in group if entry != best_entry)
             else:
-                tmp_exact_kept[key] = tmp_exact_kept.get(key, []) + group
-            
-            # Move to the next group
-            i = j
-    
+                tmp_exact_kept.setdefault(key, []).extend(group)
+
     return tmp_exact_kept
 
+# def ranged_groupby(entries, tolerance, sort_key = lambda x: (x['start'], x['end'])):
+#     entries = sorted(entries, key = sort_key)  # Sort by the key for predictable grouping
+#     groups = []
+#     current_group = [entries[0]]
+
+#     for entry in entries[1:]:
+#         if all(abs(sort_key(entry)[i] - sort_key(current_group[-1])[i]) <= tolerance 
+#                 for i in range(len(sort_key(entry)))):
+#             current_group.append(entry)
+#         else:
+#             groups.append(current_group)
+#             current_group = [entry]
+    
+#     groups.append(current_group)  # Add the last group
+#     return groups
+
+def ranged_groupby(entries, tolerance, sort_key = lambda x: (x['start'], x['end'])):
+    entries = sorted(entries, key=sort_key)
+    groups = []
+    current_group = []
+    last_end = None
+
+    for entry in entries:
+        start, end = sort_key(entry)
+        if current_group and abs(start - last_end) > tolerance:
+            groups.append(current_group)
+            current_group = []
+        current_group.append(entry)
+        last_end = end
+
+    if current_group:
+        groups.append(current_group)
+
+    return groups
+
+def one_hot_encoding(umi, encoding_map, char_dict):
+    indices = np.array([char_dict[char] for char in umi])
+    one_hot = encoding_map[indices].flatten()
+    
+    return one_hot.astype(np.float32)
+
+def cluster_umis(umis, threshold):
+    encoding_map = np.array([
+        [1, 0, 0, 0, 0, 0, 0, 0],  # A
+        [0, 1, 0, 0, 0, 0, 0, 0],  # T
+        [0, 0, 1, 0, 0, 0, 0, 0],  # G
+        [0, 0, 0, 1, 0, 0, 0, 0],  # C
+        [0, 0, 0, 0, 1, 0, 0, 0]   # N
+        ])
+        
+    char_to_index = {'A': 0, 'T': 1, 'G': 2, 'C': 3, 'N': 4}
+    
+    encoded_umis = np.array(
+        [one_hot_encoding(umi = umi, encoding_map = encoding_map, char_dict = char_to_index)
+            for umi in umis]
+        )
+
+    dim = len(encoded_umis[0])
+    index = faiss.IndexFlatL2(dim)
+    index.add(encoded_umis)
+    
+    # Use a graph to catch edge cases where A is like B and B is like C, but A is not like C.
+    # These UMIs should probably all be grouped together and processed in the directional UMI network.
+    graph = defaultdict(set)
+    for i, umi in enumerate(umis):
+        distances, indexes = index.search(encoded_umis[i:i+1], len(umis))
+        for idx, dist in zip(indexes[0], distances[0]):
+            if dist <= threshold:
+                graph[i].add(idx)
+                graph[idx].add(i)
+
+    visited = set()
+    clusters = []
+
+    def iterative_dfs(start_node):
+        stack = [start_node]
+        cluster = []
+        visited.add(start_node)
+        while stack:
+            node = stack.pop()
+            cluster.append(umis[node])
+            for neighbor in graph[node]:
+                if neighbor not in visited:
+                    visited.add(neighbor)
+                    stack.append(neighbor)
+        return cluster
+
+    for i in range(len(umis)):
+        if i not in visited:
+            cluster = iterative_dfs(i)
+            clusters.append(cluster)
+
+    return clusters
+
+def cluster_entries_by_umis(entries, threshold):
+    combined_umis = [(entry['ltr_umi'] + entry['linker_umi']) for entry in entries]
+
+    combined_clusters = cluster_umis(combined_umis, threshold)
+
+    cluster_map = defaultdict(set)
+    for idx, entry in enumerate(entries):
+        combined_umi = entry['ltr_umi'] + entry['linker_umi']
+        for cluster_idx, cluster in enumerate(combined_clusters):
+            if combined_umi in cluster:
+                cluster_map[cluster_idx].add(idx)
+
+    umi_clusters = []
+    visited_entries = set()
+
+    for cluster_idx, cluster_indices in cluster_map.items():
+        new_indices = cluster_indices - visited_entries
+        if new_indices:
+            umi_clusters.append([entries[idx] for idx in new_indices])
+            visited_entries.update(new_indices)
+
+    isolated_entries = set(range(len(entries))) - visited_entries
+    for idx in isolated_entries:
+        umi_clusters.append([entries[idx]])
+
+    return umi_clusters
+
+def build_umi_networks(umi_clusters, frag_ratio):
+    networks = defaultdict(list)
+    unnetworked = set()
+    
+    for cluster in umi_clusters:
+        all_reads = {read['read_name'] for read in cluster}
+        networked_set = set()
+        for entry1, entry2 in combinations(cluster, 2):
+            count1 = entry1['count']
+            count2 = entry2['count']
+
+            umi1 = entry1['ltr_umi'] + entry1['linker_umi']
+            umi2 = entry2['ltr_umi'] + entry2['linker_umi']
+            
+            read1 = entry1['read_name']
+            read2 = entry2['read_name']
+            
+            hd = hamming_distance(umi1, umi2)
+
+            if hd <= 1:
+                if count1 >= (frag_ratio * count2) - 1:
+                    networks[read1].append(read2)
+                    networked_set.add(read1)
+                    networked_set.add(read2)
+                elif count2 >= (frag_ratio * count1) - 1:
+                    networks[read2].append(read1)
+                    networked_set.add(read2)
+                    networked_set.add(read1)
+                    
+        unnetworked.update(all_reads - networked_set)
+        
+    for read in unnetworked:
+        networks[read] = []
+
+    return networks
+
+def traverse_umi_networks(networks, clusters):
+    read_counts = {read['read_name']: read['count'] for cluster in clusters for read in cluster}
+    matched = set()
+    components = []
+    sorted_nodes = sorted(networks.keys(), key = lambda x: read_counts[x], reverse = True)   
+    for node in sorted_nodes:
+        if node not in matched: 
+            component = list(bfs(node, networks))
+            component.sort()
+            matched.update(component)
+            components.append(component)
+
+    return components         
+
+def bfs(start_node, network):
+    visited = set()
+    queue = deque([start_node])
+    queued = set([start_node])
+
+    while queue:
+        current_node = queue.popleft()
+        visited.add(current_node)
+        
+        neighbors = network.get(current_node, [])
+        for neighbor in neighbors:
+            if neighbor not in visited and neighbor not in queued:
+                queue.append(neighbor)
+                queued.add(neighbor)
+                
+    return visited
 
 def unique_fuzzy_matches(input_dict, len_diff, umi_diff, frag_ratio):
     tmp_fuzzy_kept = {}
     tmp_fuzzy_dup = {}
-    tmp_dup_set = set()  
-    
+
     for key, entries in input_dict.items():
-        # Sort entries by 'start' and 'end' positions
-        entries.sort(key=lambda x: (x['start'], x['end']))
-        
-        i = 0
-        while i < len(entries):
-            current_entry = entries[i]
-            current_start = current_entry['start']
-            current_end = current_entry['end']
-            current_umi1 = current_entry['ltr_umi']
-            current_umi2 = current_entry['linker_umi']
-            current_count = current_entry['count']
-            
-            if current_entry['read'] in tmp_dup_set:
-                i += 1
-                continue
-            
-            # Initialize an empty group and populate it with entries that match the fuzzy criteria, 
-            # not including current_entry
-            group = []
-            
-            k = i - 1
-            while k >= 0:
-                past_entry = entries[k]
-                past_start = past_entry['start']
-                past_end = past_entry['end']
-                past_umi1 = past_entry['ltr_umi']
-                past_umi2 = past_entry['linker_umi']
+        position_groups = ranged_groupby(entries, len_diff, sort_key=lambda x: (x['start'], x['end']))
+        for group in position_groups:
+            umi_clusters = cluster_entries_by_umis(entries = group, threshold = (umi_diff * 2))
+            umi_networks = build_umi_networks(umi_clusters, frag_ratio)
+            connected_reads = traverse_umi_networks(networks = umi_networks, clusters = umi_clusters)
 
-                # Check the length threshold for start and end positions
-                if (abs((current_end - current_start) - (past_end - past_start)) <= 2 * len_diff and 
-                    abs(past_start - current_start) <= len_diff and 
-                    abs(past_end - current_end) <= len_diff):
+            clustered_entries = {}
+            for group in umi_clusters:
+                for entry in group:
+                    clustered_entries[entry['read_name']] = entry
                     
-                    # Check the UMI difference using Hamming distance
-                    if (hamming_distance(current_umi1, past_umi1) <= umi_diff and
-                        hamming_distance(current_umi2, past_umi2) <= umi_diff):
-                        group.append(past_entry)
-                else:
-                    break
-                k -= 1
-            
-            j = i + 1
-            while j < len(entries):
-                next_entry = entries[j]
-                next_start = next_entry['start']
-                next_end = next_entry['end']
-                next_umi1 = next_entry['ltr_umi']
-                next_umi2 = next_entry['linker_umi']
-
-                # Check the length threshold for start and end positions
-                if (abs((current_end - current_start) - (next_end - next_start)) <= 2 * len_diff and 
-                    abs(next_start - current_start) <= len_diff and 
-                    abs(next_end - current_end) <= len_diff):
-                    
-                    # Check the UMI difference using Hamming distance
-                    if (hamming_distance(current_umi1, next_umi1) <= umi_diff and
-                        hamming_distance(current_umi2, next_umi2) <= umi_diff):
-                        group.append(next_entry)
-                else:
-                    break
-                j += 1
+            for branch in connected_reads:
+                connected_entries = [clustered_entries[read_name] for read_name in branch if read_name in clustered_entries]
+                kept_entry = max(connected_entries, key=lambda x: (x['count'], x['mean_qual']))
+                kept_read = kept_entry['read_name']
                 
-            # If group is not empty, find the maximum count in the group (excluding current_entry)
-            if len(group) > 0:
-                # Get the entry with the maximum count
-                max_count_entry = max(group, key=lambda x: (x['count'], x['mean_qual']))
-                max_count = max_count_entry['count']                            
-
-                # Check the frag_ratio condition
-                if (max_count >= (frag_ratio * current_count) + 1):
-                    # If the highest count is greater than the threshold, mark current_entry as a duplicate
-                    tmp_dup_set.add(current_entry['read'])
-
-                    # Check if max_count_entry is already in tmp_fuzzy_kept
-                    if key in tmp_fuzzy_kept:
-                        for kept_entry in tmp_fuzzy_kept[key]:
-                            if kept_entry['read'] == max_count_entry['read']:
-                                # Update the count of max_count_entry in tmp_fuzzy_kept
-                                kept_entry['count'] += current_count
-                                break
-                    else:
-                        # Update the count of max_count_entry in input_dict
-                        for entry in input_dict[key]:
-                            if entry['read'] == max_count_entry['read']:
-                                entry['count'] += current_count
-                                break
-
-                    kept_read = max_count_entry['read']
-                    dup_read = current_entry['read']
-                    if kept_read not in tmp_fuzzy_dup:
-                        tmp_fuzzy_dup[kept_read] = [dup_read]
-                    else:
-                        tmp_fuzzy_dup[kept_read].append(dup_read)
-
-                    if dup_read in tmp_fuzzy_dup:
-                        tmp_fuzzy_dup[kept_read] += tmp_fuzzy_dup[dup_read]
-                        del tmp_fuzzy_dup[dup_read]
-            else:
-                # If the group is empty (no matching entries), keep the current entry
-                tmp_fuzzy_kept[key] = tmp_fuzzy_kept.get(key, []) + [current_entry]
+                # TO-DO: Add error handling if kept_read already exists in kept_fuzzy_dup
+                
+                for entry in connected_entries:
+                    if entry['read_name'] != kept_read:
+                        kept_entry['count'] += entry['count']
+                        tmp_fuzzy_dup.setdefault(kept_read, set()).add(entry['read_name'])
+                
+                tmp_fuzzy_kept[key] = tmp_fuzzy_kept.get(key, []) + [kept_entry]
             
-            # Move to the next entry
-            i += 1
-    
+    tmp_fuzzy_dup = {key: list(value) for key, value in tmp_fuzzy_dup.items()}            
     return tmp_fuzzy_kept, tmp_fuzzy_dup
 
 def multi_exact_matches(input_dict):
     multi_exact_kept = {}
 
-    seq_list = []
-    multi_keys = []
-    multi_values = []
-    for key, value in input_dict.items():
-        seq_list.append(value['ltr_umi'] + value['linker_umi'] + 
-                        value['seq1'] + value['seq2'])
-        multi_keys.append(key)
-        multi_values.append(value)
-        
+    seq_list = [
+        value['ltr_umi'] + value['linker_umi'] + value['seq1'] + value['seq2']
+        for value in input_dict.values()
+        ]
+    multi_keys = list(input_dict.keys())
+    multi_values = list(input_dict.values())
+
     seq_array = np.array(seq_list)
     seq_elements, seq_counts = np.unique(seq_array, return_counts = True)
-    multi_unique_set = {val for val, count in zip(seq_elements, seq_counts) if count == 1}
-    multi_unique_indices = [index for index, value in enumerate(seq_array)
-                            if value in multi_unique_set]
-    multi_non_unique_set = {val for val, count in zip(seq_elements, seq_counts) if count > 1}
-    multi_non_unique_indices = [index for index, value in enumerate(seq_array) 
-                                if value in multi_non_unique_set]
 
-    for i in multi_unique_indices:
-        multi_exact_kept.update({multi_keys[i]: multi_values[i]})
-        
+    unique_sequences = set(seq_elements[seq_counts == 1])
+    non_unique_sequences = set(seq_elements[seq_counts > 1])
+
+    for i, seq in enumerate(seq_array):
+        if seq in unique_sequences:
+            multi_exact_kept[multi_keys[i]] = multi_values[i]
+
     grouped_non_unique_indices = {}
-    for index, value in enumerate(seq_array):
-        if value in multi_non_unique_set:
-            value = str(value)
-            if value not in grouped_non_unique_indices:
-                grouped_non_unique_indices[value] = []
-            grouped_non_unique_indices[value].append(index)
+    for i, seq in enumerate(seq_array):
+        if seq in non_unique_sequences:
+            grouped_non_unique_indices.setdefault(seq, []).append(i)
 
-    for group in grouped_non_unique_indices:
-        tmp_keys = [multi_keys[i] for i in grouped_non_unique_indices[group]]
-        tmp_values = [multi_values[i] for i in grouped_non_unique_indices[group]]
+    for indices in grouped_non_unique_indices.values():
+        tmp_keys = [multi_keys[i] for i in indices]
+        tmp_values = [multi_values[i] for i in indices]
+        
         best_entry = max(tmp_values, key=lambda x: x['mean_qual'])
         best_idx = tmp_values.index(best_entry)
-        total_count = sum(entry['count'] for entry in tmp_values if entry != best_entry)
-        best_entry['count'] += total_count
-        multi_exact_kept.update({tmp_keys[best_idx]: best_entry})        
+
+        best_entry['count'] += sum(entry['count'] for entry in tmp_values if entry != best_entry)
+        multi_exact_kept[tmp_keys[best_idx]] = best_entry
 
     return multi_exact_kept
-
-def multimap_comparisons(index_list, threshold, greater_than=False):
-    graph = defaultdict(set)
-
-    for (i, j), score in index_list:
-        if ((greater_than and score > threshold) or 
-            (not greater_than and score <= threshold)):
-            graph[i].add(j)
-            graph[j].add(i)
-
-    visited = set()
-    components = []
-    
-    def iterative_dfs(start_node):
-        stack = [start_node]
-        component = set()
-        
-        while stack:
-            node = stack.pop()
-            if node not in visited:
-                visited.add(node)
-                component.add(node)
-                
-                for neighbor in graph[node]:
-                    if neighbor not in visited:
-                        stack.append(neighbor)
-                        
-        return sorted(component)
-    
-    for node in graph:
-        if node not in visited:
-            component = iterative_dfs(node)
-            components.append(component)
-            
-    return components
 
 def chunk_groups(groups, nthr):
     n = max(1, math.ceil(len(groups) / nthr))
     for i in range(0, len(groups), n):
         yield groups[i:i + n]
+        
+def levenshtein_wrapper(a, b):
+    return Levenshtein.distance(a, b)
 
-def process_mm_fuzzy_group(group, input_dict, umi_diff, frag_ratio, sim_threshold):
-    len_group = 0
-    tmp_dict = {}
-    # Create temporary dictionary holding fragment information
-    for index in group:
-        items = list(input_dict.items())[index]
-        tmp_dict.update({items[0]: items[1]})
-        len_group += 1
+def build_um_index(um_kept_dict, prefix_length):
+    index = defaultdict(list)
+    for read_name, um_frag in um_kept_dict.items():
+        prefix = um_frag['seq1'][:prefix_length]
+        index[prefix].append(um_frag)
+        
+    tree = pybktree.BKTree(levenshtein_wrapper, list(index.keys()))
+    return index, tree
 
-    # Make key and value lists for easy index-based access
-    group_values = []
-    group_keys = []
-    for key, value in tmp_dict.items():
-        group_values.append(value)
-        group_keys.append(key)
-    group_indices = list(range(len(group_values)))
-    kept_indices = []
-
-    # Concatenate the sequenced fragments for each read
-    seqs = [(entry['seq1'] + entry['seq2']) for entry in group_values]
+def get_um_candidates(prefix, um_index, um_tree, max_distance):
+    matches = um_tree.find(prefix, max_distance)
+    keys = [key for _, key in matches]    
+    candidates = []
+    for key in keys:
+        candidates.extend(um_index.get(key, []))
     
-    # Calculate pairwise sequence similarities for each sequence in the group
-    n = len(seqs)
-    sim_idx = []
-    for i in range(n):
-        for j in range(i + 1, n):
-            obs_seq_sim = seq_similarity(seqs[i], seqs[j])
-            sim_idx.append(((i, j), obs_seq_sim))
+    return candidates
 
-    # Filter for similarity scores > sim_threshold
-    # Add indices for reads that don't satisfy the similarity threshold to kept_indices
-    sim_groups = multimap_comparisons(index_list = sim_idx, threshold = sim_threshold, greater_than = True)
-    sim_flat = [item for sublist in sim_groups for item in sublist]
-    kept_indices.extend(i for i in group_indices if i not in sim_flat)
+def verify_mm_positions(mm_frag, candidate_um_frags, seq_sim):
+    mm_seq1 = mm_frag['seq1']
+    mm_seq2 = mm_frag['seq2']
+    mm_strand = mm_frag['strand']
 
-    # For the remaining groups, check UMI similarity
-    if sim_groups:
-        for gg in sim_groups:
-            tmp_values = [group_values[i] for i in gg]
-            tmp_ltr_umi = [entry['ltr_umi'] for entry in tmp_values]
-            tmp_linker_umi = [entry['linker_umi'] for entry in tmp_values]
+    if seq_similarity(mm_seq1, revcomp(mm_seq2)) < seq_sim:
+        return mm_frag, False
 
-            ltr_umi_idx = []
-            linker_umi_idx = []
-            n = len(tmp_values)
-            for i in range(n):
-                for j in range(i + 1, n):
-                    ltr_umi_dist = hamming_distance(tmp_ltr_umi[i], tmp_ltr_umi[j])
-                    ltr_umi_idx.append(((i, j), ltr_umi_dist))
-                    linker_umi_dist = hamming_distance(tmp_linker_umi[i], tmp_linker_umi[j])
-                    linker_umi_idx.append(((i, j), linker_umi_dist))
-            
-            ltr_groups = multimap_comparisons(index_list = ltr_umi_idx, 
-                                            threshold = umi_diff, 
-                                            greater_than = False)
-            linker_groups = multimap_comparisons(index_list = linker_umi_idx, 
-                                                threshold = umi_diff, 
-                                                greater_than = False)
-                        
-            # Add indices for reads with unmatched UMIs to kept_indices
-            ltr_flat = [item for sublist in ltr_groups for item in sublist]
-            linker_flat = [item for sublist in linker_groups for item in sublist]
-            ltr_set = set(ltr_flat)
-            linker_set = set(linker_flat)
-            umi_common = list(ltr_set.intersection(linker_set))
-            umi_uncommon = ltr_set.symmetric_difference(linker_set)
-            kept_indices.extend(umi_uncommon)
+    for um_frag in candidate_um_frags:
+        um_seq1 = um_frag['seq1']
+        um_strand = um_frag['strand']
 
-            # Remove unmatched indices from groups
-            for sublist in ltr_groups:
-                ltr_pruned = [[value for value in sublist if value in umi_common]]
+        if len(mm_seq1) > len(um_seq1):
+            continue
+        
+        um_seq1_truncated = um_seq1[:len(mm_seq1)]
+        similarity = seq_similarity(mm_seq1, um_seq1_truncated)
 
-            for sublist in linker_groups:
-                linker_pruned = [[value for value in sublist if value in umi_common]]
-                
-            # Only proceed with groups common to both ltr and linker lists
-            # Groups that are not common are discarded entirely
-            common_groups = [
-                [item for item in ltr_pruned[i] if item in linker_pruned[i]] 
-                for i in range(len(ltr_pruned))
-                ]
+        if similarity >= seq_sim:
+            mm_frag['start'] = um_frag['start'] if um_strand == '+' else (um_frag['end'] - len(mm_seq1))
+            mm_frag['end'] = (um_frag['start'] + len(mm_seq1)) if um_strand == '+' else um_frag['end']
+            mm_frag['multi'] = 'True - relocated'
+            return mm_frag, True
 
-            # For the remaining groups, compare each count value to the maximum count value.
-            # If max count >= (frag_ratio * current count) + 1, current read is called
-            # a duplicate of max count. Their counts are aggregated together.            
-            if len(common_groups[0]) > 0:
-                for gg in common_groups:
-                    pruned_values = [group_values[i] for i in gg]
-                    ref_entry = max(pruned_values, key=lambda x: (x['count'], x['mean_qual']))
-                    ref_idx = gg[pruned_values.index(ref_entry)]
-                    dup_entries = [entry for entry in pruned_values
-                                    if ref_entry['count'] >= ((frag_ratio * entry['count']) + 1)]
-                    dup_count = sum(entry['count'] for entry in dup_entries)
-                    group_values[ref_idx]['count'] += dup_count
-                    
-                    ref_key = group_keys[ref_idx]
-                    dup_keys = [group_keys[gg[pruned_values.index(entry)]] for entry in dup_entries]
-                    tmp_fuzzy_dup = {}
-                    if len(dup_keys) > 0:
-                        if ref_key in tmp_fuzzy_dup:
-                            tmp_fuzzy_dup[ref_key].extend(dup_keys)
-                        else:
-                            tmp_fuzzy_dup[ref_key] = dup_keys
+    return mm_frag, False
 
-                    non_dup_entries = [entry for entry in pruned_values 
-                                        if ref_entry['count'] < ((frag_ratio * entry['count']) + 1)]
-                    non_dup_indices = [gg[pruned_values.index(entry)] for entry in non_dup_entries]
-                    kept_indices.extend(non_dup_indices)
-            else:
-                tmp_fuzzy_dup = {}
-    else:
-        tmp_fuzzy_dup = {}
-    
+def process_mm_fuzzy_group(group, umi_diff, frag_ratio, um_index, um_tree, seq_sim, 
+                            prefix_length, unique_coordinates, win_len, max_distance):
     tmp_fuzzy_kept = {}
-    for idx in kept_indices:
-        tmp_fuzzy_kept.update({group_keys[idx]: group_values[idx]})
+    tmp_fuzzy_dup = {}
+    
+    umi_clusters = cluster_entries_by_umis(entries = group, threshold = (umi_diff * 2))
+    umi_networks = build_umi_networks(umi_clusters, frag_ratio)
+    connected_reads = traverse_umi_networks(networks = umi_networks, clusters = umi_clusters)
+    
+    clustered_entries = {}
+    for umi_group in umi_clusters:
+        for entry in umi_group:
+            clustered_entries[entry['read_name']] = entry
             
-    return tmp_fuzzy_kept, tmp_fuzzy_dup
+    for branch in connected_reads:
+        connected_entries = [clustered_entries[read_name] for read_name in branch if read_name in clustered_entries]
+        kept_entry = max(connected_entries, key=lambda x: (x['count'], x['mean_qual']))
+        kept_read = kept_entry['read_name']
 
-def process_mm_fuzzy_chunk(chunk, input_dict, umi_diff, frag_ratio, sim_threshold):
+        for entry in connected_entries:
+            if entry['read_name'] != kept_read:
+                kept_entry['count'] += entry['count']
+                tmp_fuzzy_dup.setdefault(kept_read, set()).add(entry['read_name'])
+
+        tmp_fuzzy_kept[kept_entry['read_name']] = kept_entry
+    
+    tmp_fuzzy_dup = {key: list(value) for key, value in tmp_fuzzy_dup.items()}
+    
+    relocated_reads = {}
+    match_found = False
+    for read_name, mm_frag in tmp_fuzzy_kept.items():
+        if not match_found:
+            prefix = mm_frag['seq1'][:prefix_length]
+            candidate_um_frags = get_um_candidates(
+                prefix = prefix, 
+                um_index = um_index, 
+                um_tree = um_tree,
+                max_distance = max_distance
+                )
+            checked_read, match_found = verify_mm_positions(mm_frag, candidate_um_frags, seq_sim)
+            relocated_reads.update({read_name: checked_read})
+        else:
+            relocated_reads.update({read_name: mm_frag})
+
+    grouped_reads = {}
+    target_positions = {}
+    seen_keys = set()
+    best_read_name = None
+    for read_name, read_info in relocated_reads.items():
+        if read_info['multi'] == 'True - relocated':
+            best_read_name = read_name
+            break
+        
+        # Define current position as the midpoint between the mapped start and end coordinates.
+        # Without strict confidence in the strandedness of multimapping reads, this seems like a reasonable
+        # compromise between start/end coordinates.
+        current_chrom = read_info['chrom']
+        current_pos = math.floor((read_info['start'] + read_info['end']) / 2)
+        current_key = current_chrom + '_' + str(current_pos)
+        if current_key not in seen_keys:
+            if current_chrom in unique_coordinates:
+                unique_positions = unique_coordinates[current_chrom][0]
+                start = current_pos - win_len
+                end = current_pos + win_len
+                start_index = bisect_left(unique_positions, start)
+                end_index = bisect_right(unique_positions, end)
+                density = end_index - start_index
+                target_positions[read_name] = max(density, 1e-6)
+                seen_keys.add(current_key)
+            else:
+                target_positions[read_name] = 1e-6
+                seen_keys.add(current_key)
+            
+
+    # Modify this for cases when all densities are the same.
+    # For all chromosomes in seen_chroms, select the one with the highest total unique sites.
+    # Then sort all multimapping coordinates on that chromosome and choose the read with smallest start position.
+    if best_read_name is None:
+        read_names = list(target_positions.keys())
+        target_densities = list(target_positions.values())
+        total = sum(target_densities)
+        normalized_densities = [value / total for value in target_densities]
+        seed_string = ','.join(read_names)
+        seed = int(hashlib.sha256(seed_string.encode('utf-8')).hexdigest(), 16) % (2**64)
+        random.seed(seed)
+        
+        best_read_name = random.choices(
+            population = read_names,
+            weights = normalized_densities,
+            k = 1
+            )[0]
+
+    best_read = relocated_reads[best_read_name]
+    best_start, best_end, best_strand = best_read['start'], best_read['end'], best_read['strand']
+    
+    for read_name, read_info in relocated_reads.items():
+        if read_info['multi'] != 'True - relocated':
+            read_info['start'] = best_start
+            read_info['end'] = best_end
+            read_info['strand'] = best_strand
+            read_info['multi'] = 'True - grouped'
+            
+    prefixes = [read_info['seq1'][:int(prefix_length * 1.5)] for read_info in relocated_reads.values()]
+    transposed_prefixes = list(zip(*prefixes))
+    prefix_index = ''.join(Counter(pos).most_common(1)[0][0] for pos in transposed_prefixes)
+    for read_name, read_info in relocated_reads.items():
+        read_info['seq1_index'] = prefix_index
+
+    return relocated_reads, tmp_fuzzy_dup
+
+def chunk_groups(groups, nthr):
+    groups = sorted(groups, key=len, reverse=True)
+    chunks = [[] for _ in range(nthr)]
+    
+    for i, group in enumerate(groups):
+        chunks[i % nthr].append(group)
+    
+    return chunks
+        
+def process_mm_fuzzy_chunk(chunk, umi_diff, frag_ratio, um_index, um_tree, seq_sim, 
+                            prefix_length, unique_coordinates, win_len, max_distance):
     tmp_fuzzy_kept = {}
     tmp_fuzzy_dup = {}
 
     for group in chunk:
         kept, dup = process_mm_fuzzy_group(
-            group, 
-            input_dict, 
-            umi_diff, 
-            frag_ratio, 
-            sim_threshold)
+            group = group, 
+            umi_diff = umi_diff, 
+            frag_ratio = frag_ratio,
+            um_index = um_index,
+            um_tree = um_tree,
+            seq_sim = seq_sim, 
+            prefix_length = prefix_length,
+            unique_coordinates = unique_coordinates,
+            win_len = win_len,
+            max_distance = max_distance
+            )
         tmp_fuzzy_kept.update(kept)
         for key, value in dup.items():
             if key in tmp_fuzzy_dup:
                 tmp_fuzzy_dup[key].extend(value)
             else:
                 tmp_fuzzy_dup[key] = value
-
+        
     return tmp_fuzzy_kept, tmp_fuzzy_dup
 
-# Find fuzzy multimapping duplicates
-def multi_fuzzy_matches(groups, input_dict, umi_diff, frag_ratio, sim_threshold, nthr):
-    group_chunks = list(chunk_groups(groups, nthr))
+def multi_fuzzy_matches(groups, umi_diff, frag_ratio, nthr, 
+                        seq_sim, um_kept_dict, prefix_length, win_len,
+                        max_distance):
+    
+    um_index, um_tree = build_um_index(um_kept_dict, prefix_length)
+    
+    unique_coordinates = {}
+    for um_read in um_kept_dict.values():
+        position = um_read['start'] if um_read['strand'] == '+' else um_read['end']
+        chrom = um_read['chrom']
+        if chrom not in unique_coordinates:
+            unique_coordinates[chrom] = (set(), 0)
+        if position not in unique_coordinates[chrom][0]:
+            unique_coordinates[chrom][0].add(position)
+            unique_coordinates[chrom] = (unique_coordinates[chrom][0], unique_coordinates[chrom][1] + 1)
+
+    # Sort the positions for each chromosome
+    for chrom in unique_coordinates:
+        positions, count = unique_coordinates[chrom]
+        unique_coordinates[chrom] = (sorted(positions), count) 
+        
+    group_chunks = list(chunk_groups(groups = groups, nthr = nthr))
 
     # Process each chunk
     results = Parallel(n_jobs=nthr)(
         delayed(process_mm_fuzzy_chunk)(
-            chunk, input_dict, umi_diff, frag_ratio, sim_threshold
+            chunk = chunk, 
+            umi_diff = umi_diff, 
+            frag_ratio = frag_ratio,
+            um_index = um_index,
+            um_tree = um_tree,
+            seq_sim = seq_sim, 
+            prefix_length = prefix_length,
+            unique_coordinates = unique_coordinates,
+            win_len = win_len,
+            max_distance = max_distance
             ) for chunk in group_chunks
         )
 
     # Combine fuzzy matches
     multi_fuzzy_kept = {}
     multi_fuzzy_dup = {}
+    
     for kept, dup in results:
         multi_fuzzy_kept.update(kept)
         for key, value in dup.items():
@@ -437,180 +593,37 @@ def multi_fuzzy_matches(groups, input_dict, umi_diff, frag_ratio, sim_threshold,
 
     return multi_fuzzy_kept, multi_fuzzy_dup
 
-def build_um_index(um_kept_dict, prefix_length):
-    index = defaultdict(list)
-    for read_name, um_frag in um_kept_dict.items():
-        prefix = um_frag['seq1'][:prefix_length]
-        index[prefix].append(um_frag)
-    return index
+def verify_mm_positions_final_pass(input_dict, max_distance):
+    seq1_indices = list(set(read_info['seq1_index'] for read_info in input_dict.values()))
+    tree = pybktree.BKTree(levenshtein_wrapper, seq1_indices)
 
-def verify_mm_positions(mm_frag, candidate_um_frags, seq_sim):
-    mm_seq1 = mm_frag['seq1']
-    mm_strand = mm_frag['strand']
+    similar_index_groups = defaultdict(set)
+    for index in seq1_indices:
+        similar_indexes = [match[1] for match in tree.find(index, max_distance)]
+        similar_index_groups[index].update(similar_indexes)
 
-    for um_frag in candidate_um_frags:
-        um_seq1 = um_frag['seq1']
-        um_strand = um_frag['strand']
-
-        if len(mm_seq1) >= len(um_seq1):
+    grouped_reads = defaultdict(list)
+    visited = set()
+    for read_name, read_info in input_dict.items():
+        if read_name in visited:
             continue
-        
-        um_seq1_truncated = um_seq1[:len(mm_seq1)]
-        similarity = seq_similarity(mm_seq1, um_seq1_truncated)
-
-        if similarity > seq_sim:
-            mm_frag['start'] = um_frag['start'] if um_strand == '+' else (um_frag['end'] - len(mm_seq1))
-            mm_frag['end'] = (um_frag['start'] + len(mm_seq1)) if um_strand == '+' else um_frag['end']
-            mm_frag['multi'] = 'True - relocated'
-            return mm_frag, 1
-
-    return mm_frag, 0
-
-def verify_chunk_positions(mm_chunk, um_index, seq_sim, prefix_length):
-    relocated_count = 0
-    modified_chunk = []
-
-    for read_name, mm_frag in mm_chunk.items():
-        prefix = mm_frag['seq1'][:prefix_length]
-        candidate_um_frags = um_index.get(prefix, [])
-
-        modified_mm_frag, relocated = verify_mm_positions(mm_frag, candidate_um_frags, seq_sim)
-        modified_chunk.append({read_name: modified_mm_frag})
-        relocated_count += relocated
-
-    return modified_chunk, relocated_count
-
-def verify_mm_parallel(mm_kept_dict, um_kept_dict, seq_sim, nthr, chunk_size, prefix_length):
-    um_index = build_um_index(um_kept_dict, prefix_length)
-
-    mm_items = list(mm_kept_dict.items())
-    mm_chunks = [dict(mm_items[i:i + chunk_size]) for i in range(0, len(mm_items), chunk_size)]
-
-    results = Parallel(n_jobs=nthr)(
-        delayed(verify_chunk_positions)(mm_chunk, um_index, seq_sim, prefix_length) for mm_chunk in mm_chunks
-        )
-
-    modified_mm_list = [mm for chunk, _ in results for mm in chunk]
-    modified_mm_dict = {}
-    for mm_frag in modified_mm_list:
-        for key, value in mm_frag.items():
-            modified_mm_dict[key] = value
-    total_relocated = sum(count for _, count in results)
-
-    return modified_mm_dict, total_relocated
-
-def seq_sim_trimmed(seq1, seq2, sim_threshold):
-        min_length = min(len(seq1), len(seq2))
-        trimmed_seq1 = seq1[:min_length]
-        trimmed_seq2 = seq2[:min_length]
-        sim_score = seq_similarity(trimmed_seq1, trimmed_seq2)
-        hamming_dist = hamming_distance(trimmed_seq1[:10], trimmed_seq2[:10])
-        return sim_score if (sim_score > sim_threshold and hamming_dist <= 2) else 0
-
-def process_mm_frag_group(group, input_dict, sim_threshold, unique_dict, win_len):
-    len_group = 0
-    tmp_dict = {}
-    # Create temporary dictionary holding fragment information
-    for index in group:
-        items = list(input_dict.items())[index]
-        tmp_dict.update({items[0]: items[1]})
-        len_group += 1
-
-    # Make key and value lists for easy index-based access
-    group_values = []
-    group_keys = []
-    for key, value in tmp_dict.items():
-        group_values.append(value)
-        group_keys.append(key)
-    group_indices = list(range(len(group_values)))
-    kept_indices = []
-
-    seqs = [entry['seq1'] for entry in group_values]
-    
-    # Calculate pairwise sequence similarities for each sequence in the group
-    n = len(seqs)
-    sim_idx = []
-    for i in range(n):
-        for j in range(i + 1, n):
-            obs_seq_sim = seq_sim_trimmed(seqs[i], seqs[j], sim_threshold)
-            sim_idx.append(((i, j), obs_seq_sim))
-
-    sim_groups = multimap_comparisons(index_list = sim_idx, threshold = sim_threshold, greater_than = True)
-    
-    grouped_indices = set(item for sublist in sim_groups for item in sublist)
-    ungrouped_indices = [i for i in group_indices if i not in grouped_indices]
-    
-    grouped_results = {}
-    for group in sim_groups:
-        group_keys_subset = [group_keys[idx] for idx in group]
-        group_values_subset = [group_values[idx] for idx in group]
-        group_reads = {key: value for key, value in zip(group_keys_subset, group_values_subset)}
-        
-        target_positions = {}
-        best_seq_id = None
-        for seq_id, read_data in group_reads.items():
-            if read_data['multi'] == 'True - relocated':
-                best_seq_id = seq_id
+        read_index = read_info['seq1_index']
+        for group_index, group_members in similar_index_groups.items():
+            if read_index in group_members:
+                grouped_reads[group_index].append(read_info)
+                visited.add(read_name)
                 break
             
-            current_pos = read_data['start'] if read_data['strand'] == '+' else read_data['end']
-            unique_positions = [
-                um_read['start'] if um_read['strand'] == '+' else int(um_read['end'])
-                for um_read in unique_dict.values()
-                ]
+    for group_index, group_reads in grouped_reads.items():
+        longest_read = max(group_reads, key=lambda x: (len(x['seq1']), x['mean_qual']))
+        longest_len = len(longest_read['seq1'])
+        longest_position = (longest_read['start'], longest_read['end'], longest_read['strand'])
 
-            # Count unique reads within +/- win_len bases
-            density = sum(1 for pos in unique_positions if (current_pos - win_len) <= pos <= (current_pos + win_len))
-            target_positions[seq_id] = density
+        for read_info in group_reads:
+            if (read_info['start'], read_info['end'], read_info['strand']) != longest_position:
+                input_dict[read_info['read_name']]['start'] = longest_read['start']
+                input_dict[read_info['read_name']]['end'] = longest_read['end']
+                input_dict[read_info['read_name']]['strand'] = longest_read['strand']
+                input_dict[read_info['read_name']]['multi'] = 'True - grouped'
 
-        # Determine the representative read (highest density)
-        
-        if best_seq_id is None:
-            best_seq_id = max(target_positions, key = target_positions.get)
-        best_read = group_reads[best_seq_id]
-        best_start, best_end, best_strand = best_read['start'], best_read['end'], best_read['strand']
-
-        # Update all reads in the group to the representative read's coordinates
-        for seq_id, read_data in group_reads.items():
-            if read_data['multi'] != 'True - relocated':
-                read_data['start'] = best_start if best_strand == '+' else (best_end - len(read_data['seq1']))
-                read_data['end'] = (best_start + len(read_data['seq1'])) if best_strand == '+' else best_end
-                read_data['strand'] = best_strand
-                read_data['multi'] = 'True - grouped'
-
-        grouped_results.update(group_reads)
-
-    ungrouped_results = {group_keys[idx]: group_values[idx] for idx in ungrouped_indices}
-
-    combined_results = {**grouped_results, **ungrouped_results}
-
-    return combined_results
-
-def process_mm_frag_chunk(chunk, input_dict, sim_threshold, unique_dict, win_len):
-    tmp_mm_kept = {}
-
-    for group in chunk:
-        kept = process_mm_frag_group(
-            group,
-            input_dict,
-            sim_threshold,
-            unique_dict,
-            win_len)
-        tmp_mm_kept.update(kept)
-
-    return tmp_mm_kept
-
-def multi_frag_matches(groups, input_dict, sim_threshold, nthr, unique_dict, win_len):
-    group_chunks = list(chunk_groups(groups, nthr))
-
-    results = Parallel(n_jobs=nthr)(
-        delayed(process_mm_frag_chunk)(
-            chunk, input_dict, sim_threshold, unique_dict, win_len
-            ) for chunk in group_chunks
-        )
-
-    multi_frag_kept = {}
-    for kept in results:
-        multi_frag_kept.update(kept)
-
-    return multi_frag_kept
+    return input_dict

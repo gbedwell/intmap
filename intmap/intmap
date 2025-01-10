@@ -3,7 +3,7 @@
 import argparse
 parser = argparse.ArgumentParser(prog = 'intmap',
                                 description='''Maps the locations of viral integration sites 
-                                in a genome from short-read NGS data.''')
+                                in a genome from NGS data.''')
 parser.add_argument('-r1',
                     type=str, 
                     help='Forward/R1 read file.', 
@@ -64,8 +64,8 @@ parser.add_argument('-nm',
 parser.add_argument('-min_frag_len',
                     type=int, 
                     help='''The minimum allowed fragment length. 
-                    Defaults to 20.''',
-                    default=20)
+                    Defaults to 25.''',
+                    default=25)
 parser.add_argument('-max_frag_len',
                     type=int, 
                     help='''The maximum allowed fragment length. 
@@ -94,8 +94,8 @@ parser.add_argument('-linker5_error_rate',
 parser.add_argument('-crop_chunk_size',
                     type=int, 
                     help='''The chunk size for read cropping. 
-                    Defaults to 5000.''',
-                    default=5000)
+                    Defaults to 25000.''',
+                    default=25000)
 parser.add_argument('--no_crop', '-no_crop',
                     help='''Boolean. 
                     Whether or not to crop the matched LTR/linker sequences from the reads. 
@@ -132,8 +132,8 @@ parser.add_argument('-min_mapq',
                     type=int, 
                     help='''The minimum acceptable MAPQ score.
                     Does not apply to multimapping reads. 
-                    Defaults to 2.''',
-                    default=2)
+                    Defaults to 20.''',
+                    default=20)
 parser.add_argument('-match_after',
                     type=int, 
                     help='''The number of mismatched bases allowed at the start of read 1. Defaults to 2.''',
@@ -188,7 +188,7 @@ parser.add_argument('--no_mm', '-no_mm',
 parser.add_argument('-min_qual',
                     type=int, 
                     help='''The minimum acceptable average base quality score. 
-                    Used to filter out low-quality reads. 
+                    Used to filter out reads with low-quality base calls. 
                     Defaults to 20, corresponding to a ~1-percent error rate.''',
                     default=20)
 parser.add_argument('-len_diff',
@@ -200,16 +200,8 @@ parser.add_argument('-len_diff',
 parser.add_argument('-umi_diff',
                     type=int, 
                     help='''The maximum allowed difference between UMIs to consider them 
-                    the same. Used in fuzzy duplicate identification. Defaults to 2.''',
-                    default=2)
-parser.add_argument('-seq_sim',
-                    type=float, 
-                    help='''The sequence similarity threshold. 
-                    Sequences with similarity scores greater than this value 
-                    will be considered to be duplicates. 
-                    Used to identify fuzzy duplicates in multimapping reads. 
-                    Defaults to 0.95.''',
-                    default=0.95)
+                    the same. Used in fuzzy duplicate identification. Defaults to 3.''',
+                    default=3)
 parser.add_argument('-v_idx_dir',
                     type=str, 
                     help='''The directory path holding the bowtie2 virus genome index. 
@@ -224,9 +216,9 @@ parser.add_argument('-v_idx_name',
 parser.add_argument('-frag_ratio',
                     type=float, 
                     help='''The ratio of fragment counts used to define fuzzy matching reads. 
-                    A match is called if the higher number of counts >= (frag_ratio * lower_number) + 1.
-                    Defaults to 1.''',
-                    default=1)
+                    A match is called if the higher number of counts >= (frag_ratio * lower_number).
+                    Defaults to 2.''',
+                    default=2)
 parser.add_argument('--random', '-random',
                     help='''Boolean.
                     Whether or not the data being analyzed is theoretical random 
@@ -247,28 +239,32 @@ parser.add_argument('-genome_fasta_index',
 parser.add_argument('-num_bits',
                     type=int, 
                     help='''The number of bits in the generated minhash used 
-                    for fuzzy matching. Defaults to 64. Must be divisble by 8.''',
-                    default=64)
+                    for fuzzy matching. Defaults to 128. Must be divisble by 8.''',
+                    default=128)
 parser.add_argument('-token_size',
                     type=int, 
-                    help='''The token size for minhash generation. Defaults to 2.''',
-                    default=2)
-parser.add_argument('-mm_search_sensitivity',
-                    type=int,
-                    help='''Defines the maximum allowed Hamming distance between minhashes. 
-                    The higher the value the more fragments will be checked for possible 
-                    fuzzy matching, and vice versa. Defaults to 2.''',
-                    default=2)
+                    help='''The token size for minhash generation. Defaults to 4.''',
+                    default=4)
+parser.add_argument('-mm_hash_similarity',
+                    type=float,
+                    help='''Defines the Jaccard similarity between minhashes. 
+                    The lower the value the more fragments will be grouped as similar sequences.''',
+                    default=0.9)
+parser.add_argument('-seq_sim',
+                    type=float,
+                    help='''Defines the sequence similarity threshold used in multimapping read position verification.''',
+                    default=0.95)
 parser.add_argument('-misprime_mismatch',
                     type=int, 
                     help='''The number of mismatches allowed when searching for mispriming. 
+                    Set to -1 to skip this step. 
                     Defaults to 2.''',
                     default=2)
 parser.add_argument('-win_len',
                     type=int, 
-                    help='''The size of the window around multimapping sites to count the number 
-                    of unique fragments. Defaults to 2500.''',
-                    default=2500)
+                    help='''The size of the window around multimapping sites within which to count the number 
+                    of unique fragments. Defaults to 100 kbp.''',
+                    default=100000)
 
 args = parser.parse_args()
 
@@ -330,16 +326,35 @@ def fetch_sequence(coordinates, genome, U3, shift):
 
 def apply_minhash(key, value, string, num_bits, token_size):
     minhash = MinHash(num_perm = num_bits)
-    
     tokens = [string[i:i + token_size] for i in range(len(string) - token_size + 1)]
     
     for token in tokens:
         minhash.update(token.encode('utf8'))
-        
-    minhash_bin = ''.join(['1' if h % 2 == 0 else '0' for h in minhash.hashvalues])
     
-    value['hash'] = minhash_bin
+    minhash_values = np.array(minhash.hashvalues, dtype=np.uint64)
+    
+    # bit_array = np.unpackbits(minhash_values.view(np.uint8))
+    packed_bits = minhash_values.view(np.uint8)
+    
+    value['hash'] = packed_bits
+    
     return key, value
+
+def get_nn(input_dict, num_bits):
+    minhash_list = [value['hash'] for key, value in input_dict.items()]
+
+    nb = len(minhash_list)
+    dim = num_bits * 64
+    db = np.array(minhash_list, dtype = 'uint8')
+
+    print('Building hash index...')
+    hash_index = faiss.IndexBinaryFlat(dim)
+    hash_index.add(db)
+
+    print('Calculating hash distances...')
+    hash_distances, hash_indices = hash_index.search(db, k = min(1250, len(minhash_list)))
+        
+    return hash_distances, hash_indices
 
 def parse_hash_matches(hash_dict):
     ungrouped = []
@@ -367,7 +382,7 @@ def merge_hash_sublists(lists):
     visited_elements = set()
     merged_lists = []
 
-    def iterative_hash_dfs(start_index):
+    def hash_dfs(start_index):
         stack = [start_index]
         component = set()
 
@@ -385,49 +400,55 @@ def merge_hash_sublists(lists):
 
     for i in range(len(lists)):
         if i not in visited_sublists:
-            merged_group = iterative_hash_dfs(i)
+            merged_group = hash_dfs(i)
             merged_lists.append(merged_group)
 
     return merged_lists
 
+def extract_grouped_entries(groups, input_dict):
+    grouped_entries = []
+    for group in groups:
+        entries = [list(input_dict.values())[index] for index in group]
+        grouped_entries.append(entries)
+
+    return grouped_entries
+
 def chunk_hashes(distances, indices, nthr):
+    distances = np.array(distances)
+    indices = np.array(indices)
     n = math.ceil(len(distances) / nthr)
     for i in range(0, len(distances), n):
         yield distances[i:i + n], indices[i:i + n]
 
-def filter_chunk(chunk_distances, chunk_indices, sensitivity):
-    chunk_distances = np.array(chunk_distances)
-    chunk_indices = np.array(chunk_indices)
+def filter_chunk(chunk_distances, chunk_indices, threshold):
+    mask = chunk_distances <= threshold
+    filtered_indices = [chunk[mask[i]].tolist() 
+                        if np.any(mask[i]) else [] for i, chunk in enumerate(chunk_indices)]
+    return dict(enumerate(filtered_indices))
 
-    mask = chunk_distances <= sensitivity
-
-    filtered_results = {
-        i: chunk_indices[i][mask[i]].tolist() for i in range(len(chunk_distances))
-        }
-
-    return filtered_results
-
-def group_similar_hashes(hash_distances, hash_indices, nthr, sensitivity):
+def group_similar_hashes(hash_distances, hash_indices, nthr, sensitivity, num_bits):
+    hamming_threshold = (num_bits * 64) * (1 - sensitivity)
+    chunk_generator = chunk_hashes(
+        distances=hash_distances, 
+        indices=hash_indices, 
+        nthr=nthr
+        )
     
-    chunks = list(chunk_hashes(
-        distances = hash_distances, 
-        indices = hash_indices, 
-        nthr = nthr))
-    
-    results = Parallel(n_jobs = nthr)(
+    results = Parallel(n_jobs=nthr)(
         delayed(filter_chunk)(
-            chunk_distances = chunk_distances, 
-            chunk_indices = chunk_indices, 
-            sensitivity = sensitivity)
-        for chunk_distances, chunk_indices in chunks
-    )
-
-    hash_matches = {}
-    chunk_offset = 0
-    for chunk_result in results:
-        for key, value in chunk_result.items():
-            hash_matches[key + chunk_offset] = value
-        chunk_offset += len(chunk_result)
+            chunk_distances=chunk_distances, 
+            chunk_indices=chunk_indices, 
+            threshold=hamming_threshold
+            )
+        for chunk_distances, chunk_indices in chunk_generator
+        )
+    
+    offsets = [0] + np.cumsum([len(chunk_result) for chunk_result in results[:-1]]).tolist()
+    hash_matches = {
+        key + offsets[i]: value
+        for i, chunk_result in enumerate(results)
+        for key, value in chunk_result.items()
+        }
     
     return hash_matches
 
@@ -451,15 +472,19 @@ if __name__ == "__main__":
     import pysam
     import time
     from rapidfuzz.distance import Levenshtein
-    from collections import defaultdict
+    from collections import defaultdict, deque
     from Bio import SeqIO
     import hashlib
     import faiss
     import numpy as np
-    from itertools import chain, tee, count
+    from itertools import chain, tee, count, groupby, combinations
+    from operator import itemgetter
     import json
     from datasketch import MinHash
-    
+    import pybktree
+    from bisect import bisect_left, bisect_right
+    import random
+    import hashlib
     
     start_time = time.time()
     
@@ -616,7 +641,9 @@ if __name__ == "__main__":
             parser.error('ltr5 must be defined.')
         if args.linker5 is None:
             parser.error('linker5 must be defined.')
-        if args.genome_fasta is None:
+        if args.misprime_mismatch < -1:
+            parser.error('misprime_mismatch must be an integer >= -1.')
+        if args.misprime_mismatch > -1 and args.genome_fasta is None:
             parser.error('genome_fasta must be defined.')
         if args.v_idx_dir is None:
             parser.error('v_idx_dir must be defined.')
@@ -624,20 +651,29 @@ if __name__ == "__main__":
             parser.error('v_idx_name must be defined.')
         if args.frag_ratio < 1:
             parser.error('frag_ratio must be >= 1.')
+        if args.min_frag_len < 15:
+            parser.error('min_frag_len must be >= 15.')
+        if args.num_bits % 8 != 0:
+            parser.error('num_bits must be a multiple of 8.')
+        if args.token_size < 2:
+            parser.error('token_size must be >= 2.')
+        if args.match_after < 0:
+            parser.error('match_after must be >= 0.')
         
-        genome_compression = check_genome_compression(args.genome_fasta)
-        if genome_compression != 'bgzf' and genome_compression != 'uncompressed':
-            raise ValueError('The given genome fasta file must be uncompressed or bgzip compressed.')
+        if args.genome_fasta:
+            genome_compression = check_genome_compression(args.genome_fasta)
+            if genome_compression != 'bgzf' and genome_compression != 'uncompressed':
+                raise ValueError('The given genome fasta file must be uncompressed or bgzip compressed.')
 
-        if args.genome_fasta_index is None:
-            genome = pysam.FastaFile(filename = args.genome_fasta)
-        else:
-            if genome_compression == 'bgzf':
-                genome = pysam.FastaFile(filename = args.genome_fasta, 
-                                        filepath_index_compressed = args.genome_fasta_index)
-            elif genome_compression == 'uncompressed':
-                genome = pysam.FastaFile(filename = args.genome_fasta, 
-                                        filepath_index = args.genome_fasta_index)
+            if args.genome_fasta_index is None:
+                genome = pysam.FastaFile(filename = args.genome_fasta)
+            else:
+                if genome_compression == 'bgzf':
+                    genome = pysam.FastaFile(filename = args.genome_fasta, 
+                                            filepath_index_compressed = args.genome_fasta_index)
+                elif genome_compression == 'uncompressed':
+                    genome = pysam.FastaFile(filename = args.genome_fasta, 
+                                            filepath_index = args.genome_fasta_index)
 
         crop.check_crop_input(ltr3 = args.ltr3, 
                             linker3 = args.linker3, 
@@ -657,18 +693,6 @@ if __name__ == "__main__":
             
         if args.sam_path != 'samtools':
             align.check_executable(path = args.sam_path, ex_name = 'samtools')
-            
-        if args.num_bits % 8 != 0:
-            raise ValueError('num_bits must be a multiple of 8.')
-        
-        if args.token_size < 1:
-            raise ValueError('token_size must be >= 1.')
-        
-        if args.match_after < 0:
-            raise ValueError('match_after must be >= 0.')
-        
-        if args.min_frag_len < 10:
-            raise ValueError('min_frag_len must be > 10.')
         
         print('\n')
         print('Sample name:', args.nm)
@@ -720,21 +744,24 @@ if __name__ == "__main__":
         print('Minimum alignment MAPQ score:', args.min_mapq)
         print('Minimum average base quality score:', args.min_qual)
         print(f'Fuzzy length difference: {args.len_diff} bp')
-        print(f'Fuzzy UMI mismatches: {args.umi_diff} bp')
+        print(f'Fuzzy low resolution UMI mismatches: {args.umi_diff} bp')
         print('Duplicate count ratio:', args.frag_ratio)
 
         
         if args.no_mm is False:
             print('Keep multimapping reads: True')
-            print('Multimapping sequence similarity:', args.seq_sim)
             print(f'Multimapping hash length: {args.num_bits} bits')
             print(f'Multimapping token size: {args.token_size} bp')
-            print(f'Multimapping search sensitivity: {args.mm_search_sensitivity}')
-            print(f'Multimapping search window size: {args.win_len} bp')
+            print(f'Multimapping hash similarity threshold: {args.mm_hash_similarity}')
+            print(f'Multimapping sequence matching threshold: {args.seq_sim}')
+            print(f'Multimapping read density search window size: {args.win_len} bp')
         else:
             print('Keep multimapping reads: False')
         
-        print(f'Allowed mispriming mismatches: {args.misprime_mismatch} bp')
+        if args.misprime_mismatch >= 0:
+            print(f'Allowed mispriming mismatches: {args.misprime_mismatch} bp')
+        else:
+            print('Look for mispriming: False')
         
         print('\n')
         
@@ -881,7 +908,8 @@ if __name__ == "__main__":
                     'multi': (True if (read1_info['multimapping'] or read2_info['multimapping']) else False),
                     'mean_qual': -10 * math.log10(combined_qual),
                     'ltr_match': read1_info['ltr_match'],
-                    'linker_match': read1_info['linker_match']
+                    'linker_match': read1_info['linker_match'],
+                    'read_name': read1_info['query_name']
                     }
                 
             del read_pairs
@@ -920,7 +948,7 @@ if __name__ == "__main__":
                         'mean_qual': info['mean_qual'],
                         'ltr_match': info['ltr_match'],
                         'linker_match': info['linker_match'],
-                        'read': read_key}
+                        'read_name': read_key}
                 
                 if key not in unique_all_split:
                     unique_all_split[key] = [value]
@@ -938,12 +966,14 @@ if __name__ == "__main__":
             
             print('Collapsing unique exact matches...')
             # Run unique_exact_matches() for each dictionary in list
+            sorted_unique_all_split_list = sorted(unique_all_split_list, key=lambda x: len(x), reverse=True)
             ue_kept_list = Parallel(n_jobs = min(len(unique_all_split_list), args.nthr))(
                 delayed(clean.unique_exact_matches)(
                     input_dict = unique_all_split_list[entry]) 
-                for entry in range(len(unique_all_split_list)))
+                for entry in range(len(sorted_unique_all_split_list)))
             
             del unique_all_split_list
+            del sorted_unique_all_split_list
             
             # Create the kept dictionary for unique reads.
             # This contains read information for each unique fragment with
@@ -956,17 +986,18 @@ if __name__ == "__main__":
             ue_kept_list = []
             for key, value in unique_exact_kept.items():
                 ue_kept_list.append({key: value})
-                
+
             del unique_exact_kept
 
             print('Looking for unique fuzzy matches...')
+            sorted_ue_kept_list = sorted(ue_kept_list, key=lambda x: len(x), reverse=True)
             uf_kept_list = Parallel(n_jobs = min(len(ue_kept_list), args.nthr))(
                 delayed(clean.unique_fuzzy_matches)(
                     input_dict = ue_kept_list[entry], 
                     len_diff = args.len_diff, 
                     umi_diff = args.umi_diff, 
                     frag_ratio = args.frag_ratio) 
-                for entry in range(len(ue_kept_list)))
+                for entry in range(len(sorted_ue_kept_list)))
 
             unique_fuzzy_kept = {}
             unique_fuzzy_dup = {}
@@ -979,6 +1010,7 @@ if __name__ == "__main__":
                         unique_fuzzy_dup[key].extend(value)
 
             del ue_kept_list
+            del sorted_ue_kept_list
             del uf_kept_list
                 
             # Initialize the dictionary to hold the final kept reads
@@ -987,7 +1019,7 @@ if __name__ == "__main__":
             # Add kept unique reads to kept_dict
             for split_key, info_list in unique_fuzzy_kept.items():
                 for info in info_list:
-                    key = info['read']
+                    key = info['read_name']
                     value = {'chrom': info['chrom'],
                             'start': info['start'], 
                             'end': info['end'],
@@ -1000,7 +1032,8 @@ if __name__ == "__main__":
                             'multi': info['multi'],
                             'mean_qual': info['mean_qual'],
                             'ltr_match': info['ltr_match'],
-                            'linker_match': info['linker_match']}
+                            'linker_match': info['linker_match'],
+                            'read_name': info['read_name']}
                     kept_dict[key] = value
 
             # At this point, len(kept_dict) = len(kept unique fragments)
@@ -1029,7 +1062,9 @@ if __name__ == "__main__":
                     delayed(apply_minhash)(
                         key = key, 
                         value = value, 
-                        string = (value['seq1'] + value['seq2']), 
+                        string = (value['seq1'] 
+                                    if clean.seq_similarity(value['seq1'], crop.revcomp(value['seq2'])) >= args.seq_sim 
+                                    else value['seq1'] + value['seq2']), 
                         num_bits = args.num_bits,
                         token_size = args.token_size) 
                     for key, value in multi_exact_kept.items())
@@ -1039,173 +1074,78 @@ if __name__ == "__main__":
 
                 del multi_exact_hashed
 
-                # Make minhash list
-                minhash_list = []
-                for key, value in multi_exact_kept.items():
-                    minhash_list.append(value['hash'])
+                hash_distances, hash_indices = get_nn(input_dict = multi_exact_kept, 
+                                                        num_bits = args.num_bits)
 
-                # Define hash index parameters
-                nb = len(minhash_list)
-                dim = args.num_bits
-                db = np.empty((nb, dim // 8), dtype = 'uint8')
-
-                print('Building hash index...')
-                for i, binary_string in enumerate(minhash_list):
-                    db[i] = [int(binary_string[j:j + 8], 2) for j in range(0, dim, 8)]
-
-                hash_index = faiss.IndexBinaryFlat(dim)
-                hash_index.add(db)
-
-                print('Calculating hash distances...')
-                hash_distances, hash_indices = hash_index.search(db, k = min(25000, len(minhash_list)))
-                
-                del minhash_list
-                del db
-                del hash_index
-                
                 print('Grouping similar hashes...')
                 hash_matches = group_similar_hashes(
                     hash_distances = hash_distances, 
                     hash_indices = hash_indices, 
                     nthr = args.nthr,
-                    sensitivity = args.mm_search_sensitivity
+                    sensitivity = args.mm_hash_similarity,
+                    num_bits = args.num_bits
                     )
                     
                 del hash_distances
                 del hash_indices
-                    
+
                 mm_solo, mm_groups = parse_hash_matches(hash_matches)
                 del hash_matches
                 mm_solo = [index for sublist in mm_solo for index in sublist]
                 mm_groups = list(map(list, set(map(tuple, mm_groups))))
                 mm_groups = merge_hash_sublists(mm_groups)
-
-                mm_exact_items = list(multi_exact_kept.items())
-
+                mm_grouped_entries = extract_grouped_entries(groups = mm_groups,
+                                                            input_dict = multi_exact_kept)
+                
                 # Add ungrouped multimapping reads to mm_kept_dict
                 mm_kept_dict = {}
                 for index in mm_solo:
-                    items = mm_exact_items[index]
+                    items = list(multi_exact_kept.items())[index]
                     mm_kept_dict.update({items[0]: items[1]})
                 
-                del mm_exact_items
                 del mm_solo
 
                 print('Looking for multimapping fuzzy matches...')
+                pl1 = min(args.min_frag_len, 20)
+                md1 = int(pl1 * 0.15)
+                
                 multi_fuzzy_kept, multi_fuzzy_dup = clean.multi_fuzzy_matches(
-                    groups=mm_groups, 
-                    input_dict=multi_exact_kept, 
-                    umi_diff=args.umi_diff, 
-                    frag_ratio=args.frag_ratio, 
-                    sim_threshold=args.seq_sim,
-                    nthr = args.nthr
+                    groups = mm_grouped_entries, 
+                    umi_diff = args.umi_diff, 
+                    frag_ratio = args.frag_ratio, 
+                    nthr = args.nthr,
+                    seq_sim = args.seq_sim,
+                    um_kept_dict = kept_dict, 
+                    prefix_length = pl1, 
+                    win_len = args.win_len,
+                    max_distance = md1
                     )
                 
-                del multi_exact_kept
+                print('Performing final-pass verification of multimapping read positions...')
+                # The prefix length used for seq1 indices is 1.5 * prefix_length used above
+                md2 = int(pl1 * 1.5 * 0.15)
                 
+                multi_fuzzy_kept = clean.verify_mm_positions_final_pass(
+                    input_dict = multi_fuzzy_kept, 
+                    max_distance = md2
+                    )
+                                
                 for key, value in multi_fuzzy_kept.items():
                     mm_kept_dict.update({key: value})
 
                 for key, value in multi_fuzzy_dup.items():
                     dup_dict.update({key: value})
-                    
+                
+                del multi_exact_kept    
                 del multi_fuzzy_kept
                 del multi_fuzzy_dup
                 
                 multi_perc = (len(mm_kept_dict) / n_multi) * 100
                 print(f'{len(mm_kept_dict)} multimapping fragments retained ({multi_perc:.2f}%)')
-
-                print('\n')
-                print('Cleaning up multimapping reads...')
-                print('Checking for concordance with uniquely mapping reads...')
-                relocated_mm, total_relocated = clean.verify_mm_parallel(
-                    mm_kept_dict = mm_kept_dict, 
-                    um_kept_dict = kept_dict, 
-                    seq_sim = args.seq_sim, 
-                    nthr = args.nthr, 
-                    chunk_size = args.crop_chunk_size, 
-                    prefix_length = 5)
-
-                relocate_perc = (total_relocated / len(mm_kept_dict)) * 100
-                print(f'{total_relocated} multimapping fragments relocated ({relocate_perc:.2f}%)')     
-
-                print('Handling similar multimapping fragments...')
-                print('Hashing LTR-end sequences...')
-                relocated_hashed = Parallel(n_jobs=args.nthr)(
-                    delayed(apply_minhash)(
-                        key=key, 
-                        value=value, 
-                        string=(value['seq1']), 
-                        num_bits=args.num_bits,
-                        token_size=args.token_size) 
-                    for key, value in relocated_mm.items())
-
-                for key, hashed_value in relocated_hashed:
-                    relocated_mm[key] = hashed_value
-                del relocated_hashed
-                            
-                s1_minhash_list = []
-                for key, value in relocated_mm.items():
-                    s1_minhash_list.append(value['hash'])
-
-                nb = len(s1_minhash_list)
-                dim = args.num_bits
-                db = np.empty((nb, dim // 8), dtype = 'uint8')
-
-                for i, binary_string in enumerate(s1_minhash_list):
-                    db[i] = [int(binary_string[j:j + 8], 2) for j in range(0, dim, 8)]
-
-                print('Building hash index...')
-                s1_hash_index = faiss.IndexBinaryFlat(dim)
-                s1_hash_index.add(db)
-
-                print('Calculating hash distances...')
-                s1_hash_distances, s1_hash_indices = s1_hash_index.search(db, k = min(25000, len(s1_minhash_list)))
-
-                del s1_minhash_list
-                del db
-                del s1_hash_index
-
-                print('Grouping similar hashes...')
-                s1_hash_matches = group_similar_hashes(
-                    hash_distances = s1_hash_distances, 
-                    hash_indices = s1_hash_indices, 
-                    nthr = args.nthr,
-                    sensitivity = args.mm_search_sensitivity
-                    )
                 
-                s1_mm_solo, s1_mm_groups = parse_hash_matches(s1_hash_matches)
-                del s1_hash_matches
-                s1_mm_solo = [index for sublist in s1_mm_solo for index in sublist]
-                mm_groups = list(map(list, set(map(tuple, s1_mm_groups))))
-                s1_mm_groups = merge_hash_sublists(s1_mm_groups)
-                
-                relocated_items = list(relocated_mm.items())
-                
-                final_mm_dict = {}
-                for index in s1_mm_solo:
-                    items = relocated_items[index]
-                    final_mm_dict.update({items[0]: items[1]})
-                
-                print('Processing grouped multimapping fragments...')
-                multi_frag_groups = clean.multi_frag_matches(
-                    groups = s1_mm_groups, 
-                    input_dict = relocated_mm, 
-                    sim_threshold = args.seq_sim,
-                    nthr = args.nthr,
-                    unique_dict = kept_dict,
-                    win_len = args.win_len
-                )
+                kept_dict.update(mm_kept_dict)
 
-                for key, value in multi_frag_groups.items():
-                    final_mm_dict.update({key: value})
-
-                for key, value in final_mm_dict.items():
-                    kept_dict[key] = value
-            elif n_multi == 0:
-                print('\n')
-                print('No multimapping reads found.')
-                
+        if args.misprime_mismatch >= 0:
             print('\n')
             print('Looking for mispriming...')
             shift = args.tsd - 1 if args.U3 else 0
@@ -1233,6 +1173,9 @@ if __name__ == "__main__":
             print(f'Removing {n_misprime} fragments due to potential mispriming ({mp_perc:.2f}% of total)')
             n_mapped = len(kept_dict)
             print(n_mapped, 'fragments remaining')
+        else:
+            shift = args.tsd - 1 if args.U3 else 0
+            n_mapped = len(kept_dict)
                 
         if n_mapped > 0:
             kept_sorted = sorted(
@@ -1331,10 +1274,11 @@ if __name__ == "__main__":
                                     value['name'], value['count'], value['strand']]
                     
                     counts.write('\t'.join(map(str, collapsed_info)) + '\n')
-                    
-            with gzip.open(out_mp, 'wt') as mp:
-                for entry in misprime_reads:
-                    mp.write('>' + entry[0] + '\n' + entry[1] + '\n')
+            
+            if args.misprime_mismatch >= 0:        
+                with gzip.open(out_mp, 'wt') as mp:
+                    for entry in misprime_reads:
+                        mp.write('>' + entry[0] + '\n' + entry[1] + '\n')
                     
             with gzip.open(out_dup, 'wt', encoding = 'utf-8') as dups:
                 json.dump(dup_dict, dups, indent = 4)

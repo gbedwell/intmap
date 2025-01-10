@@ -23,8 +23,8 @@ Given multiplexed paired-end FASTQ files file_R2.fq.gz and file_R2.fq.gz, intmap
 intmap-demux \
     -r1 file_R1.fq.gz \
     -r2 file_R2.fq.gz \
-    -bc_ltr ltr_bc.fa \
-    -bc_linker linker_bc.fa
+    -bc_r1 ltr_bc.fa \
+    -bc_r2 linker_bc.fa
 ```
 
 The fasta files ltr_bc.fa and linker_bc.fa contain the matched LTR- and linker-end sequences that the program looks for. Note that all of the fasta headers must be unique. By default, intmap-demux allows for a substitution rate of 0.1. This value can be changed with the <code>-e</code> argument. When cutadapt is finished running, intmap-demux will place the proper R1 and R2 files into a subdirectory called 'demux' within the current working directory. These files can then be used directly with intmap. Note that multiplexed FASTQ files do not have to be demultiplexed with intmap-demux to be compatible with intmap. Any demultiplexing procedure will suffice, provided the LTR- and linker-end sequences immediately adjacent to the provirus-host genome junction are retained after demultiplexing. Usually, this is not a problem, as demultiplexing typically only looks for, and optionally removes, short sequences at the very 5' ends of reads.

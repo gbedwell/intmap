@@ -1,8 +1,5 @@
 #!/usr/local/bin/python
 
-# TO-DO: Enable pattern matching with LTR/linker UMIs?
-# Could accomodate anchored barcodes, such as NNNNNAGTCNNNNN
-    
 import os 
 import sys
 import getopt
@@ -30,9 +27,9 @@ def check_crop_input(ltr3, linker3, ltr1_primer, ltr5, linker5,
                     linker5_error_rate):
     
     ltr1_check = ltr1_primer.replace(' ', '')
-    ltr1_char = regex.sub('[ATGC]', '', ltr1_check.upper())
+    ltr1_char = regex.sub('[ATGCN]', '', ltr1_check.upper())
     if ltr1_char != '':
-        raise ValueError('Declared round 1 LTR primer may only contain A,T,G, and C nucleotides.')
+        raise ValueError('Declared round 1 LTR primer may only contain A,T,G,C, and N nucleotides.')
 
     if len(ltr1_check) < 10:
         raise ValueError('Declared round 1 LTR primer must be at least 10 nucleotides long.')

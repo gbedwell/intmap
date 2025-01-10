@@ -2,6 +2,7 @@ import math
 import regex
 import pysam
 from intmap import crop
+import sys
 
 # Read in BAM file and check R1 and R2 for
 # read name, location, and orientation.
@@ -30,12 +31,17 @@ def process_bam(out_bam):
                         (read1.is_reverse and read2.is_forward)):
                         read_pairs.append((read1, read2))
                         n_pairs += 1
-                        
+
     print(f'Number of aligned reads: {n_reads}')
-    print(f'Number of proper pairs: {n_pairs} ({(((n_pairs * 2) / n_reads) * 100):.2f}%)')
     
-    bamfile.close()
-    return read_pairs
+    if n_reads > 0:
+        print(f'Number of proper pairs: {n_pairs} ({(((n_pairs * 2) / n_reads) * 100):.2f}%)')
+        bamfile.close()
+        return read_pairs
+    else:
+        print(f'\nNo reads aligned to the target genome. Exiting.')
+        bamfile.close()
+        sys.exit()
 
 # Perform QC on each read.
 # Check mismatch rate, indel rate, fragment length, clip rate, MAPQ, and base quality.abs

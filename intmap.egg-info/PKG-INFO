@@ -1,4 +1,4 @@
-Metadata-Version: 2.1
+Metadata-Version: 2.2
 Name: intmap
 Version: 0.1.0
 Summary: A CLI app for mapping retroviral integration sites from NGS data.
@@ -15,3 +15,9 @@ Requires-Dist: RapidFuzz
 Requires-Dist: numpy
 Requires-Dist: faiss-cpu
 Requires-Dist: datasketch
+Dynamic: author
+Dynamic: author-email
+Dynamic: license
+Dynamic: requires-dist
+Dynamic: requires-python
+Dynamic: summary
