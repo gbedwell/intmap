@@ -429,16 +429,16 @@ def filter_chunk(chunk_distances, chunk_indices, threshold):
 def group_similar_hashes(hash_distances, hash_indices, nthr, sensitivity, num_bits):
     hamming_threshold = (num_bits * 64) * (1 - sensitivity)
     chunk_generator = chunk_hashes(
-        distances=hash_distances, 
-        indices=hash_indices, 
-        nthr=nthr
+        distances = hash_distances, 
+        indices = hash_indices, 
+        nthr = nthr
         )
     
     results = Parallel(n_jobs=nthr)(
         delayed(filter_chunk)(
-            chunk_distances=chunk_distances, 
-            chunk_indices=chunk_indices, 
-            threshold=hamming_threshold
+            chunk_distances = chunk_distances, 
+            chunk_indices = chunk_indices, 
+            threshold = hamming_threshold
             )
         for chunk_distances, chunk_indices in chunk_generator
         )

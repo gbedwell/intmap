@@ -32,34 +32,6 @@ def hamming_distance(seq1, seq2):
 def seq_similarity(seq1, seq2):
     return 1 - Levenshtein.normalized_distance(seq1, seq2)
 
-# def unique_exact_matches(input_dict):
-#     tmp_exact_kept = {}
-#     tmp_exact_dup = set()  # Store already processed reads to avoid duplicates
-        
-#     for key, entries in input_dict.items():
-#         sort_key = lambda x: (x['start'], x['end'], x['ltr_umi'], x['linker_umi'])
-#         entries.sort(key = sort_key)
-        
-#         for group_key, group_entries in groupby(entries, key = sort_key):
-#             group = list(group_entries)
-            
-#             if any(entry['read_name'] in tmp_exact_dup for entry in group):
-#                 continue
-                
-#             if len(group) > 1:
-#                 best_entry = max(group, key=lambda x: x['mean_qual'])
-#                 total_count = sum(entry['count'] for entry in group if entry != best_entry)
-#                 best_entry['count'] += total_count
-#                 tmp_exact_kept[key] = tmp_exact_kept.get(key, []) + [best_entry]
-                
-#                 for entry in group:
-#                     if entry != best_entry:
-#                         tmp_exact_dup.add(entry['read_name'])
-#             else:
-#                 tmp_exact_kept[key] = tmp_exact_kept.get(key, []) + group
-
-#     return tmp_exact_kept
-
 def unique_exact_matches(input_dict):
     tmp_exact_kept = {}
     tmp_exact_dup = set()
@@ -84,24 +56,8 @@ def unique_exact_matches(input_dict):
 
     return tmp_exact_kept
 
-# def ranged_groupby(entries, tolerance, sort_key = lambda x: (x['start'], x['end'])):
-#     entries = sorted(entries, key = sort_key)  # Sort by the key for predictable grouping
-#     groups = []
-#     current_group = [entries[0]]
-
-#     for entry in entries[1:]:
-#         if all(abs(sort_key(entry)[i] - sort_key(current_group[-1])[i]) <= tolerance 
-#                 for i in range(len(sort_key(entry)))):
-#             current_group.append(entry)
-#         else:
-#             groups.append(current_group)
-#             current_group = [entry]
-    
-#     groups.append(current_group)  # Add the last group
-#     return groups
-
 def ranged_groupby(entries, tolerance, sort_key = lambda x: (x['start'], x['end'])):
-    entries = sorted(entries, key=sort_key)
+    entries = sorted(entries, key = sort_key)
     groups = []
     current_group = []
     last_end = None
@@ -287,7 +243,7 @@ def unique_fuzzy_matches(input_dict, len_diff, umi_diff, frag_ratio):
             for group in umi_clusters:
                 for entry in group:
                     clustered_entries[entry['read_name']] = entry
-                    
+
             for branch in connected_reads:
                 connected_entries = [clustered_entries[read_name] for read_name in branch if read_name in clustered_entries]
                 kept_entry = max(connected_entries, key=lambda x: (x['count'], x['mean_qual']))
