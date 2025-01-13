@@ -60,7 +60,7 @@ def ranged_groupby(entries, tolerance, sort_key = lambda x: (x['start'], x['end'
     entries = sorted(entries, key = sort_key)
     groups = []
     current_group = []
-    last_end = None
+    last_start, last_end = None, None
 
     for entry in entries:
         start, end = sort_key(entry)
