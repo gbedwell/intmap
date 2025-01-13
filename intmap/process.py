@@ -89,7 +89,7 @@ def process_read(read, aln_mismatch_rate, aln_indel_rate, max_frag_len,
     mapq = read.mapping_quality
     
     multimapping = False
-    if (as_tag == xs_tag and (mapq == 1 or mapq == 0)):
+    if (xs_tag is not None and abs(as_tag - xs_tag) <= 10 and mapq <= 2):
         multimapping = True
     
     # Option to remove multimapping reads

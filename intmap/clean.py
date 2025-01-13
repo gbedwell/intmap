@@ -105,7 +105,7 @@ def cluster_umis(umis, threshold):
     # These UMIs should probably all be grouped together and processed in the directional UMI network.
     graph = defaultdict(set)
     for i, umi in enumerate(umis):
-        distances, indexes = index.search(encoded_umis[i:i+1], len(umis))
+        distances, indexes = index.search(encoded_umis[i:i+1], min(100, len(umis)))
         for idx, dist in zip(indexes[0], distances[0]):
             if dist <= threshold:
                 graph[i].add(idx)
@@ -351,7 +351,7 @@ def verify_mm_positions(mm_frag, candidate_um_frags, seq_sim):
     return mm_frag, False
 
 def process_mm_fuzzy_group(group, umi_diff, frag_ratio, um_index, um_tree, seq_sim, 
-                            prefix_length, unique_coordinates, win_len, max_distance):
+                            prefix_length, unique_coordinates, max_distance):
     tmp_fuzzy_kept = {}
     tmp_fuzzy_dup = {}
     
@@ -379,66 +379,64 @@ def process_mm_fuzzy_group(group, umi_diff, frag_ratio, um_index, um_tree, seq_s
     tmp_fuzzy_dup = {key: list(value) for key, value in tmp_fuzzy_dup.items()}
     
     relocated_reads = {}
+    prefix_cache = set()
     match_found = False
     for read_name, mm_frag in tmp_fuzzy_kept.items():
         if not match_found:
             prefix = mm_frag['seq1'][:prefix_length]
-            candidate_um_frags = get_um_candidates(
-                prefix = prefix, 
-                um_index = um_index, 
-                um_tree = um_tree,
-                max_distance = max_distance
-                )
-            checked_read, match_found = verify_mm_positions(mm_frag, candidate_um_frags, seq_sim)
-            relocated_reads.update({read_name: checked_read})
+            if prefix not in prefix_cache:
+                candidate_um_frags = get_um_candidates(
+                    prefix = prefix, 
+                    um_index = um_index, 
+                    um_tree = um_tree,
+                    max_distance = max_distance
+                    )
+                checked_read, match_found = verify_mm_positions(mm_frag, candidate_um_frags, seq_sim)
+                relocated_reads[read_name] = checked_read
+                prefix_cache.add(prefix)
+            else:
+                relocated_reads[read_name] = mm_frag
         else:
-            relocated_reads.update({read_name: mm_frag})
+            relocated_reads[read_name] = mm_frag
 
     grouped_reads = {}
-    target_positions = {}
-    seen_keys = set()
+    # target_positions = {}
+    # seen_keys = set()
     best_read_name = None
     for read_name, read_info in relocated_reads.items():
         if read_info['multi'] == 'True - relocated':
             best_read_name = read_name
             break
         
-        # Define current position as the midpoint between the mapped start and end coordinates.
-        # Without strict confidence in the strandedness of multimapping reads, this seems like a reasonable
-        # compromise between start/end coordinates.
-        current_chrom = read_info['chrom']
-        current_pos = math.floor((read_info['start'] + read_info['end']) / 2)
-        current_key = current_chrom + '_' + str(current_pos)
-        if current_key not in seen_keys:
-            if current_chrom in unique_coordinates:
-                unique_positions = unique_coordinates[current_chrom][0]
-                start = current_pos - win_len
-                end = current_pos + win_len
-                start_index = bisect_left(unique_positions, start)
-                end_index = bisect_right(unique_positions, end)
-                density = end_index - start_index
-                target_positions[read_name] = max(density, 1e-6)
-                seen_keys.add(current_key)
-            else:
-                target_positions[read_name] = 1e-6
-                seen_keys.add(current_key)
-            
+        # current_chrom = read_info['chrom']
+        # current_pos = math.floor((read_info['start'] + read_info['end']) / 2)
+        # current_key = current_chrom + '_' + str(current_pos)
+        # if current_key not in seen_keys:
+        #     if current_chrom in unique_coordinates:
+        #         unique_positions = unique_coordinates[current_chrom][0]
+        #         start = current_pos - win_len # win_len has been removed as a variable
+        #         end = current_pos + win_len
+        #         start_index = bisect_left(unique_positions, start)
+        #         end_index = bisect_right(unique_positions, end)
+        #         density = end_index - start_index
+        #         target_positions[read_name] = max(density, 1e-6)
+        #         seen_keys.add(current_key)
+        #     else:
+        #         target_positions[read_name] = 1e-6
+        #         seen_keys.add(current_key)
 
-    # Modify this for cases when all densities are the same.
-    # For all chromosomes in seen_chroms, select the one with the highest total unique sites.
-    # Then sort all multimapping coordinates on that chromosome and choose the read with smallest start position.
     if best_read_name is None:
-        read_names = list(target_positions.keys())
-        target_densities = list(target_positions.values())
-        total = sum(target_densities)
-        normalized_densities = [value / total for value in target_densities]
+        read_names = list(relocated_reads.keys())
+        # target_densities = list(target_positions.values())
+        # total = sum(target_densities)
+        # normalized_densities = [value / total for value in target_densities]
         seed_string = ','.join(read_names)
         seed = int(hashlib.sha256(seed_string.encode('utf-8')).hexdigest(), 16) % (2**64)
         random.seed(seed)
         
         best_read_name = random.choices(
             population = read_names,
-            weights = normalized_densities,
+            # weights = normalized_densities,
             k = 1
             )[0]
 
@@ -470,7 +468,7 @@ def chunk_groups(groups, nthr):
     return chunks
         
 def process_mm_fuzzy_chunk(chunk, umi_diff, frag_ratio, um_index, um_tree, seq_sim, 
-                            prefix_length, unique_coordinates, win_len, max_distance):
+                            prefix_length, unique_coordinates, max_distance):
     tmp_fuzzy_kept = {}
     tmp_fuzzy_dup = {}
 
@@ -484,7 +482,6 @@ def process_mm_fuzzy_chunk(chunk, umi_diff, frag_ratio, um_index, um_tree, seq_s
             seq_sim = seq_sim, 
             prefix_length = prefix_length,
             unique_coordinates = unique_coordinates,
-            win_len = win_len,
             max_distance = max_distance
             )
         tmp_fuzzy_kept.update(kept)
@@ -497,7 +494,7 @@ def process_mm_fuzzy_chunk(chunk, umi_diff, frag_ratio, um_index, um_tree, seq_s
     return tmp_fuzzy_kept, tmp_fuzzy_dup
 
 def multi_fuzzy_matches(groups, umi_diff, frag_ratio, nthr, 
-                        seq_sim, um_kept_dict, prefix_length, win_len,
+                        seq_sim, um_kept_dict, prefix_length,
                         max_distance):
     
     um_index, um_tree = build_um_index(um_kept_dict, prefix_length)
@@ -530,7 +527,6 @@ def multi_fuzzy_matches(groups, umi_diff, frag_ratio, nthr,
             seq_sim = seq_sim, 
             prefix_length = prefix_length,
             unique_coordinates = unique_coordinates,
-            win_len = win_len,
             max_distance = max_distance
             ) for chunk in group_chunks
         )
