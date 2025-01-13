@@ -64,11 +64,13 @@ def ranged_groupby(entries, tolerance, sort_key = lambda x: (x['start'], x['end'
 
     for entry in entries:
         start, end = sort_key(entry)
-        if current_group and abs(start - last_end) > tolerance:
+        if (current_group and
+            (abs(start - last_start) > tolerance and
+            abs(end - last_end) > tolerance)):
             groups.append(current_group)
             current_group = []
         current_group.append(entry)
-        last_end = end
+        last_start, last_end = end
 
     if current_group:
         groups.append(current_group)

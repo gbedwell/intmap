@@ -19,6 +19,7 @@ setup(
         'RapidFuzz',
         'numpy',
         'faiss-cpu',
-        'datasketch'
+        'datasketch',
+        'pybktree'
         ]
     )

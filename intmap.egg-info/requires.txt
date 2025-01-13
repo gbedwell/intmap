@@ -5,3 +5,4 @@ RapidFuzz
 numpy
 faiss-cpu
 datasketch
+pybktree

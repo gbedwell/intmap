@@ -17,3 +17,4 @@ dependencies:
     - numpy==2.1.2
     - faiss-cpu==1.9.0
     - datasketch==1.6.5
+    - pybktree==1.1

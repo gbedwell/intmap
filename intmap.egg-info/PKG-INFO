@@ -15,6 +15,7 @@ Requires-Dist: RapidFuzz
 Requires-Dist: numpy
 Requires-Dist: faiss-cpu
 Requires-Dist: datasketch
+Requires-Dist: pybktree
 Dynamic: author
 Dynamic: author-email
 Dynamic: license
