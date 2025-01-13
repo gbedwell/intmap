@@ -70,7 +70,7 @@ def ranged_groupby(entries, tolerance, sort_key = lambda x: (x['start'], x['end'
             groups.append(current_group)
             current_group = []
         current_group.append(entry)
-        last_start, last_end = end
+        last_start, last_end = start, end
 
     if current_group:
         groups.append(current_group)
