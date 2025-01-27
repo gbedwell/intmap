@@ -6,3 +6,7 @@ numpy
 faiss-cpu
 datasketch
 pybktree
+
+[test]
+pytest
+pytest-cov

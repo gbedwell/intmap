@@ -1,0 +1,38 @@
+{
+    "groups": [
+        [
+            {
+                "read_name": "mm_read1",
+                "chrom": "chr1",
+                "start": 1000,
+                "end": 1100,
+                "count": 5,
+                "strand": "+",
+                "ltr_umi": "AAAA",
+                "linker_umi": "TTTT",
+                "seq1": "ACTGACTGACTGACTGACTG",
+                "seq2": "CAGTCAGTCAGTCAGTCAGT",
+                "multi": "True",
+                "mean_qual": 35,
+                "ltr_match": "ATGC",
+                "linker_match": "ATGC"
+            },
+            {
+                "read_name": "mm_read2",
+                "chrom": "chr1",
+                "start": 1002,
+                "end": 1102,
+                "count": 1,
+                "strand": "+",
+                "ltr_umi": "AAAC",
+                "linker_umi": "TTTT",
+                "seq1": "ACTGACTGACTGACTGACTG",
+                "seq2": "CAGTCAGTCAGTCAGTCAGT",
+                "multi": "True",
+                "mean_qual": 30,
+                "ltr_match": "ATGC",
+                "linker_match": "ATGC"
+            }
+        ]
+    ]
+}

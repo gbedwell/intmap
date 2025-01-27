@@ -1,0 +1,18 @@
+{
+    "read2": {
+        "ltr_umi": "AAAA",
+        "linker_umi": "TTTT",
+        "seq1": "ATGC",
+        "seq2": "GCTA",
+        "count": 8,
+        "mean_qual": 35
+    },
+    "read3": {
+        "ltr_umi": "GGGG",
+        "linker_umi": "CCCC",
+        "seq1": "TGCA",
+        "seq2": "ACTG",
+        "count": 2,
+        "mean_qual": 25
+    }
+}

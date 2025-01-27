@@ -3,6 +3,7 @@ import regex
 import pysam
 from intmap import crop
 import sys
+import numpy as np
 
 # Read in BAM file and check R1 and R2 for
 # read name, location, and orientation.
@@ -48,32 +49,25 @@ def process_bam(out_bam):
 # Return None if read does not pass QC.
 # Also defines multimapping vs. unique reads, fragment UMIs, sequenced portion of fragments, etc.
 def process_read(read, aln_mismatch_rate, aln_indel_rate, max_frag_len,
-                min_mapq, U3, no_mm, min_qual, match_after):
+                min_frag_len, min_mapq, U3, no_mm, min_qual, match_after):
     
     # Ensure that each read starts on a match/mismatch (M)
-    # (i.e., not an insertion, deletion, or is not soft-clipped)
-    # Apply to both ends -- important for mapping both integration site and fragmentation breakpoint.
     cigar = read.cigarstring
     cig_split = regex.findall('\\d+|\\D', cigar)
-    if read.is_forward:
-        if cig_split[1] != 'M':
-            return None
-    elif read.is_reverse:
-        if cig_split[-1] != 'M':
-            return None
+    if cig_split[1] != 'M':
+        return None
+    if 'S' in cig_split:
+        return None
+        
+    # Get MD tag. Used in a couple of places downstream.
+    md = read.get_tag('MD')
     
-    # Check that the 5' end of read 1 matches the reference within
+    # Check that the 5' end of read 1 matches the reference after
     # match_after aligned positions.
     if read.is_read1:
-        md = read.get_tag('MD')
-        md_split = regex.findall('[1-9]\\d*|[ACGT]', md)
-        if len(md_split) > 1 and not md_split[0].isdigit():
-            start_mm = 0
-            for entry in md_split[0:]:
-                if entry in 'ACGT':
-                    start_mm += 1
-                else:
-                    break
+        first_match = regex.match(r'^([ACGT]+)?(\d+)', md)
+        if first_match:
+            start_mm = len(first_match.group(1) or '')
             if start_mm > match_after:
                 return None
     
@@ -89,7 +83,7 @@ def process_read(read, aln_mismatch_rate, aln_indel_rate, max_frag_len,
     mapq = read.mapping_quality
     
     multimapping = False
-    if (xs_tag is not None and abs(as_tag - xs_tag) <= 10 and mapq <= 2):
+    if (xs_tag is not None and as_tag == xs_tag and mapq <= 1):
         multimapping = True
     
     # Option to remove multimapping reads
@@ -103,18 +97,14 @@ def process_read(read, aln_mismatch_rate, aln_indel_rate, max_frag_len,
     
     # Quantify base quality scores
     # Work in probabilities, not Phred scores
-    q_array = read.query_qualities
-    qs = []
-    for n in q_array:
-        qs.append(10 ** (n / -10))
-    # mean_qual = -10 * math.log10(sum(qs) / len(qs))
-    mean_qual = sum(qs) / len(qs)
+    q_array = np.array(read.query_qualities)
+    mean_qual = np.mean(10 ** (q_array / -10))
     if mean_qual > min_qual:
         return None
     
     # Filter by fragment length
     tlen = read.template_length
-    if abs(tlen) > max_frag_len:
+    if abs(tlen) > max_frag_len or abs(tlen) < min_frag_len:
         return None
     
     # Filter by mismatch and indel rates
@@ -125,7 +115,10 @@ def process_read(read, aln_mismatch_rate, aln_indel_rate, max_frag_len,
     edit_dist = read.get_tag('NM')
     
     if edit_dist <= (n_mm + n_indel):
-        mismatch = read.get_tag('XM')
+        if read.has_tag('XM'):
+            mismatch = read.get_tag('XM')
+        else:
+            mismatch = len(regex.findall('[ATCG]', md))
         
         if mismatch <= n_mm:
             indel = edit_dist - mismatch
@@ -179,10 +172,11 @@ def process_read(read, aln_mismatch_rate, aln_indel_rate, max_frag_len,
 
 # Perform QC on each read pair
 def process_read_pair(read1, read2, aln_mismatch_rate, aln_indel_rate, max_frag_len, 
-                        min_mapq, U3, no_mm, min_qual, match_after):
+                        min_frag_len, min_mapq, U3, no_mm, min_qual, match_after):
     read1_info = process_read(read = read1, 
                             aln_mismatch_rate = aln_mismatch_rate, 
                             aln_indel_rate = aln_indel_rate,
+                            min_frag_len = min_frag_len,
                             max_frag_len = max_frag_len,
                             min_mapq = min_mapq,
                             U3 = U3,
@@ -193,6 +187,7 @@ def process_read_pair(read1, read2, aln_mismatch_rate, aln_indel_rate, max_frag_
     read2_info = process_read(read=read2, 
                             aln_mismatch_rate = aln_mismatch_rate,
                             aln_indel_rate = aln_indel_rate,
+                            min_frag_len = min_frag_len,
                             max_frag_len = max_frag_len,
                             min_mapq = min_mapq,
                             U3 = U3,

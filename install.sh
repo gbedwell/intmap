@@ -47,7 +47,7 @@ fi
 # --use-pep517 included per pip recommendation
 # regarding deprecation of setup.py develop
 # See: https://github.com/pypa/pip/issues/11457
-pip install -e . --use-pep517 &&
+pip install -e ".[test]" --use-pep517 &&
 
 if [ $env_active -eq 0 ]; then
     conda deactivate

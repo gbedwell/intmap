@@ -17,3 +17,4 @@ intmap.egg-info/SOURCES.txt
 intmap.egg-info/dependency_links.txt
 intmap.egg-info/requires.txt
 intmap.egg-info/top_level.txt
+tests/test_clean.py

@@ -1,0 +1,26 @@
+[    
+    {
+        "('chr1', '+')": [
+            {
+                "start": 100,
+                "end": 200,
+                "read_name": "read1"
+            },
+            {
+                "start": 101,
+                "end": 201,
+                "read_name": "read2"
+            },
+            {
+                "start": 150,
+                "end": 250,
+                "read_name": "read3"
+            },
+            {
+                "start": 500,
+                "end": 600,
+                "read_name": "read4"
+            }
+        ]
+    }
+]

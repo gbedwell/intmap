@@ -1,5 +1,3 @@
-#!/usr/local/bin/python
-
 import os 
 import sys
 import getopt
@@ -10,21 +8,11 @@ import math
 from collections import defaultdict
 from joblib import Parallel, delayed
 from itertools import tee, count
-import shutil
-import subprocess
-import platform
-
-def revcomp(seq):
-    trans = str.maketrans("acgtumrwsykvhdbnACGTUMRWSYKVHDBN", "TGCAAKYWSRMBDHVNTGCAAKYWSRMBDHVN")
-    seq_list = list(seq)
-    seq_list.reverse()
-    rev_seq = ''.join(seq_list)
-    revcomp_seq = str.translate(rev_seq, trans)
-    return revcomp_seq
+from intmap.utils import *
+import numpy as np
 
 def check_crop_input(ltr3, linker3, ltr1_primer, ltr5, linker5,
-                    contamination, no_crop, ltr5_error_rate, 
-                    linker5_error_rate):
+                    contamination, ltr5_error_rate, linker5_error_rate):
     
     ltr1_check = ltr1_primer.replace(' ', '')
     ltr1_char = regex.sub('[ATGCN]', '', ltr1_check.upper())
@@ -71,347 +59,280 @@ def check_crop_input(ltr3, linker3, ltr1_primer, ltr5, linker5,
     if linker_char != '':
         raise ValueError('The given linker sequence may only contain A, T, G, and C nucleotides.')
     
-    if no_crop is False:
-        if len(linker_check) < 5:
-            raise ValueError('The given linker sequence must be >= 5 nucleotides long.')
+    if len(linker_check) < 5:
+        raise ValueError('The given linker sequence must be >= 5 nucleotides long.')
         
     ltr_check = ltr3.replace(' ', '')
     test_ltr = regex.sub('[ATGC]', '', ltr_check.upper())
     if test_ltr != '':
         raise ValueError('The given LTR sequence may only contain A, T, G, and C nucleotides.')
-    
-    if no_crop is False:
-        if len(ltr_check) < 5:
-            raise ValueError('The given LTR sequence must be >= 5 nucleotides long.')
 
-def zipped(file):
-    if os.path.exists(file):
-        with open(file, 'rb') as zip_test:
-            return zip_test.read(2) == b'\x1f\x8b'
-    else:
-        return file.endswith('.gz')
-    
-def ensure_open(file):
-    if isinstance(file, (str, bytes)):
-        if zipped(file):
-            return gzip.open(file, 'rt')
-        else:
-            return open(file, 'rt')
-    elif isinstance(file, io.IOBase) and not file.closed:
-        return file
-    else:
-        raise ValueError("Invalid file input or file is closed")
-
-def concatenate_files(input_files, output_file):       
-    buffer_size = 1024 * 1024 * 10
-    with gzip.open(output_file, 'wb') as outfile:
-        for file_name in input_files:
-            with gzip.open(file_name, 'rb') as infile:
-                while True:
-                    buffer = infile.read(buffer_size)
-                    if not buffer:
-                        break
-                    outfile.write(buffer)
-
-def open_file(filename, mode):
-    if zipped(filename):
-        return gzip.open(filename, mode)
-    else:
-        return open(filename, mode)
-        
-def concatenate_unix(input_files, output_file):
-    cat_cmd = f"cat {' '.join(input_files)} > {output_file}"
-    subprocess.call(cat_cmd, shell=True)
-
-def chunk_fastq(file1_path, file2_path, chunk_size):
-    with open_file(file1_path, 'rt') as file1, open_file(file2_path, 'rt') as file2:
-        while True:
-            chunk = []
-            for _ in range(chunk_size):
-                head1 = file1.readline().strip().split(' ')[0]
-                seq1 = file1.readline().strip()
-                opt1 = file1.readline().strip()
-                qual1 = file1.readline().strip()
-
-                head2 = file2.readline().strip().split(' ')[0]
-                seq2 = file2.readline().strip()
-                opt2 = file2.readline().strip()
-                qual2 = file2.readline().strip()
-
-                if not head1 or not head2:
-                    break
-
-                chunk.append((head1, seq1, opt1, qual1, head2, seq2, opt2, qual2))
-            
-            if not chunk:
-                break
-            
-            yield chunk
-
-def prepare_pattern(term, error_rate, error_type = "e"):
-    term = term.replace(' ', '').upper()
-    max_mismatches = math.floor(error_rate * len(term))
-    return f'({term}){{{"s" if error_type == "s" else "e"}<={max_mismatches}}}'
-
-def prepare_exact_pattern(term):
-    term = term.replace(' ', '').upper()
-    return rf'({term})'
-
-def find_priority_matches(patterns, sequence):
-    for pattern in patterns:
-        match = pattern.search(sequence)
-        if match:
-            return list(pattern.finditer(sequence))[-1]
-    return None
-
-def crop_chunk(chunk, ltr_regex_list, linker_regex_list, ltr_rc_regex_list, linker_rc_regex_list,
-                min_frag_len, no_crop, name, short_nm, contam_patterns, ltr_umi_len,
-                ltr_umi_offset, ltr_umi_pattern, linker_umi_len, linker_umi_offset,
-                linker_umi_pattern, crop1_file, crop2_file):
-
-    with gzip.open(crop1_file, 'wt') as crop1, gzip.open(crop2_file, 'wt') as crop2:
-        for head1, seq1, opt1, qual1, head2, seq2, opt2, qual2 in chunk:
-            if head1 != head2:
-                raise Exception('ERROR: FASTQ read names do not match.')
-
-            ltr_hit = find_priority_matches(ltr_regex_list, seq1)
-            linker_hit = find_priority_matches(linker_regex_list, seq2)
-            
-            if not ltr_hit or not linker_hit:
-                continue
-            
-            ltr_coords = ltr_hit.span()
-            ltr_start, ltr_end = ltr_coords
-            ltr_found = seq1[ltr_start:ltr_end]
-            ltr_len = len(ltr_found)
-
-            linker_coords = linker_hit.span()
-            linker_start, linker_end = linker_coords
-            linker_found = seq2[linker_start:linker_end]
-            linker_len = len(linker_found)
-            
-            ltr_umi = seq1[(ltr_start - ltr_umi_offset - ltr_umi_len):(ltr_start - ltr_umi_offset)] if ltr_umi_len > 0 else 'N'
-            linker_umi = seq2[(linker_start - linker_umi_offset - linker_umi_len):(linker_start - linker_umi_offset)] if linker_umi_len > 0 else 'N'
-            
-            if ltr_umi_pattern:
-                if ltr_umi == 'N':
-                    raise Exception("LTR UMI is not defined. Cannot look for pattern.")
-                else:
-                    ltr_umi_regex_pattern = regex.sub(r'N+', lambda m: f"[ATGC]{{{len(m.group())}}}", ltr_umi_pattern)
-                    ltr_umi_match = regex.search(ltr_umi_regex_pattern, ltr_umi)
-                    if not ltr_umi_match:
-                        continue
-            
-            if linker_umi_pattern:
-                if linker_umi == 'N':
-                    raise Exception("Linker UMI is not defined. Cannot look for pattern.")
-                else:
-                    linker_umi_regex_pattern = regex.sub(r'N+', lambda m: f"[ATGC]{{{len(m.group())}}}", linker_umi_pattern)
-                    linker_umi_match = regex.search(linker_umi_regex_pattern, linker_umi)
-                    if not linker_umi_match:
-                        continue
-            
-            linker_in_R1 = find_priority_matches(linker_rc_regex_list, seq1)
-            if linker_in_R1:
-                rlim_seq1 = linker_in_R1.span()[0]
-            else:
-                rlim_seq1 = len(seq1)
-                
-            ltr_in_R2 = find_priority_matches(ltr_rc_regex_list, seq2)
-            if ltr_in_R2:
-                rlim_seq2 = ltr_in_R2.span()[0]
-            else:
-                rlim_seq2 = len(seq2)
-                
-            # linker_in_R1 = linker_rc_regex.search(seq1)
-            # if linker_in_R1:
-            #     rlim_seq1 = linker_in_R1.span()[0]    
-            # else:
-            #     rlim_seq1 = len(seq1)
-
-            # ltr_in_R2 = ltr_rc_regex.search(seq2)
-            # if ltr_in_R2:
-            #     rlim_seq2 = ltr_in_R2.span()[0]
-            # else:
-            #     rlim_seq2 = len(seq2)
-
-            if no_crop:
-                seq1_cropped = seq1[ltr_start:rlim_seq1]
-                seq2_cropped = seq2[linker_start:rlim_seq2]
-                contam_check = seq1_cropped[ltr_len:len(seq1_cropped)]
-                qual1_cropped = qual1[ltr_start:rlim_seq1]
-                qual2_cropped = qual2[linker_start:rlim_seq2]
-            else:
-                seq1_cropped = seq1[(ltr_start + ltr_len):rlim_seq1]
-                seq2_cropped = seq2[(linker_start + linker_len):rlim_seq2]
-                contam_check = seq1_cropped
-                qual1_cropped = qual1[(ltr_start + ltr_len):rlim_seq1]
-                qual2_cropped = qual2[(linker_start + linker_len):rlim_seq2]
-            
-            toss = False
-            if contam_patterns:    
-                k = 0
-                while k < len(contam_patterns) and toss != True:
-                    element = contam_patterns[k]
-                    if regex.match(element, contam_check):
-                        toss = True 
-                    k += 1
-
-            if ((len(seq1_cropped) < (min_frag_len + (ltr_len if no_crop is True else 0))) | 
-                (len(seq2_cropped) < (min_frag_len + (linker_len if no_crop is True else 0))) |
-                (toss == True)):
-                continue
-
-            # Write cropped reads to output
-            crop1.write(f'{head1}\tCO:Z:1:{short_nm}\tRX:Z:{ltr_umi}-{linker_umi}\tOX:Z:{ltr_found}-{linker_found}\n')
-            crop1.write(f'{seq1_cropped}\n{opt1}\n{qual1_cropped}\n')
-
-            crop2.write(f'{head2}\tCO:Z:2:{short_nm}\tRX:Z:{ltr_umi}-{linker_umi}\tOX:Z:{ltr_found}-{linker_found}\n')
-            crop2.write(f'{seq2_cropped}\n{opt2}\n{qual2_cropped}\n')
-
-def crop(file1, file2, ltr3, virus, linker3, ltr1_primer, ltr5, linker5, 
-        contamination, U3, name, min_frag_len, no_crop, ltr3_error_rate, 
-        linker3_error_rate, ltr5_error_rate, linker5_error_rate, ltr_umi_offset, 
-        ltr_umi_len, ltr_umi_pattern, linker_umi_offset, linker_umi_len, linker_umi_pattern,
-        chunk_size, nthr, processed_dir):
-
-    short_nm = name.rpartition('/')[-1] if '/' in name else name
-
-    if virus:
-        virus_artifacts = {
-            'HIV1': ['GTCCCCCCTTTTCTT' if U3 else 'GTGGCGCCCGAA'],
-            'HIV-1': ['GTCCCCCCTTTTCTT' if U3 else 'GTGGCGCCCGAA'],
-            'MVV': ['GCTGGCGCCCAA'],
-            'MLV': ['TTTGGGGGCTCG']
-        }
-
-        art = virus_artifacts.get(virus, None)
-        if art is None:
-            raise ValueError(
-                "The stated virus is not a pre-defined virus type.\n"
-                f"Pre-defined virus types are: {', '.join(virus_artifacts.keys())}"
-            )
-    else:
-        art = []
-
-    if contamination:
-        art.extend(contamination)
-
-    ltr3_pattern_exact = prepare_exact_pattern(ltr3)
-    ltr5_pattern_exact = prepare_exact_pattern(ltr5)
-    ltr_regex_exact = regex.compile(ltr5_pattern_exact + ltr3_pattern_exact)
-
-    ltr3_pattern_sub = prepare_pattern(ltr3, ltr3_error_rate, error_type = "s")
-    ltr5_pattern_sub = prepare_pattern(ltr5, ltr5_error_rate, error_type = "s")
-    ltr_regex_sub = regex.compile(ltr5_pattern_sub + ltr3_pattern_sub)
-
-    ltr3_pattern_indel = prepare_pattern(ltr3, ltr3_error_rate, error_type = "e")
-    ltr5_pattern_indel = prepare_pattern(ltr5, ltr5_error_rate, error_type = "e")
-    ltr_regex_indel = regex.compile(ltr5_pattern_indel + ltr3_pattern_indel)
-    
-    ltr_regex_list = [ltr_regex_exact, ltr_regex_sub, ltr_regex_indel]
+def compile_patterns(ltr3, linker3, ltr5, linker5,
+                    ltr3_error_rate, linker3_error_rate,
+                    ltr5_error_rate, linker5_error_rate):
+    ltr3_errors = math.floor(len(ltr3) * ltr3_error_rate)
+    ltr5_errors = math.floor(len(ltr5) * ltr5_error_rate)
+    linker3_errors = math.floor(len(linker3) * linker3_error_rate)
+    linker5_errors = math.floor(len(linker5) * linker5_error_rate)
     
     ltr_rc = revcomp(ltr5 + ltr3)[:11]
-    
-    ltr_rc_pattern_exact = prepare_exact_pattern(ltr_rc)
-    ltr_rc_regex_exact = regex.compile(ltr_rc)
-    ltr_rc_pattern_sub = prepare_pattern(ltr_rc, 0.1, error_type = "s")
-    ltr_rc_regex_sub = regex.compile(ltr_rc_pattern_sub)
-    ltr_rc_pattern_indel = prepare_pattern(ltr_rc, 0.1, error_type = "e")
-    ltr_rc_regex_indel = regex.compile(ltr_rc_pattern_indel)
-    
-    ltr_rc_regex_list = [ltr_rc_regex_exact, ltr_rc_regex_sub, ltr_rc_regex_indel]
-
-    linker3_pattern_exact = prepare_exact_pattern(linker3)
-    linker5_pattern_exact = prepare_exact_pattern(linker5)
-    linker_regex_exact = regex.compile(linker5_pattern_exact + linker3_pattern_exact)
-
-    linker3_pattern_sub = prepare_pattern(linker3, linker3_error_rate, error_type = "s")
-    linker5_pattern_sub = prepare_pattern(linker5, linker5_error_rate, error_type = "s")
-    linker_regex_sub = regex.compile(linker5_pattern_sub + linker3_pattern_sub)
-
-    linker3_pattern_indel = prepare_pattern(linker3, linker3_error_rate, error_type = "e")
-    linker5_pattern_indel = prepare_pattern(linker5, linker5_error_rate, error_type = "e")
-    linker_regex_indel = regex.compile(linker5_pattern_indel + linker3_pattern_indel)
-    
-    linker_regex_list = [linker_regex_exact, linker_regex_sub, linker_regex_indel]
-
     linker_rc = revcomp(linker5 + linker3)[:11]
+    rc_errors = 1
     
-    linker_rc_pattern_exact = prepare_exact_pattern(linker_rc)
-    linker_rc_regex_exact = regex.compile(linker_rc)
-    linker_rc_pattern_sub = prepare_pattern(linker_rc, 0.1, error_type = "s")
-    linker_rc_regex_sub = regex.compile(linker_rc_pattern_sub)
-    linker_rc_pattern_indel = prepare_pattern(linker_rc, 0.1, error_type = "e")
-    linker_rc_regex_indel = regex.compile(linker_rc_pattern_indel)
-    
-    linker_rc_regex_list = [linker_rc_regex_exact, linker_rc_regex_sub, linker_rc_regex_indel]
-    
-    if art:
-        contam_patterns = [regex.compile(f'({cc}){{e<={math.floor(len(cc) * 0.2)}}}') for cc in art]
-    else:
-        contam_patterns = None
+    return {
+        'ltr': {
+            'perfect': regex.compile(ltr5 + ltr3),
+            'mismatch': regex.compile(f'({ltr5}){{s<={ltr5_errors}}}({ltr3}){{s<={ltr3_errors}}}'),
+            'indel': regex.compile(f'({ltr5}){{e<={ltr5_errors}}}({ltr3}){{e<={ltr3_errors}}}')
+        },
+        'linker': {
+            'perfect': regex.compile(linker5 + linker3),
+            'mismatch': regex.compile(f'({linker5}){{s<={linker5_errors}}}({linker3}){{s<={linker3_errors}}}'),
+            'indel': regex.compile(f'({linker5}){{e<={linker5_errors}}}({linker3}){{e<={linker3_errors}}}')
+        },
+        'ltr_rc': {
+            'perfect': regex.compile(ltr_rc),
+            'mismatch': regex.compile(f'({ltr_rc}){{s<={rc_errors}}}'),
+            'indel': regex.compile(f'({ltr_rc}){{e<={rc_errors}}}')
+        },
+        'linker_rc': {
+            'perfect': regex.compile(linker_rc),
+            'mismatch': regex.compile(f'({linker_rc}){{s<={rc_errors}}}'),
+            'indel': regex.compile(f'({linker_rc}){{e<={rc_errors}}}')
+        }
+    }
 
-    chunk_generator = chunk_fastq(file1, file2, chunk_size = chunk_size)
-    chunk_gen, chunk_count = tee(chunk_generator)
-    n_chunks = sum(1 for _ in chunk_count)
+def find_pattern_match(seq, patterns, pattern_type):
+    # seq = seq.decode()
     
-    tmp_dir = os.path.join(processed_dir, f'{name}_crop_tmp')
-    if not os.path.exists(tmp_dir):
-        os.makedirs(tmp_dir)
+    match = patterns[pattern_type]['perfect'].search(seq)
+    if match:
+        return match
+    
+    match = patterns[pattern_type]['mismatch'].search(seq)
+    if match:
+        return match
+    
+    match = patterns[pattern_type]['indel'].search(seq)
+    if match:
+        return match
+    
+    return None
+
+# # Check quality score type
+# def detect_quality_offset(fastq_file, sample_size = 10000):
+#     min_qual = float('inf')
+
+#     with open_file(fastq_file, 'rt') as f:
+#         for i, line in enumerate(f):
+#             if i % 4 == 3:
+#                 min_qual = min(min_qual, min(ord(c) for c in line.strip()))
+#             if i >= sample_size * 4:
+#                 break
+                
+#     return 64 if min_qual >= 64 else 33
+
+# # Vectorized quality score conversion
+# def qual_to_array(qual_str, offset):
+#     return np.frombuffer(qual_str.encode(), dtype=np.int8) - offset
+
+# Cache frequently used values
+def init_params(args):    
+    contam_patterns = None
+    if args.c:
+        contam_patterns = [regex.compile(f'({cc}){{e<={math.floor(len(cc) * 0.1)}}}') 
+                            for cc in args.c]
         
-    tmp_files_R1 = []
-    tmp_files_R2 = []
-    for i in range(n_chunks):
-        tmp_files_R1.append(os.path.join(tmp_dir, f"{name}_tmp{str(i).zfill(3)}_R1_cropped.fq.gz"))
-        tmp_files_R2.append(os.path.join(tmp_dir, f"{name}_tmp{str(i).zfill(3)}_R2_cropped.fq.gz"))
+    return {
+        'file1': args.r1,
+        'file2': args.r2,
+        'min_qual': 10 ** (args.min_qual / -10),
+        'min_frag_len': args.min_frag_len,
+        'ltr5_error': args.ltr5_error_rate,
+        'linker5_error': args.linker5_error_rate,
+        'ltr3_error': args.ltr3_error_rate,
+        'linker3_error': args.linker3_error_rate,
+        'min_len': args.min_frag_len,
+        # 'qual_offset': detect_quality_offset(args.r1),
+        'ltr_umi_len': args.ltr_umi_len,
+        'ltr_umi_offset': args.ltr_umi_offset,
+        'linker_umi_len': args.linker_umi_len,
+        'linker_umi_offset': args.linker_umi_offset,
+        'ltr_umi_pattern': args.ltr_umi_pattern,
+        'linker_umi_pattern': args.linker_umi_pattern,
+        'contam_patterns': contam_patterns,
+        'ltr5': args.ltr5,
+        'ltr3': args.ltr3,
+        'linker5': args.linker5,        
+        'linker3': args.linker3,
+        'nthr': args.nthr,
+        'chunk_size': args.crop_chunk_size
+    }
+    
+def extract_umis(seq, pattern_match, umi_len, umi_offset, umi_pattern = None):
+    if umi_len > 0:
+        start = pattern_match.start() - umi_offset - umi_len
+        end = pattern_match.start() - umi_offset
+        umi = seq[start:end]
+        
+        if umi_pattern:
+            umi_regex_pattern = regex.sub(r'N+', lambda m: f"[ATGC]{{{len(m.group())}}}", umi_pattern)
+            if not regex.search(umi_regex_pattern, umi):
+                return None
+        return umi
+    return 'N'
+    
+def process_fastq_chunk(chunk_data, params, is_zipped):
+    n_reads = len(chunk_data) // 4
+    sequences = []
+    qualities = []
+    
+    for i in range(n_reads):
+        base_idx = i * 4
+        seq = chunk_data[base_idx + 1].strip()
+        qual = chunk_data[base_idx + 3].strip()
 
-    Parallel(n_jobs = nthr)(
-        delayed(crop_chunk)(
-            chunk, ltr_regex_list, linker_regex_list, ltr_rc_regex_list, linker_rc_regex_list,
-            min_frag_len, no_crop, name, short_nm, contam_patterns, ltr_umi_len,
-            ltr_umi_offset, ltr_umi_pattern, linker_umi_len, linker_umi_offset, 
-            linker_umi_pattern, tmp_files_R1[i], tmp_files_R2[i]
-        )
-        for i, chunk in enumerate(chunk_gen)
+        sequences.append(seq)
+        # qualities.append(qual_to_array(qual, params['qual_offset']))
+        qualities.append(qual)
+    
+    return sequences, qualities
+
+def fastq_reader(filename, chunk_size):
+    with open_file(filename, 'rt') as f:
+        chunk = []
+        for line in f:
+            chunk.append(line)
+            if len(chunk) == chunk_size:
+                yield chunk
+                chunk = []
+        if chunk:
+            yield chunk
+
+def fastq_writer(filename, entries):
+    with open_file(filename, 'at') as f:
+        for entry in entries:
+            f.write('{}\n{}\n+\n{}\n'.format(
+                entry['name'],
+                entry['seq'],
+                entry['qual']
+            ))
+            
+def process_reads_parallel(chunk1, chunk2, patterns, params, is_zipped, out_nm):
+    sequences1, qualities1 = process_fastq_chunk(chunk1, params, is_zipped)
+    sequences2, qualities2 = process_fastq_chunk(chunk2, params, is_zipped)
+    
+    cropped_reads1 = []
+    cropped_reads2 = []
+    
+    for i, ((seq1, qual1), (seq2, qual2)) in enumerate(zip(zip(sequences1, qualities1), 
+                                                        zip(sequences2, qualities2))):
+        header1 = chunk1[i*4].strip()
+        header2 = chunk2[i*4].strip()
+        
+        if header1 != header2:
+            raise ValueError(f"Read pair mismatch: {header1} != {header2}")
+            
+        seq1_str = seq1
+        seq2_str = seq2
+        
+        ltr_pattern_match = find_pattern_match(seq1_str, patterns, 'ltr')
+        linker_pattern_match = find_pattern_match(seq2_str, patterns, 'linker')
+        
+        if ltr_pattern_match and linker_pattern_match:
+            
+            start1 = ltr_pattern_match.end()
+            start2 = linker_pattern_match.end()
+            
+            linker_in_ltr = find_pattern_match(seq1_str, patterns, 'linker_rc')
+            ltr_in_linker = find_pattern_match(seq2_str, patterns, 'ltr_rc')
+
+            if linker_in_ltr and ltr_in_linker:
+                end1 = linker_in_ltr.start()
+                end2 = ltr_in_linker.start()
+                cropped_seq1 = seq1_str[start1:end1]
+                cropped_seq2 = seq2_str[start2:end2]
+                cropped_qual1 = qual1[start1:end1]
+                cropped_qual2 = qual2[start2:end2]
+            else:
+                cropped_seq1 = seq1_str[start1:]
+                cropped_seq2 = seq2_str[start2:]
+                cropped_qual1 = qual1[start1:]
+                cropped_qual2 = qual2[start2:]
+            
+            ltr_umi = extract_umis(seq1_str, 
+                                    ltr_pattern_match, 
+                                    params['ltr_umi_len'], 
+                                    params['ltr_umi_offset'],
+                                    params['ltr_umi_pattern'])
+            linker_umi = extract_umis(seq2_str, 
+                                    linker_pattern_match,
+                                    params['linker_umi_len'],
+                                    params['linker_umi_offset'],
+                                    params['linker_umi_pattern'])
+            
+            if not ltr_umi or not linker_umi:
+                continue
+            
+            toss = False
+            if params['contam_patterns']:
+                for pattern in params['contam_patterns']:
+                    if regex.match(pattern, cropped_seq1):
+                        toss = True
+                        break
+
+            if not toss and len(cropped_seq1) >= params['min_len'] and len(cropped_seq2) >= params['min_len']:
+                new_header1 = (f'{header1}\tCO:Z:1:{out_nm}\t'
+                                    f'RX:Z:{ltr_umi}-{linker_umi}\t'
+                                    f'OX:Z:{ltr_pattern_match.group()}-{linker_pattern_match.group()}\n')
+                
+                new_header2 = (f'{header1}\tCO:Z:2:{out_nm}\t'
+                                    f'RX:Z:{ltr_umi}-{linker_umi}\t'
+                                    f'OX:Z:{ltr_pattern_match.group()}-{linker_pattern_match.group()}\n')
+                
+                cropped_reads1.append({
+                    'name': new_header1,
+                    'seq': cropped_seq1,
+                    # 'qual': ''.join(chr(q + params['qual_offset']) for q in cropped_qual1)
+                    'qual': cropped_qual1
+                })
+                
+                cropped_reads2.append({
+                    'name': new_header2,
+                    'seq': cropped_seq2,
+                    # 'qual': ''.join(chr(q + params['qual_offset']) for q in cropped_qual2)
+                    'qual': cropped_qual2
+                })
+
+    return cropped_reads1, cropped_reads2
+
+
+def crop(file1, file2, args, processed_directory, out_nm):
+    out_file1 = os.path.join(processed_directory,
+                            f'{out_nm}_R1_cropped.fq.gz')
+    out_file2 = os.path.join(processed_directory,
+                            f'{out_nm}_R2_cropped.fq.gz')
+    
+    for f in [out_file1, out_file2]:
+        if os.path.exists(f):
+            os.remove(f)
+    
+    params = init_params(args)
+    
+    is_zipped = zipped(params['file1'])
+    
+    chunks1 = list(fastq_reader(params['file1'], params['chunk_size']))
+    chunks2 = list(fastq_reader(params['file2'], params['chunk_size']))
+    
+    patterns = compile_patterns(params['ltr3'], params['linker3'], params['ltr5'], params['linker5'],
+                                params['ltr3_error'], params['linker3_error'],
+                                params['ltr5_error'], params['linker5_error'])
+    
+    results = Parallel(n_jobs = params['nthr'])(
+        delayed(process_reads_parallel)(chunk1, chunk2, patterns, params, is_zipped, out_nm)
+        for chunk1, chunk2 in zip(chunks1, chunks2)
     )
-    
-    inputs_R1 = sorted(tmp_files_R1)
-    inputs_R2 = sorted(tmp_files_R2)
-
-    crop_out1 = os.path.join(processed_dir, f"{name}_R1_cropped.fq.gz")
-    crop_out2 = os.path.join(processed_dir, f"{name}_R2_cropped.fq.gz")
-    
-    inputs = [inputs_R1, inputs_R2]
-    outputs = [crop_out1, crop_out2]
-    
-    print('Concatenating cropped output...')
-    
-    op_sys = platform.system()
-    if op_sys != 'Darwin' and op_sys != 'Linux':
-        if nthr > 1:
-            Parallel(n_jobs = 2)(
-                delayed(concatenate_files)(input_files = inputs[i],
-                                            output_file = outputs[i])
-                for i in range(2))
-        else:
-            for i in range(2):
-                concatenate_files(input_files = inputs[i],
-                                output_file = outputs[i])
-    else:
-        if nthr > 1:
-            Parallel(n_jobs = 2)(
-                delayed(concatenate_unix)(input_files = inputs[i],
-                                        output_file = outputs[i])
-                for i in range(2))
-        else:
-            for i in range(2):
-                concatenate_unix(input_files = inputs[i],
-                                output_file = outputs[i])
-        
-    for f in inputs_R1:
-        os.remove(f)
-    for f in inputs_R2:
-        os.remove(f)
-        
-    shutil.rmtree(tmp_dir)
+            
+    for reads1, reads2 in results:
+        fastq_writer(out_file1, reads1)
+        fastq_writer(out_file2, reads2)

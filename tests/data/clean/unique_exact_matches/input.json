@@ -1,0 +1,22 @@
+{
+    "chr1": [
+        {
+            "read_name": "read1",
+            "start": 100,
+            "end": 200,
+            "ltr_umi": "AAAA",
+            "linker_umi": "TTTT",
+            "count": 1,
+            "mean_qual": 30
+        },
+        {
+            "read_name": "read2",
+            "start": 100,
+            "end": 200,
+            "ltr_umi": "AAAA",
+            "linker_umi": "TTTT",
+            "count": 2,
+            "mean_qual": 40
+        }
+    ]
+}
