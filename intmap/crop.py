@@ -102,6 +102,7 @@ def compile_patterns(ltr3, linker3, ltr5, linker5,
         }
     }
 
+# Add error rates to this to skip looking for non-perfect matches if error = 0.
 def find_pattern_match(seq, patterns, pattern_type):
     # seq = seq.decode()
     
@@ -227,8 +228,8 @@ def process_reads_parallel(chunk1, chunk2, patterns, params, is_zipped, out_nm):
     
     for i, ((seq1, qual1), (seq2, qual2)) in enumerate(zip(zip(sequences1, qualities1), 
                                                         zip(sequences2, qualities2))):
-        header1 = chunk1[i*4].strip()
-        header2 = chunk2[i*4].strip()
+        header1 = chunk1[i*4].strip().split()[0]
+        header2 = chunk2[i*4].strip().split()[0]
         
         if header1 != header2:
             raise ValueError(f"Read pair mismatch: {header1} != {header2}")

@@ -33,14 +33,15 @@ def process_bam(out_bam):
                         read_pairs.append((read1, read2))
                         n_pairs += 1
 
-    print(f'Number of aligned reads: {n_reads}')
+    print(f'Number of aligned reads: {n_reads}', flush = True)
     
     if n_reads > 0:
-        print(f'Number of proper pairs: {n_pairs} ({(((n_pairs * 2) / n_reads) * 100):.2f}%)')
+        print(f'Number of proper pairs: {n_pairs} ({(((n_pairs * 2) / n_reads) * 100):.2f}%)',
+                flush = True)
         bamfile.close()
         return read_pairs
     else:
-        print(f'\nNo reads aligned to the target genome. Exiting.')
+        print(f'\nNo reads aligned to the target genome. Exiting.', flush = True)
         bamfile.close()
         sys.exit()
 

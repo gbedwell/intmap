@@ -66,15 +66,15 @@ def align_global(bt2_path, sam_path, bt2_idx_dir, bt2_idx_name,
     
     idx_cmd = f'{sam_path} index -b -@ {nthr} {final_out} -o {index_out}'
         
-    print('Removing viral reads from cropped output...')
+    print('Removing viral reads from cropped output...', flush = True)
     subprocess.call(remove_viral_cmd, shell = True, stderr = subprocess.STDOUT)
     
-    print('\n')
-    print('Performing global (end-to-end) alignment...')
+    print('\n', flush = True)
+    print('Performing global (end-to-end) alignment...', flush = True)
     subprocess.call(global_cmd, shell = True, stderr = subprocess.STDOUT)
 
-    print('\n')
-    print('Indexing output bam file...')
+    print('\n', flush = True)
+    print('Indexing output bam file...', flush = True)
     subprocess.call(idx_cmd, shell = True, stderr = subprocess.STDOUT)
     
     for f in [nonv_R1, nonv_R2, nonv_null, nonv_single]:
