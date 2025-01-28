@@ -115,5 +115,5 @@ def test_collapse_group():
 
 def test_final_pass_collapse():
     input_data, expected = load_test_data('utils', 'final_pass_collapse')
-    result = final_pass_collapse(input_data, len_diff=5, nthr=1)
+    result = final_pass_collapse(input_data, len_diff=5, nthr=1, threshold=10)
     assert result == expected

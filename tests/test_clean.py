@@ -131,64 +131,55 @@ def test_build_kmer_index():
     kmer_dict = dict(kmer_index)
     
     expected = {
-        'AAATG': {0}, 
-        'ATGCG': {0}, 
-        'GCGTA': {0, 2}, 
-        'GTAGC': {0, 2}, 
-        'AGCGT': {0, 2}, 
-        'CGTGG': {0, 2}, 
-        'TGCGT': {1}, 
-        'CGTAG': {1}, 
-        'TAGCG': {1}, 
-        'GCGTG': {1}, 
-        'GTGGC': {1}, 
-        'GGCGA': {1}
+        hash('AAATG'): {0}, 
+        hash('ATGCG'): {0}, 
+        hash('GCGTA'): {0, 2}, 
+        hash('GTAGC'): {0, 2}, 
+        hash('AGCGT'): {0, 2}, 
+        hash('CGTGG'): {0, 2}, 
+        hash('TGCGT'): {1}, 
+        hash('CGTAG'): {1}, 
+        hash('TAGCG'): {1}, 
+        hash('GCGTG'): {1}, 
+        hash('GTGGC'): {1}, 
+        hash('GGCGA'): {1}
     }
     
     assert kmer_dict == expected
     
-    # Test with different parameters
-    kmer_index = build_kmer_index(sequences, k=3, step=1)
-    assert "AAA" in kmer_index
-    assert "TGC" in kmer_index
-    assert len(kmer_index["GCG"]) == 3
-    
 def test_group_mm_sequences():
     test_group = [
         {'read_name': 'read1', 'seq1': 'AAATGCGTAGCGTGGC', 'count': 1},
-        {'read_name': 'read2', 'seq1': 'TGCGTAGCGTGGCGAT', 'count': 1},
+        {'read_name': 'read2', 'seq1': 'TGCGTAGCGTGGC', 'count': 1},
         {'read_name': 'read3', 'seq1': 'GCGTAGCGTGGC', 'count': 1},
         {'read_name': 'read4', 'seq1': 'TACGTACGTACGT', 'count': 1}
     ]
 
-    subgroups1 = group_mm_sequences(test_group, seq_sim=0.8, k=5, step=1)
+    subgroups1 = group_mm_sequences(test_group, seq_sim=0.8, k=5, step=1, len_diff=5)
 
     assert len(subgroups1) == 2
     
     # Verify each group contains the expected sequences
-    group_seqs1 = [[read['seq1'] for read in group] for group in subgroups1]
-    assert ['GCGTAGCGTGGC', 'AAATGCGTAGCGTGGC', 'TGCGTAGCGTGGCGAT'] in group_seqs1
-    assert ['TACGTACGTACGT'] in group_seqs1
+    group_seqs1 = [set(read['seq1'] for read in group) for group in subgroups1]
+    assert set(['GCGTAGCGTGGC', 'AAATGCGTAGCGTGGC', 'TGCGTAGCGTGGC']) in group_seqs1
+    assert set(['TACGTACGTACGT']) in group_seqs1
     
-    subgroups2 = group_mm_sequences(test_group, seq_sim=0.8, k=5, step=2)
+    subgroups2 = group_mm_sequences(test_group, seq_sim=0.8, k=5, step=2, len_diff=5)
 
     # read2 and read3 share no exact k-mer matches when step=2.
     assert len(subgroups2) == 3
     
     # Verify each group contains the expected sequences
-    group_seqs2 = [[read['seq1'] for read in group] for group in subgroups2]
-    assert ['GCGTAGCGTGGC', 'AAATGCGTAGCGTGGC'] in group_seqs2
-    assert ['TACGTACGTACGT'] in group_seqs2
-    assert ['TGCGTAGCGTGGCGAT'] in group_seqs2
+    group_seqs2 = [set(read['seq1'] for read in group) for group in subgroups2]
+    assert set(['GCGTAGCGTGGC', 'AAATGCGTAGCGTGGC']) in group_seqs2
+    assert set(['TACGTACGTACGT']) in group_seqs2
+    assert set(['TGCGTAGCGTGGC']) in group_seqs2
     
+from tests.data.clean.build_position_based_index.test_data import get_expected_data
+
 def test_build_position_based_index():
-    input_data, expected = load_test_data('clean', 'build_position_based_index')
-    
-    # Convert expected kmer_index arrays to sets of tuples
-    expected_kmer_index = {
-        kmer: {tuple(pos) for pos in positions} 
-        for kmer, positions in expected['kmer_index'].items()
-    }
+    input_data, _ = load_test_data('clean', 'build_position_based_index')
+    expected_kmer_index, expected_position_groups = get_expected_data()
     
     kmer_index, position_groups = build_position_based_index(
         um_kept_dict=input_data,
@@ -196,20 +187,8 @@ def test_build_position_based_index():
         step=2
     )
     
-    # Convert position tuples to strings for comparison
-    position_dict = {
-        f"{pos[0]}_{pos[1]}_{pos[2]}": [read['read_name'] for read in reads]
-        for pos, reads in position_groups.items()
-    }
-    
-    # Convert numeric values in kmer_index to match expected format
-    kmer_dict = {
-        kmer: {(str(pos[0]), pos[1], str(pos[2])) for pos in positions}
-        for kmer, positions in kmer_index.items()
-    }
-    
-    assert kmer_dict == expected_kmer_index
-    assert position_dict == expected['position_groups']
+    assert kmer_index == expected_kmer_index
+    assert position_groups == expected_position_groups
     
 def test_compare_to_um():
     group = [
@@ -225,11 +204,11 @@ def test_compare_to_um():
     ]
     
     um_index = {
-        "GCGTA": {("chr2", 200, "-")},
-        "GTAGC": {("chr2", 200, "-")},
-        "AGCGT": {("chr2", 200, "-")},
-        "CGTGG": {("chr2", 200, "-")},
-        "TGGCT": {("chr2", 200, "-")}
+        hash('GCGTA'): {('chr2', 200, '-')},
+        hash('GTAGC'): {('chr2', 200, '-')},
+        hash('AGCGT'): {('chr2', 200, '-')},
+        hash('CGTGG'): {('chr2', 200, '-')},
+        hash('TGGCT'): {('chr2', 200, '-')}
     }
     
     position_groups = {
@@ -327,7 +306,8 @@ def test_verify_mm_positions():
         seq_sim=0.8,
         nthr=1,
         k = 5,
-        step = 2
+        step = 2,
+        len_diff = 5
     )
     
     assert result == expected

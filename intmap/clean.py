@@ -265,58 +265,38 @@ def chunk_groups(groups, nthr):
     n = max(1, math.ceil(len(groups) / nthr))
     for i in range(0, len(groups), n):
         yield groups[i:i + n]
-        
-# def levenshtein_wrapper(a, b):
-#     return Levenshtein.distance(a, b)
-
-# def build_um_index(um_kept_dict, prefix_length):
-#     index = defaultdict(list)
-#     for read_name, um_frag in um_kept_dict.items():
-#         prefix = um_frag['seq1'][:prefix_length].encode()
-#         index[prefix].append(um_frag)
-    
-#     unique_prefixes = sorted(set(index.keys()))
-#     tree = pybktree.BKTree(levenshtein_wrapper, unique_prefixes)
-    
-#     return index, tree
-
-# def get_um_candidates(prefix, um_index, um_tree, max_distance):
-#     matches = um_tree.find(prefix, max_distance)
-#     keys = [key for _, key in matches]    
-#     candidates = []
-#     for key in keys:
-#         candidates.extend(um_index.get(key, []))
-    
-#     return candidates
 
 def verify_sequence_groups(group, seq_sim):
-    n_seqs = len(group)
-    if n_seqs <= 1:
+    if len(group) <= 1:
         return [group]
     
     seq1_key = itemgetter('seq1')
     seq2_key = itemgetter('seq2')
     
-    subgroups = [[group[0]]]
+    # Pre-compute sequences for all entries
+    sequences = [(seq1_key(entry), seq2_key(entry)) for entry in group]
     
-    for entry in group[1:]:
-        entry_seq1 = seq1_key(entry)
-        entry_seq2 = seq2_key(entry)
-        
-        if seq_similarity(entry_seq1, revcomp(entry_seq2)) >= seq_sim:
-            compare_seq = entry_seq1
+    # Pre-compute concatenated sequences when needed
+    compare_seqs = {}
+    for i, (seq1, seq2) in enumerate(sequences):
+        if seq_similarity(seq1, revcomp(seq2)) < seq_sim:
+            compare_seqs[i] = seq1 + seq2
         else:
-            compare_seq = entry_seq1 + entry_seq2
+            compare_seqs[i] = seq1
+    
+    subgroups = [[group[0]]]
+    first_seqs = sequences[0]
+    
+    # Use pre-computed sequences for comparisons
+    for i, entry in enumerate(group[1:], 1):
+        entry_seqs = sequences[i]
+        compare_seq = compare_seqs.get(i, entry_seqs[0])
             
         matched = False
         for subgroup in subgroups:
-            ref_seq1 = seq1_key(subgroup[0])
-            ref_seq2 = seq2_key(subgroup[0])
-            
-            if seq_similarity(ref_seq1, revcomp(ref_seq2)) >= seq_sim:
-                ref_seq = ref_seq1
-            else:
-                ref_seq = ref_seq1 + ref_seq2
+            ref_idx = group.index(subgroup[0])
+            ref_seqs = sequences[ref_idx]
+            ref_seq = compare_seqs.get(ref_idx, ref_seqs[0])
                 
             if seq_similarity(compare_seq, ref_seq) >= seq_sim:
                 subgroup.append(entry)
@@ -367,96 +347,141 @@ def multi_fuzzy_matches(groups, umi_diff, frag_ratio, nthr, seq_sim):
     
     return multi_fuzzy_kept, multi_fuzzy_dup
 
-def build_kmer_index(sequences, k = 15, step = 5):
-    kmer_index = defaultdict(set)
+def build_kmer_index(sequences, k=20, step=5):
+    kmer_arrays = []
+    seq_indices = []
+    
     for i, seq in enumerate(sequences):
-        for j in range(0, len(seq) - k + 1, step):
-            kmer = seq[j:j+k]
-            kmer_index[kmer].add(i)
+        kmers = np.array([hash(seq[j:j+k]) for j in range(0, len(seq) - k + 1, step)])
+        kmer_arrays.append(kmers)
+        seq_indices.extend([i] * len(kmers))
+    
+    all_kmers = np.concatenate(kmer_arrays)
+    unique_kmers = np.unique(all_kmers)
+    
+    kmer_index = defaultdict(set)
+    for kmer, idx in zip(all_kmers, seq_indices):
+        kmer_index[kmer].add(idx)
+        
     return kmer_index
 
-def group_mm_sequences(group, seq_sim, k = 15, step = 5):
+def group_mm_sequences(group, seq_sim, len_diff, k=20, step=5):
     sorted_group = sorted(group, key=lambda x: len(x['seq1']))
-    
-    # Build kmer index for sequences
     seqs = [entry['seq1'] for entry in sorted_group]
-    kmer_index = build_kmer_index(seqs, k = k, step = step)
     
-    # Pre-compute candidate matches for each sequence
-    seq_candidates = {}
-    for i, entry in enumerate(sorted_group):
-        entry_seq = entry['seq1']
-        # Count occurrences of each candidate from k-mer matches
-        candidate_counts = Counter()
-        for j in range(0, len(entry_seq) - k + 1, step):
-            kmer = entry_seq[j:j+k]
-            candidate_counts.update(kmer_index[kmer])
-        
-        # Keep candidates that share enough k-mers
-        n_kmers = len(range(0, len(entry_seq) - k + 1, step))
-        min_shared = max(1, n_kmers // 4)  # Require ~1/4 of k-mers to be shared
-        seq_candidates[i] = {idx for idx, count in candidate_counts.items() if count >= min_shared}
+    # Convert sequences to k-mer arrays
+    kmer_arrays = []
+    for seq in seqs:
+        kmers = np.array([hash(seq[i:i+k]) for i in range(0, len(seq) - k + 1, step)])
+        kmer_arrays.append(kmers)
     
-    subgroups = [[sorted_group[0]]]
-    for i, entry in enumerate(sorted_group[1:], 1):
-        entry_seq = entry['seq1']
-        matched = False
+    # Build vectorized index
+    unique_kmers = np.unique(np.concatenate(kmer_arrays))
+    kmer_to_idx = {kmer: idx for idx, kmer in enumerate(unique_kmers)}
+    
+    # Create sparse matrix of k-mer occurrences
+    n_seqs = len(seqs)
+    n_kmers = len(unique_kmers)
+    kmer_matrix = np.zeros((n_seqs, n_kmers), dtype=np.int8)
+    
+    for seq_idx, kmers in enumerate(kmer_arrays):
+        for kmer in kmers:
+            kmer_matrix[seq_idx, kmer_to_idx[kmer]] = 1
+    
+    # Fast candidate identification using matrix multiplication
+    shared_kmers = kmer_matrix @ kmer_matrix.T
+    n_kmers_per_seq = np.array([len(kmers) for kmers in kmer_arrays])
+    min_shared = np.maximum(1, n_kmers_per_seq // 4)[:, None]
+    
+    candidates = np.where(shared_kmers >= min_shared)
+    
+    # Group sequences using identified candidates
+    subgroups = []
+    processed = set()
+    
+    for i in range(n_seqs):
+        if i in processed:
+            continue
+            
+        current_group = [sorted_group[i]]
+        processed.add(i)
         
-        # Use pre-computed candidates
-        candidates = seq_candidates[i]
-        
-        for subgroup in subgroups:
-            ref_idx = sorted_group.index(subgroup[0])
-            if ref_idx in candidates:
-                ref_seq = subgroup[0]['seq1']
-                shorter_seq = min(entry_seq, ref_seq, key=len)
-                longer_seq = max(entry_seq, ref_seq, key=len)
-                
+        candidates_i = candidates[1][candidates[0] == i]
+        for j in candidates_i:
+            if j not in processed:
+                shorter_seq = min(seqs[i], seqs[j], key=len)
+                longer_seq = max(seqs[i], seqs[j], key=len)
                 max_similarity = max(
-                    seq_similarity(shorter_seq, longer_seq[i:i+len(shorter_seq)])
-                    for i in range(len(longer_seq) - len(shorter_seq) + 1)
-                )
-
+                    seq_similarity(shorter_seq, longer_seq[pos:(pos + len(shorter_seq))])
+                    for pos in range(len_diff + 1)
+                    )
                 if max_similarity >= seq_sim:
-                    subgroup.append(entry)
-                    matched = True
-                    break
+                    current_group.append(sorted_group[j])
+                    processed.add(j)
                     
-        if not matched:
-            subgroups.append([entry])
+        subgroups.append(current_group)
     
     return subgroups
 
-def build_position_based_index(um_kept_dict, k = 15, step = 5):
-    # Group UM reads by integration site
+def build_position_based_index(um_kept_dict, k=20, step=5):
+    # Group UM reads by position
     position_groups = defaultdict(list)
     for read in um_kept_dict.values():
-        if read['strand'] == '+':
-            pos_key = (read['chrom'], read['start'], read['strand'])
-        else:
-            pos_key = (read['chrom'], read['end'], read['strand'])
+        pos_key = (read['chrom'], read['end'] if read['strand'] == '-' else read['start'], read['strand'])
         position_groups[pos_key].append(read)
     
-    # Build k-mer index using one sequence per integration site
+    # Get representative sequences for each position
+    positions = list(position_groups.keys())
+    rep_seqs = [max(reads, key=lambda x: len(x['seq1']))['seq1'] 
+                for reads in position_groups.values()]
+    
+    # Convert sequences to k-mer arrays
+    kmer_arrays = []
+    for seq in rep_seqs:
+        kmers = np.array([hash(seq[i:i+k]) for i in range(0, len(seq) - k + 1, step)])
+        kmer_arrays.append(kmers)
+    
+    # Build vectorized index
+    unique_kmers = np.unique(np.concatenate(kmer_arrays))
+    kmer_to_idx = {kmer: idx for idx, kmer in enumerate(unique_kmers)}
+    
+    # Create sparse matrix of k-mer occurrences
+    n_pos = len(positions)
+    n_kmers = len(unique_kmers)
+    kmer_matrix = np.zeros((n_pos, n_kmers), dtype=np.int8)
+    
+    for pos_idx, kmers in enumerate(kmer_arrays):
+        for kmer in kmers:
+            kmer_matrix[pos_idx, kmer_to_idx[kmer]] = 1
+    
+    # Convert to efficient lookup structure
     kmer_index = defaultdict(set)
-    for pos, reads in position_groups.items():
-        rep_seq = max(reads, key = lambda x: len(x['seq1']))['seq1']
-        for i in range(0, len(rep_seq) - k + 1, step):
-            kmer = rep_seq[i:i+k]
-            kmer_index[kmer].add(pos)
-            
+    for kmer_idx, kmer in enumerate(unique_kmers):
+        pos_indices = np.where(kmer_matrix[:, kmer_idx])[0]
+        kmer_index[kmer].update(positions[i] for i in pos_indices)
+    
     return kmer_index, position_groups
 
-def compare_to_um(group, um_index, position_groups, seq_sim, k = 15, step = 5):
+def compare_to_um(group, um_index, position_groups, seq_sim, k=20, step=5):
+    # Get longest read as representative sequence
     longest_read = max(group, key=lambda x: len(x['seq1']))
     read_seq = longest_read['seq1']
     
-    um_candidates = Counter()
-    for j in range(0, len(read_seq) - k + 1, step):
-        kmer = read_seq[j:j+k]
-        um_candidates.update(um_index[kmer])
-        
-    for pos, count in um_candidates.items():
+    # Vectorized k-mer matching
+    read_kmers = np.array([hash(read_seq[i:i+k]) for i in range(0, len(read_seq) - k + 1, step)])
+    
+    # Count matches per position using Counter
+    position_matches = Counter()
+    for kmer in read_kmers:
+        position_matches.update(um_index.get(kmer, set()))
+    
+    # Get positions with sufficient k-mer matches
+    min_matches = max(1, len(read_kmers) // 4)  # Require ~1/4 of k-mers to match
+    candidate_positions = [pos for pos, count in position_matches.items() 
+                            if count >= min_matches]
+    
+    # Check sequence similarity with candidates
+    for pos in candidate_positions:
         um_reads = position_groups[pos]
         um_seq = min(um_reads, key=lambda x: len(x['seq1']))['seq1']
         
@@ -480,59 +505,87 @@ def compare_to_um(group, um_index, position_groups, seq_sim, k = 15, step = 5):
     return None
 
 def assign_mm_group(group):
-    positions = defaultdict(int)
-    for read in group:
-        pos_key = (read['chrom'], read['start'], read['end'], read['strand'])
-        positions[pos_key] += read['count']
+    # Vectorized position counting
+    positions = np.array([(read['chrom'], read['start'], read['end'], read['strand']) for read in group])
+    counts = np.array([read['count'] for read in group])
     
-    total_counts = sum(positions.values())
-    min_freq = 1/(len(positions) * 2)
-    filtered_positions = {
-        pos: count for pos, count in positions.items() 
-        if count/total_counts >= min_freq
-        }
+    # Get unique positions and their total counts
+    unique_positions, position_indices, position_counts = np.unique(
+        positions, axis=0, return_inverse=True, return_counts=True
+        )
     
-    seed_string = ','.join(str(pos) for pos in sorted(filtered_positions.keys())[:2])
-    seed = int(hashlib.sha256(seed_string.encode('utf-8')).hexdigest(), 16) % (2**64)
+    # Calculate position frequencies
+    total_counts = np.bincount(position_indices, weights=counts)
+    frequencies = total_counts / total_counts.sum()
     
-    random.seed(seed)
-    chosen_pos = random.choices(
-        population=list(filtered_positions.keys()),
-        k=1
-        )[0]
+    # Filter positions meeting minimum frequency
+    min_freq = 1/(len(unique_positions) * 2)
+    valid_positions = unique_positions[frequencies >= min_freq]
     
-    assigned_group = []
-    for read in group:
-        read = read.copy()
-        read['chrom'], read['start'], read['end'], read['strand'] = chosen_pos
-        read['multi'] = 'True - grouped'
-        assigned_group.append(read)
+    if len(valid_positions) > 0:
+        # Deterministic random choice based on position hash
+        position_strings = [f"{p[0]}_{p[1]}_{p[2]}_{p[3]}" for p in valid_positions]
+        seed_string = ','.join(sorted(position_strings)[:2])
+        seed = int(hashlib.sha256(seed_string.encode('utf-8')).hexdigest(), 16) % (2**64)
         
-    return assigned_group
+        random.seed(seed)
+        chosen_pos = random.choices(valid_positions, k=1)[0]
+        
+        # Assign all reads to chosen position
+        assigned_group = []
+        for read in group:
+            read = read.copy()
+            read['chrom'] = str(chosen_pos[0])
+            read['start'] = int(chosen_pos[1])
+            read['end'] = int(chosen_pos[2])
+            read['strand'] = str(chosen_pos[3])
+            read['multi'] = 'True - grouped'
+            assigned_group.append(read)
+            
+        return assigned_group
+    
+    return group
 
-def verify_mm_positions(mm_kept_dict, um_kept_dict, seq_sim, nthr, k = 15, step = 5):
+def process_batch(batch, um_index, position_groups, seq_sim, k, step):
+    results = []
+    for group in batch:
+        relocated = compare_to_um(group, um_index, position_groups, seq_sim, k, step)
+        results.append({
+            'relocated': relocated is not None,
+            'reads': {r['read_name']: r for r in relocated} if relocated else None,
+            'group': group if not relocated else None
+        })
+    return results
+
+def verify_mm_positions(mm_kept_dict, um_kept_dict, seq_sim, nthr, len_diff, k=15, step=5):
     # Build position-based index for UM reads
-    um_index, position_groups = build_position_based_index(um_kept_dict, k = k, step = step)
+    um_index, position_groups = build_position_based_index(um_kept_dict, k=k, step=step)
     
     # Group similar MM reads
     mm_reads = list(mm_kept_dict.values())
-    subgroups = group_mm_sequences(mm_reads, seq_sim, k = k, step = step)
+    subgroups = group_mm_sequences(mm_reads, seq_sim, len_diff, k=k, step=step)
     
-    # Compare MM groups to UM reads
-    relocated_results = Parallel(n_jobs=nthr)(
-        delayed(compare_to_um)(group, um_index, position_groups, seq_sim, k, step)
-        for group in subgroups
-        )
+    # Batch subgroups for better memory management
+    batch_size = max(1, len(subgroups) // (4 * nthr))  # Smaller batches for better load balance
+    batched_groups = [subgroups[i:i + batch_size] for i in range(0, len(subgroups), batch_size)]
     
+    # Process batches in parallel
+    relocated_results = Parallel(n_jobs=nthr, prefer="threads")(
+        delayed(process_batch)(
+            batch, um_index, position_groups, seq_sim, k, step
+        ) for batch in batched_groups
+    )
+    
+    # Handle results
     relocated_reads = {}
     remaining_groups = []
     
-    for i, result in enumerate(relocated_results):
-        if result:
-            for read in result:
-                relocated_reads[read['read_name']] = read
-        else:
-            remaining_groups.append(subgroups[i])
+    for batch_result in relocated_results:
+        for result in batch_result:
+            if result['relocated']:
+                relocated_reads.update(result['reads'])
+            else:
+                remaining_groups.append(result['group'])
 
     if remaining_groups:
         reassigned_results = Parallel(n_jobs=nthr)(

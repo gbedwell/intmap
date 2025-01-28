@@ -82,23 +82,19 @@ def compile_patterns(ltr3, linker3, ltr5, linker5,
     return {
         'ltr': {
             'perfect': regex.compile(ltr5 + ltr3),
-            'mismatch': regex.compile(f'({ltr5}){{s<={ltr5_errors}}}({ltr3}){{s<={ltr3_errors}}}'),
-            'indel': regex.compile(f'({ltr5}){{e<={ltr5_errors}}}({ltr3}){{e<={ltr3_errors}}}')
+            'mismatch': regex.compile(f'({ltr5}){{s<={ltr5_errors}}}({ltr3}){{s<={ltr3_errors}}}')
         },
         'linker': {
             'perfect': regex.compile(linker5 + linker3),
-            'mismatch': regex.compile(f'({linker5}){{s<={linker5_errors}}}({linker3}){{s<={linker3_errors}}}'),
-            'indel': regex.compile(f'({linker5}){{e<={linker5_errors}}}({linker3}){{e<={linker3_errors}}}')
+            'mismatch': regex.compile(f'({linker5}){{s<={linker5_errors}}}({linker3}){{s<={linker3_errors}}}')
         },
         'ltr_rc': {
             'perfect': regex.compile(ltr_rc),
-            'mismatch': regex.compile(f'({ltr_rc}){{s<={rc_errors}}}'),
-            'indel': regex.compile(f'({ltr_rc}){{e<={rc_errors}}}')
+            'mismatch': regex.compile(f'({ltr_rc}){{s<={rc_errors}}}')
         },
         'linker_rc': {
             'perfect': regex.compile(linker_rc),
-            'mismatch': regex.compile(f'({linker_rc}){{s<={rc_errors}}}'),
-            'indel': regex.compile(f'({linker_rc}){{e<={rc_errors}}}')
+            'mismatch': regex.compile(f'({linker_rc}){{s<={rc_errors}}}')
         }
     }
 
@@ -111,10 +107,6 @@ def find_pattern_match(seq, patterns, pattern_type):
         return match
     
     match = patterns[pattern_type]['mismatch'].search(seq)
-    if match:
-        return match
-    
-    match = patterns[pattern_type]['indel'].search(seq)
     if match:
         return match
     
@@ -170,10 +162,16 @@ def init_params(args):
         'chunk_size': args.crop_chunk_size
     }
     
-def extract_umis(seq, pattern_match, umi_len, umi_offset, umi_pattern = None):
+def extract_umis(seq, pattern_match, umi_len, umi_offset, 
+                    umi_pattern = None, position = None, no_error = None):
     if umi_len > 0:
-        start = pattern_match.start() - umi_offset - umi_len
-        end = pattern_match.start() - umi_offset
+        if no_error:
+            start = position - umi_offset - umi_len
+            end = position - umi_offset
+        else:
+            start = pattern_match.start() - umi_offset - umi_len
+            end = pattern_match.start() - umi_offset
+        
         umi = seq[start:end]
         
         if umi_pattern:
@@ -187,17 +185,20 @@ def process_fastq_chunk(chunk_data, params, is_zipped):
     n_reads = len(chunk_data) // 4
     sequences = []
     qualities = []
+    headers = []
     
     for i in range(n_reads):
         base_idx = i * 4
+        head = chunk_data[base_idx].strip().split()[0]
         seq = chunk_data[base_idx + 1].strip()
         qual = chunk_data[base_idx + 3].strip()
 
+        headers.append(head)
         sequences.append(seq)
         # qualities.append(qual_to_array(qual, params['qual_offset']))
         qualities.append(qual)
     
-    return sequences, qualities
+    return sequences, qualities, headers
 
 def fastq_reader(filename, chunk_size):
     with open_file(filename, 'rt') as f:
@@ -220,30 +221,70 @@ def fastq_writer(filename, entries):
             ))
             
 def process_reads_parallel(chunk1, chunk2, patterns, params, is_zipped, out_nm):
-    sequences1, qualities1 = process_fastq_chunk(chunk1, params, is_zipped)
-    sequences2, qualities2 = process_fastq_chunk(chunk2, params, is_zipped)
+    sequences1, qualities1, headers1 = process_fastq_chunk(chunk1, params, is_zipped)
+    sequences2, qualities2, headers2 = process_fastq_chunk(chunk2, params, is_zipped)
     
     cropped_reads1 = []
     cropped_reads2 = []
     
-    for i, ((seq1, qual1), (seq2, qual2)) in enumerate(zip(zip(sequences1, qualities1), 
-                                                        zip(sequences2, qualities2))):
-        header1 = chunk1[i*4].strip().split()[0]
-        header2 = chunk2[i*4].strip().split()[0]
+    ltr_pattern = params['ltr5'] + params['ltr3']
+    linker_pattern = params['linker5'] + params['linker3']
+    
+    no_error = False
+    if (params['ltr5_error'] == 0 and params['linker5_error'] == 0 and
+        params['ltr3_error'] == 0 and params['linker3_error'] == 0):
+
+        no_error = True
         
-        if header1 != header2:
-            raise ValueError(f"Read pair mismatch: {header1} != {header2}")
+        sequences1 = np.array(sequences1)
+        sequences2 = np.array(sequences2)
+        qualities1 = np.array(qualities1)
+        qualities2 = np.array(qualities2)
+        headers1 = np.array(headers1)
+        headers2 = np.array(headers2)
+        
+        ltr_positions = np.char.find(sequences1, ltr_pattern)
+        linker_positions = np.char.find(sequences2, linker_pattern)
+        
+        valid_mask = (ltr_positions >= 0) & (linker_positions >= 0)
+        
+        read1_pos = ltr_positions[valid_mask]
+        read2_pos = linker_positions[valid_mask]
+        
+        sequences1 = list(sequences1[valid_mask])
+        sequences2 = list(sequences2[valid_mask])
+        qualities1 = list(qualities1[valid_mask])
+        qualities2 = list(qualities2[valid_mask])
+        headers1 = list(headers1[valid_mask])
+        headers2 = list(headers2[valid_mask])
+    else:
+        ltr_positions = np.full(len(sequences1), -1)
+        linker_positions = np.full(len(sequences2), -1)
+    
+    for i, ((seq1, qual1, head1, ltr_pos), 
+            (seq2, qual2, head2, linker_pos)) in enumerate(zip(zip(sequences1, qualities1, headers1, ltr_positions), 
+                                                            zip(sequences2, qualities2, headers2, linker_positions))):
+        
+        if head1 != head2:
+            raise ValueError(f"Read pair mismatch: {head1} != {head2}")
             
         seq1_str = seq1
         seq2_str = seq2
         
-        ltr_pattern_match = find_pattern_match(seq1_str, patterns, 'ltr')
-        linker_pattern_match = find_pattern_match(seq2_str, patterns, 'linker')
+        if no_error is False:
+            ltr_pattern_match = find_pattern_match(seq1_str, patterns, 'ltr')
+            linker_pattern_match = find_pattern_match(seq2_str, patterns, 'linker')
+        else:
+            ltr_pattern_match, linker_pattern_match = ltr_pattern, linker_pattern
         
         if ltr_pattern_match and linker_pattern_match:
             
-            start1 = ltr_pattern_match.end()
-            start2 = linker_pattern_match.end()
+            if no_error is False:
+                start1 = ltr_pattern_match.end()
+                start2 = linker_pattern_match.end()
+            else:
+                start1 = ltr_pos + len(ltr_pattern)
+                start2 = linker_pos + len(linker_pattern)
             
             linker_in_ltr = find_pattern_match(seq1_str, patterns, 'linker_rc')
             ltr_in_linker = find_pattern_match(seq2_str, patterns, 'ltr_rc')
@@ -265,12 +306,17 @@ def process_reads_parallel(chunk1, chunk2, patterns, params, is_zipped, out_nm):
                                     ltr_pattern_match, 
                                     params['ltr_umi_len'], 
                                     params['ltr_umi_offset'],
-                                    params['ltr_umi_pattern'])
+                                    params['ltr_umi_pattern'],
+                                    position = ltr_pos if ltr_pos else None,
+                                    no_error = no_error
+                                    )
             linker_umi = extract_umis(seq2_str, 
                                     linker_pattern_match,
                                     params['linker_umi_len'],
                                     params['linker_umi_offset'],
-                                    params['linker_umi_pattern'])
+                                    params['linker_umi_pattern'],
+                                    position = linker_pos if linker_pos else None,
+                                    no_error = no_error)
             
             if not ltr_umi or not linker_umi:
                 continue
@@ -283,13 +329,18 @@ def process_reads_parallel(chunk1, chunk2, patterns, params, is_zipped, out_nm):
                         break
 
             if not toss and len(cropped_seq1) >= params['min_len'] and len(cropped_seq2) >= params['min_len']:
-                new_header1 = (f'{header1}\tCO:Z:1:{out_nm}\t'
+                ltr_found = (ltr_pattern_match if isinstance(ltr_pattern_match, str) 
+                                else ltr_pattern_match.group())
+                linker_found = (linker_pattern_match if isinstance(linker_pattern_match, str) 
+                                else linker_pattern_match.group())
+                    
+                new_header1 = (f'{head1}\tCO:Z:1:{out_nm}\t'
                                     f'RX:Z:{ltr_umi}-{linker_umi}\t'
-                                    f'OX:Z:{ltr_pattern_match.group()}-{linker_pattern_match.group()}\n')
+                                    f'OX:Z:{ltr_found}-{linker_found}\n')
                 
-                new_header2 = (f'{header1}\tCO:Z:2:{out_nm}\t'
+                new_header2 = (f'{head1}\tCO:Z:2:{out_nm}\t'
                                     f'RX:Z:{ltr_umi}-{linker_umi}\t'
-                                    f'OX:Z:{ltr_pattern_match.group()}-{linker_pattern_match.group()}\n')
+                                    f'OX:Z:{ltr_found}-{linker_found}\n')
                 
                 cropped_reads1.append({
                     'name': new_header1,

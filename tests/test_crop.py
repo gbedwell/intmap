@@ -1,10 +1,8 @@
 from intmap.crop import (
     compile_patterns,
     process_reads_parallel,
-    init_params,
-    detect_quality_offset,
-    qual_to_array
-)
+    init_params
+    )
 import regex
 import math
 import gzip

@@ -69,23 +69,23 @@ parser.add_argument('-max_frag_len',
 parser.add_argument('-ltr3_error_rate',
                     type=float, 
                     help='''The acceptable error rate in the terminal LTR sequence. 
-                    Defaults to 0.1.''',
-                    default=0.1)
+                    Defaults to 0.''',
+                    default=0)
 parser.add_argument('-linker3_error_rate',
                     type=float, 
                     help='''The acceptable error rate in the terminal linker sequence.
-                    Defaults to 0.1.''',
-                    default=0.1)
+                    Defaults to 0.''',
+                    default=0)
 parser.add_argument('-ltr5_error_rate',
                     type=float, 
                     help='''The acceptable error rate in the LTR primer sequence. 
-                    Defaults to 0.1.''',
-                    default=0.1)
+                    Defaults to 0.''',
+                    default=0)
 parser.add_argument('-linker5_error_rate',
                     type=float, 
                     help='''The acceptable error rate in the linker primer sequence. 
-                    Defaults to 0.1.''',
-                    default=0.1)
+                    Defaults to 0.''',
+                    default=0)
 parser.add_argument('-crop_chunk_size',
                     type=int, 
                     help='''The chunk size for read cropping. 
@@ -254,8 +254,8 @@ parser.add_argument('-misprime_mismatch',
 parser.add_argument('-kmer_size',
                     type=int, 
                     help='''The size of k-mers to use for sequence comparison.  
-                    Defaults to 15.''',
-                    default=15)
+                    Defaults to 20.''',
+                    default=20)
 parser.add_argument('-kmer_step',
                     type=int, 
                     help='''The step size between k-mers.  
@@ -267,6 +267,11 @@ parser.add_argument('-count_threshold',
                     to call that position the origin position of sites within len_diff.   
                     Defaults to 10.''',
                     default=10)
+parser.add_argument('--no_verify', '-no_verify',
+                    help='''Boolean.
+                    Whether or not to try to reassign multimapping reads based on 
+                    concordance with uniquely mapping reads and similar multimapping reads.''',
+                    action='store_true')
 
 args = parser.parse_args()
 
@@ -573,6 +578,10 @@ if __name__ == "__main__":
             print(f'Multimapping sequence matching threshold: {args.seq_sim}')
             print(f'Multimapping k-mer size: {args.kmer_size} bp')
             print(f'Multimapping k-mer step: {args.kmer_step} bp')
+            if args.no_verify:
+                print(f'Verify multimapping read positions: False')
+            else:
+                print(f'Verify multimapping read positions: True')
         else:
             print('Keep multimapping reads: False')
         
@@ -581,7 +590,7 @@ if __name__ == "__main__":
         else:
             print('Look for mispriming: False')
         
-        print(f'Count threshold: {args.count_threshold} sites')
+        print(f'Collapse count threshold: {args.count_threshold} sites')
         
         print('\n')
         
@@ -923,18 +932,22 @@ if __name__ == "__main__":
                 mm_kept_dict.update(multi_fuzzy_kept)
                 dup_dict.update(multi_fuzzy_dup)
                 
-                print('Verifying multimapping read positions...', flush = True)
-                verified_kept_dict = clean.verify_mm_positions(
-                    mm_kept_dict = mm_kept_dict, 
-                    um_kept_dict = kept_dict, 
-                    seq_sim = args.seq_sim, 
-                    nthr = args.nthr, 
-                    k = args.kmer_size, 
-                    step = args.kmer_step
-                    )
-                
-                if len(verified_kept_dict) != len(mm_kept_dict):
-                    raise Exception('Error in verifying multimapping read positions.')
+                if not args.no_verify:
+                    print('Verifying multimapping read positions...', flush = True)
+                    verified_kept_dict = clean.verify_mm_positions(
+                        mm_kept_dict = mm_kept_dict, 
+                        um_kept_dict = kept_dict, 
+                        seq_sim = args.seq_sim, 
+                        nthr = args.nthr, 
+                        len_diff = args.len_diff,
+                        k = args.kmer_size, 
+                        step = args.kmer_step
+                        )
+                    
+                    if len(verified_kept_dict) != len(mm_kept_dict):
+                        raise Exception('Error in verifying multimapping read positions.')
+                else:
+                    verified_kept_dict = mm_kept_dict
 
                 del multi_exact_kept    
                 del multi_fuzzy_kept

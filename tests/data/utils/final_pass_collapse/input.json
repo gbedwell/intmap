@@ -11,8 +11,8 @@
         "linker_umi": "TTTT",
         "multi": false,
         "mean_qual": 35,
-        "ltr_match": "perfect",
-        "linker_match": "perfect"
+        "ltr_match": "AAAA",
+        "linker_match": "AAAA"
     },
     "read2": {
         "chrom": "chr1",
