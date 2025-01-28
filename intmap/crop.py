@@ -1,4 +1,7 @@
 import os 
+import platform
+import glob
+import subprocess
 import sys
 import getopt
 import regex
@@ -211,16 +214,17 @@ def fastq_reader(filename, chunk_size):
         if chunk:
             yield chunk
 
-def fastq_writer(filename, entries):
-    with open_file(filename, 'at') as f:
-        for entry in entries:
-            f.write('{}\n{}\n+\n{}\n'.format(
-                entry['name'],
-                entry['seq'],
-                entry['qual']
-            ))
+def fastq_writer(file, reads):
+    if isinstance(file, io.TextIOWrapper):
+        for read in reads:
+            file.write(f"{read['name']}\n{read['seq']}\n+\n{read['qual']}\n")
+    else:
+        with open_file(file, 'at') as f:
+            for read in reads:
+                f.write(f"{read['name']}\n{read['seq']}\n+\n{read['qual']}\n")
             
-def process_reads_parallel(chunk1, chunk2, patterns, params, is_zipped, out_nm):
+def process_reads_parallel(chunk1, chunk2, patterns, params, is_zipped, 
+                            out_nm, processed_directory):
     sequences1, qualities1, headers1 = process_fastq_chunk(chunk1, params, is_zipped)
     sequences2, qualities2, headers2 = process_fastq_chunk(chunk2, params, is_zipped)
     
@@ -355,10 +359,27 @@ def process_reads_parallel(chunk1, chunk2, patterns, params, is_zipped, out_nm):
                     # 'qual': ''.join(chr(q + params['qual_offset']) for q in cropped_qual2)
                     'qual': cropped_qual2
                 })
+    
+    tmp_file1 = os.path.join(processed_directory,    
+                            f'{out_nm}_{os.getpid()}_R1_tmp.fq.gz')
+    tmp_file2 = os.path.join(processed_directory,
+                            f'{out_nm}_{os.getpid()}_R2_tmp.fq.gz')
+    
+    with gzip.open(tmp_file1, 'wt') as f1, gzip.open(tmp_file2, 'wt') as f2:
+        fastq_writer(f1, cropped_reads1)
+        fastq_writer(f2, cropped_reads2)
 
-    return cropped_reads1, cropped_reads2
+def concatenate_files(outfile, pattern):
+    with gzip.open(outfile, 'wb') as out:
+        for temp_file in sorted(glob.glob(pattern)):
+            with gzip.open(temp_file, 'rb') as infile:
+                shutil.copyfileobj(infile, out)
 
-
+def concatenate_unix(outfile, pattern):
+    cmd = ['cat'] + sorted(glob.glob(pattern))
+    with open(outfile, 'wb') as out:
+        subprocess.run(cmd, stdout=out)
+                
 def crop(file1, file2, args, processed_directory, out_nm):
     out_file1 = os.path.join(processed_directory,
                             f'{out_nm}_R1_cropped.fq.gz')
@@ -380,11 +401,32 @@ def crop(file1, file2, args, processed_directory, out_nm):
                                 params['ltr3_error'], params['linker3_error'],
                                 params['ltr5_error'], params['linker5_error'])
     
-    results = Parallel(n_jobs = params['nthr'])(
-        delayed(process_reads_parallel)(chunk1, chunk2, patterns, params, is_zipped, out_nm)
+    Parallel(n_jobs = params['nthr'])(
+        delayed(process_reads_parallel)(chunk1, chunk2, patterns, params, 
+                                        is_zipped, out_nm, processed_directory)
         for chunk1, chunk2 in zip(chunks1, chunks2)
     )
-            
-    for reads1, reads2 in results:
-        fastq_writer(out_file1, reads1)
-        fastq_writer(out_file2, reads2)
+
+    inputs = [
+        (out_file1, os.path.join(processed_directory, f"{out_nm}_*_R1_tmp.fq.gz")),
+        (out_file2, os.path.join(processed_directory, f"{out_nm}_*_R2_tmp.fq.gz"))
+        ]
+    
+    op_sys = platform.system()
+    if op_sys != 'Darwin' and op_sys != 'Linux':
+        Parallel(n_jobs=2)(
+            delayed(concatenate_files)(outfile=outfile, pattern=pattern)
+            for outfile, pattern in inputs
+        )
+    else:
+        Parallel(n_jobs=2)(
+            delayed(concatenate_unix)(outfile=outfile, pattern=pattern)
+            for outfile, pattern in inputs
+        )
+        
+    for pattern in [
+        os.path.join(processed_directory, f"{out_nm}_*_R1_tmp.fq.gz"),
+        os.path.join(processed_directory, f"{out_nm}_*_R2_tmp.fq.gz")
+        ]:
+        for tmp_file in glob.glob(pattern):
+            os.remove(tmp_file)

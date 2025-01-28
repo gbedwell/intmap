@@ -9,7 +9,7 @@ import gzip
 import os
 import numpy as np
 
-TEST_DATA_DIR = "data/crop"
+TEST_DATA_DIR = "tests/data/crop"
 os.makedirs(TEST_DATA_DIR, exist_ok = True)
 
 def create_test_fastq():
