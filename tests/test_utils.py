@@ -7,7 +7,7 @@ from datasketch import MinHash
 import math
 from .conftest import load_test_data
 
-def generate_test_data(n_sequences = 100, seq_length = 100, num_bits = 128):
+def generate_test_data(n_sequences = 100, seq_length = 100, num_perm = 128):
     test_dict = {}
     bases = ['A', 'T', 'G', 'C']
     
@@ -27,15 +27,15 @@ def generate_test_data(n_sequences = 100, seq_length = 100, num_bits = 128):
         for j, seq in enumerate(sequences[:min(3, n_sequences-i)]):
             key = f'read_{i+j}'
             value = {'seq1': seq, 'seq2': ''.join(np.random.choice(bases, seq_length))}
-            key, value = apply_minhash(key, value, seq, num_bits, token_size=4)
+            key, value = apply_minhash(key, value, seq, num_perm, token_size=4)
             test_dict[key] = value
             
     return test_dict
 
 def test_get_nn():
     len_diff = 5
-    input_dict = generate_test_data(n_sequences = 100, seq_length = 100, num_bits = 128)
-    distances, indices = get_nn(input_dict, num_bits = 128, nthr = 1, len_diff = len_diff, k = 8)
+    input_dict = generate_test_data(n_sequences = 100, seq_length = 100, num_perm = 128)
+    distances, indices = get_nn(input_dict, num_perm = 128, nthr = 1, len_diff = len_diff, k = 8)
     
     n_kmers = len_diff + 1
     max_rows = len(input_dict) * n_kmers
@@ -49,12 +49,12 @@ def test_group_similar_hashes():
     input_dict = generate_test_data(
         n_sequences = n_sequences, 
         seq_length = 100, 
-        num_bits = 128
+        num_perm = 128
         )
     
     distances, indices = get_nn(
         input_dict = input_dict, 
-        num_bits = 128, 
+        num_perm = 128, 
         nthr = 1, 
         len_diff = 5,
         k = 8
@@ -65,7 +65,7 @@ def test_group_similar_hashes():
         hash_indices = indices,
         nthr = 1,
         sensitivity = 0.85,
-        num_bits = 128,
+        num_perm = 128,
         input_dict = input_dict
         )
     

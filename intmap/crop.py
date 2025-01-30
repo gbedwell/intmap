@@ -15,7 +15,8 @@ from intmap.utils import *
 import numpy as np
 
 def check_crop_input(ltr3, linker3, ltr1_primer, ltr5, linker5,
-                    contamination, ltr5_error_rate, linker5_error_rate):
+                    contamination, ltr5_error_rate, linker5_error_rate,
+                    ltr3_error_rate, linker3_error_rate):
     
     ltr1_check = ltr1_primer.replace(' ', '')
     ltr1_char = regex.sub('[ATGCN]', '', ltr1_check.upper())
@@ -25,27 +26,49 @@ def check_crop_input(ltr3, linker3, ltr1_primer, ltr5, linker5,
     if len(ltr1_check) < 10:
         raise ValueError('Declared round 1 LTR primer must be at least 10 nucleotides long.')
         
-    ltr2_check = ltr5.replace(' ', '')
-    ltr2_char = regex.sub('[ATGC]', '', ltr2_check.upper())
-    if ltr2_char != '':
-        raise ValueError('Declared round 2 LTR primer may only contain A,T,G, and C nucleotides.')
+    ltr5_check = ltr5.replace(' ', '')
+    ltr5_char = regex.sub('[ATGC]', '', ltr5_check.upper())
+    if ltr5_char != '':
+        raise ValueError('Declared 5\' LTR sequence may only contain A,T,G, and C nucleotides.')
 
-    if len(ltr2_check) < 5:
-        raise ValueError('Declared round 2 LTR primer must be at least 8 nucleotides long.')
+    if len(ltr5_check) < 10:
+        raise ValueError('Declared 5\' LTR sequence must be at least 10 nucleotides long.')
     
     if ltr5_error_rate > 0.3:
-        raise ValueError('Round 2 LTR primer error rate cannot be > 0.3.')
-        
-    lp_check = linker5.replace(' ', '')
-    lp_char = regex.sub('[ATGC]', '', lp_check.upper())
-    if lp_char != '':
-        raise ValueError('Declared linker primer may only contain A,T,G, and C nucleotides.')
+        raise ValueError('5\' LTR sequence error rate cannot be > 0.3.')
+    
+    ltr3_check = ltr3.replace(' ', '')
+    ltr3_char = regex.sub('[ATGC]', '', ltr3_check.upper())
+    if ltr3_char != '':
+        raise ValueError('Declared 3\' LTR sequence may only contain A,T,G, and C nucleotides.')
 
-    if len(lp_check) < 5:
-        raise ValueError('Declared linker primer must be at least 8 nucleotides long.')
+    if len(ltr3_check) < 5:
+        raise ValueError('Declared 3\' LTR sequence must be at least 5 nucleotides long.')
+    
+    if ltr3_error_rate > 0.3:
+        raise ValueError('3\' LTR sequence error rate cannot be > 0.3.')
+        
+    link5_check = linker5.replace(' ', '')
+    link5_char = regex.sub('[ATGC]', '', link5_check.upper())
+    if link5_char != '':
+        raise ValueError('Declared 5\' linker sequence may only contain A,T,G, and C nucleotides.')
+
+    if len(link5_check) < 10:
+        raise ValueError('Declared 5\' linker sequence must be at least 10 nucleotides long.')
     
     if linker5_error_rate > 0.3:
-        raise ValueError('Linker primer error rate cannot be > 0.3.')
+        raise ValueError('5\' linker sequence error rate cannot be > 0.3.')
+    
+    link3_check = linker3.replace(' ', '')
+    link3_char = regex.sub('[ATGC]', '', link3_check.upper())
+    if link3_char != '':
+        raise ValueError('Declared 3\' linker sequence may only contain A,T,G, and C nucleotides.')
+
+    if len(link3_check) < 5:
+        raise ValueError('Declared 3\' linker sequence must be at least 5 nucleotides long.')
+    
+    if linker3_error_rate > 0.3:
+        raise ValueError('3\' linker sequence error rate cannot be > 0.3.')
             
     if contamination is not None:
         for cc in contamination:
@@ -56,19 +79,6 @@ def check_crop_input(ltr3, linker3, ltr1_primer, ltr5, linker5,
             
             if len(cont) < 10:
                 raise ValueError('Declared contamination(s) must be at least 10 nucleotides long.')
-        
-    linker_check = linker3.replace(' ', '')
-    linker_char = regex.sub('[ATGC]', '', linker_check.upper())
-    if linker_char != '':
-        raise ValueError('The given linker sequence may only contain A, T, G, and C nucleotides.')
-    
-    if len(linker_check) < 5:
-        raise ValueError('The given linker sequence must be >= 5 nucleotides long.')
-        
-    ltr_check = ltr3.replace(' ', '')
-    test_ltr = regex.sub('[ATGC]', '', ltr_check.upper())
-    if test_ltr != '':
-        raise ValueError('The given LTR sequence may only contain A, T, G, and C nucleotides.')
 
 def compile_patterns(ltr3, linker3, ltr5, linker5,
                     ltr3_error_rate, linker3_error_rate,
@@ -78,26 +88,30 @@ def compile_patterns(ltr3, linker3, ltr5, linker5,
     linker3_errors = math.floor(len(linker3) * linker3_error_rate)
     linker5_errors = math.floor(len(linker5) * linker5_error_rate)
     
-    ltr_rc = revcomp(ltr5 + ltr3)[:11]
-    linker_rc = revcomp(linker5 + linker3)[:11]
+    ltr_rc = revcomp(ltr5 + ltr3)[:12]
+    linker_rc = revcomp(linker5 + linker3)[:12]
     rc_errors = 1
     
     return {
         'ltr': {
             'perfect': regex.compile(ltr5 + ltr3),
-            'mismatch': regex.compile(f'({ltr5}){{s<={ltr5_errors}}}({ltr3}){{s<={ltr3_errors}}}')
+            'mismatch': regex.compile(f'({ltr5}){{s<={ltr5_errors}}}({ltr3}){{s<={ltr3_errors}}}'),
+            'indel': regex.compile(f'({ltr5}){{e<={ltr5_errors}}}({ltr3}){{e<={ltr3_errors}}}')
         },
         'linker': {
             'perfect': regex.compile(linker5 + linker3),
-            'mismatch': regex.compile(f'({linker5}){{s<={linker5_errors}}}({linker3}){{s<={linker3_errors}}}')
+            'mismatch': regex.compile(f'({linker5}){{s<={linker5_errors}}}({linker3}){{s<={linker3_errors}}}'),
+            'indel': regex.compile(f'({linker5}){{e<={linker5_errors}}}({linker3}){{e<={linker3_errors}}}')
         },
         'ltr_rc': {
             'perfect': regex.compile(ltr_rc),
-            'mismatch': regex.compile(f'({ltr_rc}){{s<={rc_errors}}}')
+            'mismatch': regex.compile(f'({ltr_rc}){{s<={rc_errors}}}'),
+            'indel': regex.compile(f'({ltr_rc}){{e<={rc_errors}}}')
         },
         'linker_rc': {
             'perfect': regex.compile(linker_rc),
-            'mismatch': regex.compile(f'({linker_rc}){{s<={rc_errors}}}')
+            'mismatch': regex.compile(f'({linker_rc}){{s<={rc_errors}}}'),
+            'indel': regex.compile(f'({linker_rc}){{e<={rc_errors}}}')
         }
     }
 
@@ -110,6 +124,10 @@ def find_pattern_match(seq, patterns, pattern_type):
         return match
     
     match = patterns[pattern_type]['mismatch'].search(seq)
+    if match:
+        return match
+    
+    match = patterns[pattern_type]['indel'].search(seq)
     if match:
         return match
     
@@ -224,7 +242,7 @@ def fastq_writer(file, reads):
                 f.write(f"{read['name']}\n{read['seq']}\n+\n{read['qual']}\n")
             
 def process_reads_parallel(chunk1, chunk2, patterns, params, is_zipped, 
-                            out_nm, processed_directory):
+                            out_nm, processed_directory, chunk_num):
     sequences1, qualities1, headers1 = process_fastq_chunk(chunk1, params, is_zipped)
     sequences2, qualities2, headers2 = process_fastq_chunk(chunk2, params, is_zipped)
     
@@ -340,11 +358,11 @@ def process_reads_parallel(chunk1, chunk2, patterns, params, is_zipped,
                     
                 new_header1 = (f'{head1}\tCO:Z:1:{out_nm}\t'
                                     f'RX:Z:{ltr_umi}-{linker_umi}\t'
-                                    f'OX:Z:{ltr_found}-{linker_found}\n')
+                                    f'OX:Z:{ltr_found}-{linker_found}')
                 
                 new_header2 = (f'{head1}\tCO:Z:2:{out_nm}\t'
                                     f'RX:Z:{ltr_umi}-{linker_umi}\t'
-                                    f'OX:Z:{ltr_found}-{linker_found}\n')
+                                    f'OX:Z:{ltr_found}-{linker_found}')
                 
                 cropped_reads1.append({
                     'name': new_header1,
@@ -361,9 +379,9 @@ def process_reads_parallel(chunk1, chunk2, patterns, params, is_zipped,
                 })
     
     tmp_file1 = os.path.join(processed_directory,    
-                            f'{out_nm}_{os.getpid()}_R1_tmp.fq.gz')
+                            f'{out_nm}_{os.getpid()}_{chunk_num}_R1_tmp.fq.gz')
     tmp_file2 = os.path.join(processed_directory,
-                            f'{out_nm}_{os.getpid()}_R2_tmp.fq.gz')
+                            f'{out_nm}_{os.getpid()}_{chunk_num}_R2_tmp.fq.gz')
     
     with gzip.open(tmp_file1, 'wt') as f1, gzip.open(tmp_file2, 'wt') as f2:
         fastq_writer(f1, cropped_reads1)
@@ -402,9 +420,11 @@ def crop(file1, file2, args, processed_directory, out_nm):
                                 params['ltr5_error'], params['linker5_error'])
     
     Parallel(n_jobs = params['nthr'])(
-        delayed(process_reads_parallel)(chunk1, chunk2, patterns, params, 
-                                        is_zipped, out_nm, processed_directory)
-        for chunk1, chunk2 in zip(chunks1, chunks2)
+        delayed(process_reads_parallel)(
+            chunk1, chunk2, patterns, params, is_zipped,
+            out_nm, processed_directory, chunk_num
+            )
+        for chunk_num, (chunk1, chunk2) in enumerate(zip(chunks1, chunks2))
     )
 
     inputs = [

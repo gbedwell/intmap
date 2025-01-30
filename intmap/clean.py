@@ -347,32 +347,15 @@ def multi_fuzzy_matches(groups, umi_diff, frag_ratio, nthr, seq_sim):
     
     return multi_fuzzy_kept, multi_fuzzy_dup
 
-def build_kmer_index(sequences, k=20, step=5):
-    kmer_arrays = []
-    seq_indices = []
-    
-    for i, seq in enumerate(sequences):
-        kmers = np.array([hash(seq[j:j+k]) for j in range(0, len(seq) - k + 1, step)])
-        kmer_arrays.append(kmers)
-        seq_indices.extend([i] * len(kmers))
-    
-    all_kmers = np.concatenate(kmer_arrays)
-    unique_kmers = np.unique(all_kmers)
-    
-    kmer_index = defaultdict(set)
-    for kmer, idx in zip(all_kmers, seq_indices):
-        kmer_index[kmer].add(idx)
-        
-    return kmer_index
-
-def group_mm_sequences(group, seq_sim, len_diff, k=20, step=5):
+def group_mm_sequences(group, seq_sim, len_diff, k=20):
     sorted_group = sorted(group, key=lambda x: len(x['seq1']))
     seqs = [entry['seq1'] for entry in sorted_group]
     
     # Convert sequences to k-mer arrays
     kmer_arrays = []
     for seq in seqs:
-        kmers = np.array([hash(seq[i:i+k]) for i in range(0, len(seq) - k + 1, step)])
+        max_k = len(seq) - k + 1
+        kmers = np.array([hash(seq[i:i+k]) for i in range(0, min(len_diff, max_k))])
         kmer_arrays.append(kmers)
     
     # Build vectorized index
@@ -391,7 +374,7 @@ def group_mm_sequences(group, seq_sim, len_diff, k=20, step=5):
     # Fast candidate identification using matrix multiplication
     shared_kmers = kmer_matrix @ kmer_matrix.T
     n_kmers_per_seq = np.array([len(kmers) for kmers in kmer_arrays])
-    min_shared = np.maximum(1, n_kmers_per_seq // 4)[:, None]
+    min_shared = 1
     
     candidates = np.where(shared_kmers >= min_shared)
     
@@ -423,91 +406,86 @@ def group_mm_sequences(group, seq_sim, len_diff, k=20, step=5):
     
     return subgroups
 
-def build_position_based_index(um_kept_dict, k=20, step=5):
-    # Group UM reads by position
-    position_groups = defaultdict(list)
-    for read in um_kept_dict.values():
-        pos_key = (read['chrom'], read['end'] if read['strand'] == '-' else read['start'], read['strand'])
-        position_groups[pos_key].append(read)
+def build_position_based_index(um_kept_dict, len_diff, nthr, k=20):
+    n_reads = len(um_kept_dict)
+    n_kmers = len_diff + 1
+    k_mod = k - len_diff
+    vectors = np.zeros((n_reads, n_kmers), dtype=np.float32)
+    positions = []
+    read_names = []
     
-    # Get representative sequences for each position
-    positions = list(position_groups.keys())
-    rep_seqs = [max(reads, key=lambda x: len(x['seq1']))['seq1'] 
-                for reads in position_groups.values()]
-    
-    # Convert sequences to k-mer arrays
-    kmer_arrays = []
-    for seq in rep_seqs:
-        kmers = np.array([hash(seq[i:i+k]) for i in range(0, len(seq) - k + 1, step)])
-        kmer_arrays.append(kmers)
-    
-    # Build vectorized index
-    unique_kmers = np.unique(np.concatenate(kmer_arrays))
-    kmer_to_idx = {kmer: idx for idx, kmer in enumerate(unique_kmers)}
-    
-    # Create sparse matrix of k-mer occurrences
-    n_pos = len(positions)
-    n_kmers = len(unique_kmers)
-    kmer_matrix = np.zeros((n_pos, n_kmers), dtype=np.int8)
-    
-    for pos_idx, kmers in enumerate(kmer_arrays):
-        for kmer in kmers:
-            kmer_matrix[pos_idx, kmer_to_idx[kmer]] = 1
-    
-    # Convert to efficient lookup structure
-    kmer_index = defaultdict(set)
-    for kmer_idx, kmer in enumerate(unique_kmers):
-        pos_indices = np.where(kmer_matrix[:, kmer_idx])[0]
-        kmer_index[kmer].update(positions[i] for i in pos_indices)
-    
-    return kmer_index, position_groups
-
-def compare_to_um(group, um_index, position_groups, seq_sim, k=20, step=5):
-    # Get longest read as representative sequence
-    longest_read = max(group, key=lambda x: len(x['seq1']))
-    read_seq = longest_read['seq1']
-    
-    # Vectorized k-mer matching
-    read_kmers = np.array([hash(read_seq[i:i+k]) for i in range(0, len(read_seq) - k + 1, step)])
-    
-    # Count matches per position using Counter
-    position_matches = Counter()
-    for kmer in read_kmers:
-        position_matches.update(um_index.get(kmer, set()))
-    
-    # Get positions with sufficient k-mer matches
-    min_matches = max(1, len(read_kmers) // 4)  # Require ~1/4 of k-mers to match
-    candidate_positions = [pos for pos, count in position_matches.items() 
-                            if count >= min_matches]
-    
-    # Check sequence similarity with candidates
-    for pos in candidate_positions:
-        um_reads = position_groups[pos]
-        um_seq = min(um_reads, key=lambda x: len(x['seq1']))['seq1']
+    for idx, (read_name, read) in enumerate(um_kept_dict.items()):
+        seq = read['seq1']
+        kmers = [hash(seq[i:i+k_mod]) for i in range(n_kmers)]
+        vectors[idx] = kmers / np.linalg.norm(kmers)
         
-        if len(read_seq) <= len(um_seq):
-            max_similarity = max(
-                seq_similarity(read_seq, um_seq[i:i+len(read_seq)])
-                for i in range(len(um_seq) - len(read_seq) + 1)
-            )
+        positions.append((read['chrom'], 
+                        read['end'] if read['strand'] == '-' else read['start'], 
+                        read['strand']))
+        read_names.append(read_name)
+    
+    index = faiss.IndexFlatL2(n_kmers)
+    index.add(vectors)
+    
+    position_array = np.array(positions, dtype=[
+        ('chrom', 'U20'), 
+        ('pos', np.int32), 
+        ('strand', 'U1')
+    ])
+    
+    read_array = np.array(read_names)
+    
+    return index, position_array, read_array
+
+def compare_to_um(mm_group, um_index, um_positions, um_read_names, 
+                    um_kept_dict, seq_sim, k, len_diff):
+    longest_mm_read = max(mm_group, key=lambda x: len(x['seq1']))
+    longest_mm_seq = longest_mm_read['seq1']
+    
+    n_kmers = len_diff + 1
+    mm_vectors = np.zeros((1, n_kmers), dtype=np.float32)
+    
+    kmers = [hash(longest_mm_seq[i:i+k]) for i in range(n_kmers)]
+    mm_vectors[0] = kmers / np.linalg.norm(kmers)
+    
+    k_neighbors = 5
+    D, I = um_index.search(mm_vectors, k_neighbors)
+    
+    for dist, um_idx in zip(D[0], I[0]):
+        um_pos = um_positions[um_idx]
+        um_read = um_kept_dict[str(um_read_names[um_idx])]
+        um_seq = um_read['seq1']
+        
+        if len(longest_mm_seq) >= len(um_seq):
+            similarities = [
+                seq_similarity(um_seq, longest_mm_seq[i:i+len(um_seq)])
+                for i in range(len(longest_mm_seq) - len(um_seq) + 1)
+                if i + len(um_seq) <= len(longest_mm_seq)
+            ]
             
-            if max_similarity >= seq_sim:
-                relocated_group = []
-                for read in group:
-                    read = read.copy()
-                    read['chrom'] = pos[0]
-                    read['start'] = pos[1] if pos[2] == '+' else (pos[1] - len(read['seq1']))
-                    read['end'] = (pos[1] + len(read['seq1'])) if pos[2] == '+' else pos[1]
-                    read['strand'] = pos[2]
-                    read['multi'] = 'True - relocated'
-                    relocated_group.append(read)
-                return relocated_group
+            if similarities:
+                max_similarity = max(similarities)
+                if max_similarity >= seq_sim:
+                    relocated_group = []
+                    for read in mm_group:
+                        relocated_read = read.copy()
+                        relocated_read['chrom'] = str(um_pos['chrom'])
+                        relocated_read['start'] = int(um_pos['pos']) if um_pos['strand'] == '+' else int(um_pos['pos'] - len(longest_mm_seq))
+                        relocated_read['end'] = int(um_pos['pos'] + len(longest_mm_seq)) if um_pos['strand'] == '+' else int(um_pos['pos'])
+                        relocated_read['strand'] = str(um_pos['strand'])
+                        relocated_read['multi'] = 'True - relocated'
+                        relocated_group.append(relocated_read)
+                    return relocated_group
+            
     return None
 
-def assign_mm_group(group):
+def assign_mm_group(mm_group):
+    if len(mm_group) == 1:
+        return(mm_group)
+    
     # Vectorized position counting
-    positions = np.array([(read['chrom'], read['start'], read['end'], read['strand']) for read in group])
-    counts = np.array([read['count'] for read in group])
+    positions = np.array([(read['chrom'], read['start'], read['end'], read['strand']) for read in mm_group])
+    counts = np.array([read['count'] for read in mm_group])
     
     # Get unique positions and their total counts
     unique_positions, position_indices, position_counts = np.unique(
@@ -533,7 +511,7 @@ def assign_mm_group(group):
         
         # Assign all reads to chosen position
         assigned_group = []
-        for read in group:
+        for read in mm_group:
             read = read.copy()
             read['chrom'] = str(chosen_pos[0])
             read['start'] = int(chosen_pos[1])
@@ -544,54 +522,56 @@ def assign_mm_group(group):
             
         return assigned_group
     
-    return group
+    return mm_group
 
-def process_batch(batch, um_index, position_groups, seq_sim, k, step):
-    results = []
-    for group in batch:
-        relocated = compare_to_um(group, um_index, position_groups, seq_sim, k, step)
-        results.append({
-            'relocated': relocated is not None,
-            'reads': {r['read_name']: r for r in relocated} if relocated else None,
-            'group': group if not relocated else None
-        })
-    return results
-
-def verify_mm_positions(mm_kept_dict, um_kept_dict, seq_sim, nthr, len_diff, k=15, step=5):
-    # Build position-based index for UM reads
-    um_index, position_groups = build_position_based_index(um_kept_dict, k=k, step=step)
+def verify_mm_positions(mm_kept_dict, um_kept_dict, seq_sim, nthr, len_diff, k):
+    print(f'Building unique read index...')
+    um_index, um_positions, um_read_names = build_position_based_index(
+        um_kept_dict = um_kept_dict, 
+        len_diff = len_diff, 
+        nthr = nthr, 
+        k = k
+        )
     
-    # Group similar MM reads
+    print(f'Building multimapping read index...')
     mm_reads = list(mm_kept_dict.values())
-    subgroups = group_mm_sequences(mm_reads, seq_sim, len_diff, k=k, step=step)
-    
-    # Batch subgroups for better memory management
-    batch_size = max(1, len(subgroups) // (4 * nthr))  # Smaller batches for better load balance
-    batched_groups = [subgroups[i:i + batch_size] for i in range(0, len(subgroups), batch_size)]
-    
-    # Process batches in parallel
+    subgroups = group_mm_sequences(
+        group = mm_reads, 
+        seq_sim = seq_sim, 
+        len_diff = len_diff, 
+        k = k
+        )
+        
+    print(f'Processing multimapping read clusters...')
     relocated_results = Parallel(n_jobs=nthr, prefer="threads")(
-        delayed(process_batch)(
-            batch, um_index, position_groups, seq_sim, k, step
-        ) for batch in batched_groups
+        delayed(compare_to_um)(
+            mm_group = group, 
+            um_index = um_index, 
+            um_positions = um_positions, 
+            um_read_names = um_read_names, 
+            um_kept_dict = um_kept_dict, 
+            seq_sim = seq_sim, 
+            k = k, 
+            len_diff = len_diff
+            ) 
+        for group in subgroups
     )
     
-    # Handle results
     relocated_reads = {}
     remaining_groups = []
     
-    for batch_result in relocated_results:
-        for result in batch_result:
-            if result['relocated']:
-                relocated_reads.update(result['reads'])
-            else:
-                remaining_groups.append(result['group'])
+    for i, relocated_group in enumerate(relocated_results):
+        if relocated_group:
+            for read in relocated_group:
+                relocated_reads[read['read_name']] = read
+        else:
+            remaining_groups.append(subgroups[i])
 
     if remaining_groups:
         reassigned_results = Parallel(n_jobs=nthr)(
             delayed(assign_mm_group)(group) 
-            for consensus_id, group in enumerate(remaining_groups)
-        )
+            for group in remaining_groups
+            )
         
         for group in reassigned_results:
             for read in group:

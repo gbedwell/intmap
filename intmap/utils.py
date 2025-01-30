@@ -11,6 +11,7 @@ from joblib import Parallel, delayed
 from datasketch import MinHash
 import math
 from bisect import bisect_left, bisect_right
+from operator import itemgetter
 
 __all__ = [
     'zipped',
@@ -90,11 +91,11 @@ def fetch_sequence(coordinates, genome, U3, shift):
     sequence = genome.fetch(chrom, start, end)
     
     if strand == '-':
-        sequence = crop.revcomp(sequence)
+        sequence = revcomp(sequence)
     return sequence.upper()
 
-def apply_minhash(key, value, string, num_bits, token_size):
-    minhash = MinHash(num_perm = num_bits)
+def apply_minhash(key, value, string, num_perm, token_size):
+    minhash = MinHash(num_perm = num_perm)
     tokens = [string[i:i + token_size] for i in range(len(string) - token_size + 1)]
     
     for token in tokens:
@@ -114,7 +115,7 @@ def set_faiss_threads(nthr):
         return True
     return False
 
-def get_nn(input_dict, num_bits, nthr, len_diff, k):
+def get_nn(input_dict, num_perm, nthr, len_diff, k):
     set_faiss_threads(nthr)
     
     kmer_groups = defaultdict(dict)
@@ -138,7 +139,7 @@ def get_nn(input_dict, num_bits, nthr, len_diff, k):
         if nb == 0:
             continue
             
-        dim = num_bits * 64
+        dim = num_perm * 64
         db = np.array(minhash_list, dtype='uint8')
         
         hash_index = faiss.IndexBinaryFlat(dim)
@@ -160,8 +161,8 @@ def chunk_hashes(distances, indices, nthr):
     for i in range(0, len(distances), n):
         yield distances[i:i + n], indices[i:i + n]
 
-def group_similar_hashes(hash_distances, hash_indices, nthr, sensitivity, num_bits, input_dict):
-    hamming_threshold = (num_bits * 64) * (1 - sensitivity)
+def group_similar_hashes(hash_distances, hash_indices, nthr, sensitivity, num_perm, input_dict):
+    hamming_threshold = (num_perm * 64) * (1 - sensitivity)
     
     # Use input_dict keys to get correct sequence count
     sequence_indices = range(len(input_dict))
@@ -211,43 +212,70 @@ def extract_grouped_entries(groups, input_dict):
 
     return grouped_entries
 
-def collapse_group(chrom_strand_tuple, sites, threshold, len_diff):
-    sites.sort()
-    positions = [s[0] for s in sites]
-    position_updates = {}
+def collapse_group(chrom_strand_tuple, pos_counts, len_diff, min_count, 
+                    count_fc, read_mapping):
+    positions = np.array([p for p, _ in pos_counts])
+    counts = np.array([c for _, c in pos_counts])
     
-    abundant_sites = [s for s in sites if s[1] >= threshold]
+    abundant_mask = counts >= min_count
+    abundant_positions = positions[abundant_mask]
+    abundant_counts = counts[abundant_mask]
     
-    for abundant_pos, abundant_count, abundant_read in abundant_sites:
-        left = bisect_left(positions, abundant_pos - len_diff)
-        right = bisect_right(positions, abundant_pos + len_diff)
-        
-        for pos, count, read_name in sites[left:right]:
-            if read_name != abundant_read and count < threshold:
-                position_updates[read_name] = abundant_pos
+    sort_idx = np.argsort(abundant_counts)[::-1]
+    abundant_positions = abundant_positions[sort_idx]
+    abundant_counts = abundant_counts[sort_idx]
     
-    return position_updates
+    keep_abundant = np.ones(len(abundant_positions), dtype=bool)
+    for i in range(1, len(abundant_positions)):
+        nearby_mask = np.abs(abundant_positions[:i] - abundant_positions[i]) <= len_diff
+        if any(nearby_mask):
+            max_nearby_count = np.max(abundant_counts[:i][nearby_mask])
+            if max_nearby_count > abundant_counts[i] * count_fc:
+                keep_abundant[i] = False
+    
+    final_abundant_positions = abundant_positions[keep_abundant]
+    
+    read_updates = {}
+    for abundant_pos in final_abundant_positions:
+        collapse_mask = np.abs(positions - abundant_pos) <= len_diff
+        for pos in positions[collapse_mask]:
+            for read_name in read_mapping[(chrom_strand_tuple[0], pos, chrom_strand_tuple[1])]:
+                read_updates[read_name] = abundant_pos
+    
+    return read_updates
 
-def final_pass_collapse(kept_frags, len_diff, nthr, threshold):
-    grouped_frags = defaultdict(list)
+def final_pass_collapse(kept_frags, len_diff, nthr, min_count, count_fc):
+    positions = np.array([(frag['chrom'], 
+                            frag['end'] if frag['strand'] == '-' else frag['start'],
+                            frag['strand'])
+                            for frag in kept_frags.values()],
+                            dtype=[('chrom', 'U25'), ('pos', 'i8'), ('strand', 'U1')])
+    unique_pos, counts = np.unique(positions, return_counts=True)
+    
+    read_mapping = defaultdict(list)
     for read_name, frag in kept_frags.items():
-        key = (frag['chrom'], frag['strand'])
-        site_pos = frag['end'] if frag['strand'] == '-' else frag['start']
-        grouped_frags[key].append([site_pos, frag['count'], read_name])
+        pos = frag['end'] if frag['strand'] == '-' else frag['start']
+        read_mapping[(frag['chrom'], pos, frag['strand'])].append(read_name)
+    
+    grouped_data = defaultdict(list)
+    for pos, count in zip(unique_pos, counts):
+        grouped_data[(pos['chrom'], pos['strand'])].append((pos['pos'], count))
     
     results = Parallel(n_jobs=nthr)(
         delayed(collapse_group)(
-            key, sites,
-            threshold=threshold,
-            len_diff=len_diff
-        ) for key, sites in grouped_frags.items()
+            key, pos,
+            min_count=min_count,
+            count_fc=count_fc,
+            len_diff=len_diff,
+            read_mapping=read_mapping
+        ) for key, pos in grouped_data.items()
     )
     
-    for position_updates in results:
-        for read_name, new_pos in position_updates.items():
+    for read_updates in results:
+        for read_name, pos in read_updates.items():
             if kept_frags[read_name]['strand'] == '-':
-                kept_frags[read_name]['end'] = new_pos
+                kept_frags[read_name]['end'] = pos
             else:
-                kept_frags[read_name]['start'] = new_pos
+                kept_frags[read_name]['start'] = pos
     
     return kept_frags

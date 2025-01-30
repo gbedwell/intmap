@@ -1,43 +1,26 @@
+import numpy as np
+import faiss
+
 def get_expected_data():
-    kmer_index = {
-        hash('AAATG'): {('chr1', 100, '+')},
-        hash('ATGCG'): {('chr1', 100, '+')},
-        hash('GCGTA'): {('chr2', 200, '-'), ('chr1', 100, '+')},
-        hash('GTAGC'): {('chr2', 200, '-'), ('chr1', 100, '+')},
-        hash('AGCGT'): {('chr2', 200, '-'), ('chr1', 100, '+')},
-        hash('CGTGG'): {('chr2', 200, '-'), ('chr1', 100, '+')},
-        hash('TGGCT'): {('chr1', 100, '+')}
-    }
+    n_reads = 3
+    n_kmers = 6  # len_diff + 1
     
-    position_groups = {
-        ('chr1', 100, '+'): [
-            {
-                'read_name': 'read1',
-                'chrom': 'chr1',
-                'start': 100,
-                'end': 115,
-                'strand': '+',
-                'seq1': 'AAATGCGTAGCGTGGC'
-            },
-            {
-                'read_name': 'read2',
-                'chrom': 'chr1',
-                'start': 100,
-                'end': 116,
-                'strand': '+',
-                'seq1': 'AAATGCGTAGCGTGGCT'
-            }
-        ],
-        ('chr2', 200, '-'): [
-            {
-                'read_name': 'read3',
-                'chrom': 'chr2',
-                'end': 200,
-                'start': 185,
-                'strand': '-',
-                'seq1': 'GCGTAGCGTGGC'
-            }
-        ]
-    }
+    # Create expected vectors
+    vectors = np.zeros((n_reads, n_kmers), dtype=np.float32)
+    vectors = vectors / np.linalg.norm(vectors)
     
-    return kmer_index, position_groups
+    # Create position array
+    positions = np.array([
+        ('chr1', 100, '+'),
+        ('chr1', 100, '+'),
+        ('chr2', 200, '-')
+    ], dtype=[('chrom', 'U20'), ('pos', np.int32), ('strand', 'U1')])
+    
+    # Create read names array
+    read_names = np.array(['read1', 'read2', 'read3'])
+    
+    # Build expected FAISS index
+    index = faiss.IndexFlatL2(n_kmers)
+    index.add(vectors)
+    
+    return index, positions, read_names

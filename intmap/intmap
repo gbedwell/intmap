@@ -226,10 +226,9 @@ parser.add_argument('-genome_fasta_index',
                     <genome_fasta>.fai for an uncompressed genome_fasta file, or 
                     <genome_fasta>.gzi for a bgzip compressed genome_fasta file.''',
                     default=None)
-parser.add_argument('-num_bits',
+parser.add_argument('-num_perm',
                     type=int, 
-                    help='''The number of bits in the generated minhash used 
-                    for fuzzy matching. Defaults to 128. Must be divisble by 8.''',
+                    help='''The number of permutations in the generated minhash fingerprint. Defaults to 128. Must be divisble by 8.''',
                     default=128)
 parser.add_argument('-token_size',
                     type=int, 
@@ -248,26 +247,20 @@ parser.add_argument('-seq_sim',
 parser.add_argument('-misprime_mismatch',
                     type=int, 
                     help='''The number of mismatches allowed when searching for mispriming. 
-                    Set to -1 to skip this step. 
-                    Defaults to -1.''',
-                    default=-1)
-parser.add_argument('-kmer_size',
+                    Set to -1 to omit this step. 
+                    Defaults to 2.''',
+                    default=2)
+parser.add_argument('-min_count',
                     type=int, 
-                    help='''The size of k-mers to use for sequence comparison.  
-                    Defaults to 20.''',
-                    default=20)
-parser.add_argument('-kmer_step',
-                    type=int, 
-                    help='''The step size between k-mers.  
-                    Defaults to 5.''',
-                    default=5)
-parser.add_argument('-count_threshold',
-                    type=int, 
-                    help='''The required number of fragments originating at a certain position 
-                    to call that position the origin position of sites within len_diff.   
+                    help='''The minimum number of sites required to define a particular integration site as abundant.    
                     Defaults to 10.''',
                     default=10)
-parser.add_argument('--no_verify', '-no_verify',
+parser.add_argument('-count_fc',
+                    type=int, 
+                    help='''The fold-change between abundant sites required to consider them the same.     
+                    Defaults to 2.''',
+                    default=2)
+parser.add_argument('--reassign_mm', '-reassign_mm',
                     help='''Boolean.
                     Whether or not to try to reassign multimapping reads based on 
                     concordance with uniquely mapping reads and similar multimapping reads.''',
@@ -480,8 +473,8 @@ if __name__ == "__main__":
             parser.error('frag_ratio must be >= 1.')
         if args.min_frag_len < 20:
             parser.error('min_frag_len must be >= 20.')
-        if args.num_bits % 8 != 0:
-            parser.error('num_bits must be a multiple of 8.')
+        if args.num_perm % 8 != 0:
+            parser.error('num_perm must be a multiple of 8.')
         if args.token_size < 2:
             parser.error('token_size must be >= 2.')
         if args.match_after < 0:
@@ -511,7 +504,9 @@ if __name__ == "__main__":
                             linker5_error_rate = args.ltr5_error_rate,
                             ltr1_primer = args.ltr1_primer, 
                             ltr5 = args.ltr5, 
-                            linker5 = args.linker5)
+                            linker5 = args.linker5,
+                            ltr3_error_rate = args.ltr3_error_rate, 
+                            linker3_error_rate = args.linker3_error_rate)
         
         align.check_genome_idx(args.bt2_idx_dir, args.bt2_idx_name)
         align.check_genome_idx(args.v_idx_dir, args.v_idx_name)
@@ -574,25 +569,26 @@ if __name__ == "__main__":
 
         if args.no_mm is False:
             print('Keep multimapping reads: True')
-            print(f'Multimapping hash length: {args.num_bits} bits')
+            print(f'Multimapping hash length: {args.num_perm} permutations')
             print(f'Multimapping token size: {args.token_size} bp')
             print(f'Multimapping hash similarity threshold: {args.mm_hash_similarity}')
             print(f'Multimapping sequence matching threshold: {args.seq_sim}')
-            print(f'Multimapping k-mer size: {args.kmer_size} bp')
-            print(f'Multimapping k-mer step: {args.kmer_step} bp')
-            if args.no_verify:
-                print(f'Verify multimapping read positions: False')
+            print(f'Multimapping k-mer size: {args.min_frag_len - args.len_diff} bp')
+            if args.reassign_mm:
+                print(f'Multimapping read reassignment: True')
             else:
-                print(f'Verify multimapping read positions: True')
+                print(f'Multimapping read reassignment: False')
         else:
             print('Keep multimapping reads: False')
         
         if args.misprime_mismatch >= 0:
+            print('Look for mispriming: True')
             print(f'Allowed mispriming mismatches: {args.misprime_mismatch} bp')
         else:
             print('Look for mispriming: False')
         
-        print(f'Collapse count threshold: {args.count_threshold} sites')
+        print(f'Minimum site count threshold: {args.min_count} sites')
+        print(f'Count fold-change: {args.count_fc}')
         
         print('\n')
         
@@ -730,7 +726,7 @@ if __name__ == "__main__":
                     'linker_umi': read1_info['linker_umi'],
                     'seq1': read1_info['sequence'], 
                     'seq2': read2_info['sequence'],
-                    'multi': (True if (read1_info['multimapping'] or read2_info['multimapping']) else False),
+                    'multi': (True if read1_info['multimapping'] else False),
                     'mean_qual': -10 * math.log10(combined_qual),
                     'ltr_match': read1_info['ltr_match'],
                     'linker_match': read1_info['linker_match'],
@@ -884,7 +880,7 @@ if __name__ == "__main__":
                         string = (value['seq1'] 
                                     if clean.seq_similarity(value['seq1'], crop.revcomp(value['seq2'])) >= args.seq_sim 
                                     else value['seq1'] + value['seq2']), 
-                        num_bits = args.num_bits,
+                        num_perm = args.num_perm,
                         token_size = args.token_size) 
                     for key, value in multi_exact_kept.items())
 
@@ -892,12 +888,14 @@ if __name__ == "__main__":
                     multi_exact_kept[key] = updated_value
 
                 del multi_exact_hashed
+                
+                kmer_size = args.min_frag_len - args.len_diff
 
                 hash_distances, hash_indices = get_nn(input_dict = multi_exact_kept, 
-                                                        num_bits = args.num_bits,
+                                                        num_perm = args.num_perm,
                                                         nthr = args.nthr,
                                                         len_diff = args.len_diff,
-                                                        k = args.kmer_size)
+                                                        k = kmer_size)
 
                 print('Grouping similar hashes...', flush = True)
                 mm_solo, mm_groups = group_similar_hashes(
@@ -905,7 +903,7 @@ if __name__ == "__main__":
                     hash_indices = hash_indices, 
                     nthr = args.nthr,
                     sensitivity = args.mm_hash_similarity,
-                    num_bits = args.num_bits,
+                    num_perm = args.num_perm,
                     input_dict = multi_exact_kept
                     )
                     
@@ -934,20 +932,19 @@ if __name__ == "__main__":
                 mm_kept_dict.update(multi_fuzzy_kept)
                 dup_dict.update(multi_fuzzy_dup)
                 
-                if not args.no_verify:
-                    print('Verifying multimapping read positions...', flush = True)
+                if args.reassign_mm:
+                    print('Reassigning multimapping read positions...', flush = True)
                     verified_kept_dict = clean.verify_mm_positions(
                         mm_kept_dict = mm_kept_dict, 
                         um_kept_dict = kept_dict, 
                         seq_sim = args.seq_sim, 
                         nthr = args.nthr, 
                         len_diff = args.len_diff,
-                        k = args.kmer_size, 
-                        step = args.kmer_step
+                        k = kmer_size
                         )
                     
                     if len(verified_kept_dict) != len(mm_kept_dict):
-                        raise Exception('Error in verifying multimapping read positions.')
+                        raise Exception('Error in reassigning multimapping read positions.')
                 else:
                     verified_kept_dict = mm_kept_dict
 
@@ -1016,7 +1013,8 @@ if __name__ == "__main__":
                 kept_frags = kept_dict,
                 len_diff = args.len_diff,
                 nthr = args.nthr,
-                threshold = args.count_threshold
+                min_count = args.min_count,
+                count_fc = args.count_fc
                 )
             
             final_end = time.time()

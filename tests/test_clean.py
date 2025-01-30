@@ -5,7 +5,6 @@ from intmap.clean import cluster_entries_by_umis, build_umi_networks, traverse_u
 from intmap.clean import multi_exact_matches
 from intmap.clean import verify_sequence_groups
 from intmap.clean import multi_fuzzy_matches
-from intmap.clean import build_kmer_index
 from intmap.clean import group_mm_sequences
 from intmap.clean import build_position_based_index
 from intmap.clean import compare_to_um
@@ -13,6 +12,8 @@ from intmap.clean import assign_mm_group
 from intmap.clean import verify_mm_positions
 from .conftest import load_test_data
 import random
+import numpy as np
+import faiss
 
 def test_unique_exact_matches():
     input_data, expected = load_test_data('clean', 'unique_exact_matches')
@@ -120,32 +121,32 @@ def test_multi_fuzzy_matches():
     assert kept == expected['kept']
     assert dup == expected['dup']
     
-def test_build_kmer_index():
-    sequences = [
-        "AAATGCGTAGCGTGGC",
-        "TGCGTAGCGTGGCGAT",
-        "GCGTAGCGTGGC"
-    ]
+# def test_build_kmer_index():
+#     sequences = [
+#         "AAATGCGTAGCGTGGC",
+#         "TGCGTAGCGTGGCGAT",
+#         "GCGTAGCGTGGC"
+#     ]
     
-    kmer_index = build_kmer_index(sequences, k=5, step=2)
-    kmer_dict = dict(kmer_index)
+#     kmer_index = build_kmer_index(sequences, k=5, step=2)
+#     kmer_dict = dict(kmer_index)
     
-    expected = {
-        hash('AAATG'): {0}, 
-        hash('ATGCG'): {0}, 
-        hash('GCGTA'): {0, 2}, 
-        hash('GTAGC'): {0, 2}, 
-        hash('AGCGT'): {0, 2}, 
-        hash('CGTGG'): {0, 2}, 
-        hash('TGCGT'): {1}, 
-        hash('CGTAG'): {1}, 
-        hash('TAGCG'): {1}, 
-        hash('GCGTG'): {1}, 
-        hash('GTGGC'): {1}, 
-        hash('GGCGA'): {1}
-    }
+#     expected = {
+#         hash('AAATG'): {0}, 
+#         hash('ATGCG'): {0}, 
+#         hash('GCGTA'): {0, 2}, 
+#         hash('GTAGC'): {0, 2}, 
+#         hash('AGCGT'): {0, 2}, 
+#         hash('CGTGG'): {0, 2}, 
+#         hash('TGCGT'): {1}, 
+#         hash('CGTAG'): {1}, 
+#         hash('TAGCG'): {1}, 
+#         hash('GCGTG'): {1}, 
+#         hash('GTGGC'): {1}, 
+#         hash('GGCGA'): {1}
+#     }
     
-    assert kmer_dict == expected
+#     assert kmer_dict == expected
     
 def test_group_mm_sequences():
     test_group = [
@@ -155,7 +156,7 @@ def test_group_mm_sequences():
         {'read_name': 'read4', 'seq1': 'TACGTACGTACGT', 'count': 1}
     ]
 
-    subgroups1 = group_mm_sequences(test_group, seq_sim=0.8, k=5, step=1, len_diff=5)
+    subgroups1 = group_mm_sequences(test_group, seq_sim=0.8, k=5, len_diff=5)
 
     assert len(subgroups1) == 2
     
@@ -164,33 +165,41 @@ def test_group_mm_sequences():
     assert set(['GCGTAGCGTGGC', 'AAATGCGTAGCGTGGC', 'TGCGTAGCGTGGC']) in group_seqs1
     assert set(['TACGTACGTACGT']) in group_seqs1
     
-    subgroups2 = group_mm_sequences(test_group, seq_sim=0.8, k=5, step=2, len_diff=5)
-
-    # read2 and read3 share no exact k-mer matches when step=2.
-    assert len(subgroups2) == 3
-    
-    # Verify each group contains the expected sequences
-    group_seqs2 = [set(read['seq1'] for read in group) for group in subgroups2]
-    assert set(['GCGTAGCGTGGC', 'AAATGCGTAGCGTGGC']) in group_seqs2
-    assert set(['TACGTACGTACGT']) in group_seqs2
-    assert set(['TGCGTAGCGTGGC']) in group_seqs2
-    
 from tests.data.clean.build_position_based_index.test_data import get_expected_data
 
 def test_build_position_based_index():
     input_data, _ = load_test_data('clean', 'build_position_based_index')
-    expected_kmer_index, expected_position_groups = get_expected_data()
+    expected_index, expected_positions, expected_reads = get_expected_data()
     
-    kmer_index, position_groups = build_position_based_index(
+    index, positions, read_names = build_position_based_index(
         um_kept_dict=input_data,
         k=5,
-        step=2
+        len_diff=5,
+        nthr=1
     )
     
-    assert kmer_index == expected_kmer_index
-    assert position_groups == expected_position_groups
+    # Compare index contents
+    D1, I1 = index.search(index.reconstruct_n(0, index.ntotal), index.ntotal)
+    D2, I2 = expected_index.search(expected_index.reconstruct_n(0, expected_index.ntotal), expected_index.ntotal)
+    
+    assert np.array_equal(D1, D2)
+    assert np.array_equal(I1, I2)
+    assert np.array_equal(positions, expected_positions)
+    assert np.array_equal(read_names, expected_reads)
     
 def test_compare_to_um():
+    um_kept_dict = {
+        "um_read1": {
+            "read_name": "um_read1",
+            "seq1": "GCGTAGCGTGGC",
+            "strand": "-",
+            "start": 185,
+            "end": 200,
+            "chrom": "chr2"
+        }
+    }
+        
+    # Test input group
     group = [
         {
             "read_name": "mm_read1",
@@ -203,14 +212,7 @@ def test_compare_to_um():
         }
     ]
     
-    um_index = {
-        hash('GCGTA'): {('chr2', 200, '-')},
-        hash('GTAGC'): {('chr2', 200, '-')},
-        hash('AGCGT'): {('chr2', 200, '-')},
-        hash('CGTGG'): {('chr2', 200, '-')},
-        hash('TGGCT'): {('chr2', 200, '-')}
-    }
-    
+    # Test position groups
     position_groups = {
         ("chr2", 200, "-"): [
             {
@@ -223,6 +225,7 @@ def test_compare_to_um():
         ]
     }
     
+    # Expected output
     expected = [
         {
             "read_name": "mm_read1",
@@ -236,13 +239,19 @@ def test_compare_to_um():
         }
     ]
     
+    index, positions, reads = build_position_based_index(
+        um_kept_dict, k=5, len_diff=5, nthr=1
+        )
+    
     result = compare_to_um(
-        group=group,
-        um_index=um_index,
-        position_groups=position_groups,
+        mm_group=group,
+        um_index=index,
+        um_positions=positions,
+        um_read_names=reads,
+        um_kept_dict=um_kept_dict,
         seq_sim=0.8,
         k=5,
-        step=2
+        len_diff=5
     )
     
     assert result == expected
@@ -306,7 +315,6 @@ def test_verify_mm_positions():
         seq_sim=0.8,
         nthr=1,
         k = 5,
-        step = 2,
         len_diff = 5
     )
     

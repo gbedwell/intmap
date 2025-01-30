@@ -8,6 +8,7 @@ import math
 import gzip
 import os
 import numpy as np
+import glob
 
 TEST_DATA_DIR = "tests/data/crop"
 os.makedirs(TEST_DATA_DIR, exist_ok = True)
@@ -86,9 +87,26 @@ def test_crop_perfect_and_mismatch():
     with gzip.open(args.r1) as f1, gzip.open(args.r2) as f2:
         chunk1 = [line.decode() for line in f1.readlines()]
         chunk2 = [line.decode() for line in f2.readlines()]
-        cropped_reads1, cropped_reads2 = process_reads_parallel(chunk1, chunk2, patterns, params, is_zipped, out_nm)
+        process_reads_parallel(
+            chunk1, chunk2, patterns, params, is_zipped, out_nm, 
+            processed_directory = f'{TEST_DATA_DIR}', chunk_num = 1
+            )
+        
+    r1_tmp = glob.glob(f'{TEST_DATA_DIR}/out_nm_*_R1_tmp.fq.gz')[0]
+    r2_tmp = glob.glob(f'{TEST_DATA_DIR}/out_nm_*_R2_tmp.fq.gz')[0]
+
+    with gzip.open(r1_tmp) as f1, gzip.open(r2_tmp) as f2:
+        cropped_reads1 = [line.decode() for line in f1.readlines()]
+        cropped_reads2 = [line.decode() for line in f2.readlines()]
+        
+    for tmp_file in glob.glob(f'{TEST_DATA_DIR}/*_tmp.fq.gz'):
+        os.remove(tmp_file)
     
     # Verify results
-    assert len(cropped_reads1) == 2, "Should find both reads"
-    assert cropped_reads1[0]['seq'] == "AAAAGTCTAGCTAG", "Perfect match sequence incorrect"
-    assert cropped_reads1[1]['seq'] == "AAAAGTCTAGCTAG", "Mismatch sequence incorrect"
+    num_reads = len(cropped_reads1) // 4
+    assert num_reads == 2, "Should find both reads"
+
+    # Check sequence lines specifically (every 2nd line)
+    sequences = cropped_reads1[1::4]
+    assert sequences[0] == "AAAAGTCTAGCTAG\n", "Perfect match sequence incorrect"
+    assert sequences[1] == "AAAAGTCTAGCTAG\n", "Mismatch sequence incorrect"
