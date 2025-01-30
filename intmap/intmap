@@ -665,7 +665,7 @@ if __name__ == "__main__":
         frags_out = os.path.join(processed_dir, f'{args.nm}_fragments.bed.gz')
         sites_out = os.path.join(processed_dir, f'{args.nm}_sites.bed.gz')
         bc_out = os.path.join(processed_dir, f'{args.nm}_summary.txt.gz')
-        counts_out = os.path.join(processed_dir, f'{args.nm}_unique_sites.bed.gz')
+        counts_out = os.path.join(processed_dir, f'{args.nm}_sites_unique.bed.gz')
         out_bam = os.path.join(processed_dir, f'{args.nm}_aln.bam')
         out_dup = os.path.join(processed_dir, f'{args.nm}_duplicates.json.gz')
         out_mp = os.path.join(processed_dir, f'{args.nm}_misprimed.fa.gz')
@@ -1159,7 +1159,7 @@ if __name__ == "__main__":
                 '{}_sites.bed.gz'.format(args.nm): subdirs[3],
                 '{}_summary.txt.gz'.format(args.nm): subdirs[2],
                 '{}_*_cropped.fq.gz'.format(args.nm): subdirs[1],
-                '{}_unique_sites.bed.gz'.format(args.nm): subdirs[3],
+                '{}_sites_unique.bed.gz'.format(args.nm): subdirs[3],
                 '{}_misprimed.fa.gz'.format(args.nm): subdirs[4],
                 '{}_duplicates.json.gz'.format(args.nm): subdirs[4]
                 }
