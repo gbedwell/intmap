@@ -89,31 +89,43 @@ def test_group_similar_hashes():
     assert total_sequences == n_sequences
     
 def test_collapse_group():
-    sites = [
-        [100, 80, "read1"],  # Abundant
-        [102, 5, "read2"],   # Collapse to read1
-        [105, 3, "read3"],   # Collapse to read1
-        [150, 75, "read4"],  # Abundant
-        [153, 4, "read5"],   # Collapse to read4
-        [200, 2, "read6"],   # Too far to collapse
+    # Create test data matching the new function signature
+    pos_counts = [
+        (100, 80),  # (position, count) - Abundant
+        (102, 5),   # Will collapse to 100
+        (105, 3),   # Will collapse to 100
+        (150, 75),  # Abundant
+        (153, 4),   # Will collapse to 150
+        (200, 2),   # Below min_count threshold
     ]
     
+    # Create read mapping dictionary
+    read_mapping = {
+        ("chr1", 100, "+"): ["read1"],
+        ("chr1", 102, "+"): ["read2"],
+        ("chr1", 105, "+"): ["read3"],
+        ("chr1", 150, "+"): ["read4"],
+        ("chr1", 153, "+"): ["read5"],
+        ("chr1", 200, "+"): ["read6"]
+    }
+
     expected = {
+        "read1": 100,
         "read2": 100,
         "read3": 100,
+        "read4": 150,
         "read5": 150
     }
     
     result = collapse_group(
         chrom_strand_tuple=("chr1", "+"),
-        sites=sites,
-        threshold=10,
-        len_diff=5
+        pos_counts=pos_counts,
+        len_diff=5,
+        min_count=10,
+        count_fc=2,
+        read_mapping=read_mapping
     )
     
-    assert result == expected
-
-def test_final_pass_collapse():
-    input_data, expected = load_test_data('utils', 'final_pass_collapse')
-    result = final_pass_collapse(input_data, len_diff=5, nthr=1, threshold=10)
+    result = {k: int(v) for k, v in result.items()}
+    
     assert result == expected

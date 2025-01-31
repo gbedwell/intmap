@@ -32,7 +32,7 @@ def check_executable(path, ex_name):
 # Align cropped reads
 def align_global(bt2_path, sam_path, bt2_idx_dir, bt2_idx_name, 
                 file1, file2, out_nm, min_frag_len, max_frag_len, nthr,
-                v_idx_dir, v_idx_name):
+                v_idx_dir, v_idx_name, aln_seed_len, aln_seed_mismatch):
     
     bt2_idx = f'{bt2_idx_dir}/{bt2_idx_name}'
     
@@ -44,11 +44,10 @@ def align_global(bt2_path, sam_path, bt2_idx_dir, bt2_idx_name,
     nonv_single = out_nm + '_non_viral_single.fq'
     final_out = out_nm + '_aln.bam'
     index_out = out_nm + '_aln.bai'
-    
-    seed_len = 22
-    
-    v_aln_cmd = (f'{bt2_path} --end-to-end -x {v_idx} -1 {file1} -2 {file2} -p {nthr} -I {min_frag_len} -X {max_frag_len} '
-                    f'-L {seed_len} -N 0 -D 20 -R 3 -i S,1,0.50 --sam-append-comment --no-mixed --no-discordant | ')
+
+    v_aln_cmd = (f'{bt2_path} --end-to-end -x {v_idx} -1 {file1} -2 {file2} -p {nthr} ' 
+                    f'-I {min_frag_len} -X {max_frag_len} -L {aln_seed_len} -N {aln_seed_mismatch} '
+                    f'-D 20 -R 3 -i S,1,0.50 --sam-append-comment --no-mixed --no-discordant | ')
     # v_aln_cmd = (f'{bwa_path} mem -t {nthr} -k {seed_len} -C  -L 1000,1000 {v_idx} {file1} {file2} | ')
     rm_v_cmd1 = f'{sam_path} view -@ {nthr} -h -f 4 -b - | '
     rm_v_cmd2 = f'{sam_path} collate -O -@ {nthr} - | '
@@ -56,8 +55,9 @@ def align_global(bt2_path, sam_path, bt2_idx_dir, bt2_idx_name,
     
     remove_viral_cmd = v_aln_cmd + rm_v_cmd1 + rm_v_cmd2 + rm_v_cmd3
 
-    bt2_cmd1 = (f'{bt2_path} --end-to-end -x {bt2_idx} -1 {nonv_R1} -2 {nonv_R2} -p {nthr} -I {min_frag_len} -X {max_frag_len} '
-                f'-L {seed_len} -N 0 -D 20 -R 3 -i S,1,0.50 --sam-append-comment --no-mixed --no-discordant | ')
+    bt2_cmd1 = (f'{bt2_path} --end-to-end -x {bt2_idx} -1 {nonv_R1} -2 {nonv_R2} -p {nthr} '
+                f'-I {min_frag_len} -X {max_frag_len} -L {aln_seed_len} -N {aln_seed_mismatch} '
+                f'-D 20 -R 3 -i S,1,0.50 --sam-append-comment --no-mixed --no-discordant | ')
     # bwa_cmd1 = (f'{bwa_path} mem -t {nthr} -k {seed_len} -C  -L 1000,1000 {bwa_idx} {file1} {file2} | ')
     bt2_cmd2 = f'{sam_path} view -@ {nthr} -h -f 2 -F 2316 -b | '
     bt2_cmd3 = f'{sam_path} sort -@ {nthr} -o {final_out} -'

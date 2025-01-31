@@ -101,13 +101,24 @@ parser.add_argument('-sam_path',
                     default='samtools')
 parser.add_argument('-bt2_idx_dir',
                     type=str, 
-                    help='''The directory path holding the Bowtie2 genome index. 
+                    help='''The directory path holding the Bowtie2 genome index.
                     Note that this should not contain the index prefix.''',
                     required=True)
 parser.add_argument('-bt2_idx_name',
                     type=str, 
                     help='''The genome index prefix (e.g., hs1).''',
                     required=True)
+parser.add_argument('-aln_seed_len',
+                    type=int, 
+                    help='''The size of the seed during alignment. 
+                    Defaults to 22.''',
+                    default=22)
+parser.add_argument('-aln_seed_mismatch',
+                    type=int, 
+                    help='''The number of mismatches allowed in the seed during multiseed alignment. 
+                    See Bowtie2 documentation for more information. Can be 0 or 1. 
+                    Defaults to 0.''',
+                    default=0)
 parser.add_argument('-aln_mismatch_rate',
                     type=float, 
                     help='''The allowable mismatch rate in read alignment. 
@@ -473,6 +484,12 @@ if __name__ == "__main__":
             parser.error('frag_ratio must be >= 1.')
         if args.min_frag_len < 20:
             parser.error('min_frag_len must be >= 20.')
+        if args.aln_seed_len < 20:
+            parser.error('aln_seed_len must be >= 20.')
+        if args.aln_seed_len > args.min_frag_len:
+            parser.error('aln_seed_len must be <= min_frag_len.')
+        if args.aln_seed_mismatch != 0 and args.aln_seed_mismatch != 1:
+            parser.error('aln_seed_mismatch must be 0 or 1.')
         if args.num_perm % 8 != 0:
             parser.error('num_perm must be a multiple of 8.')
         if args.token_size < 2:
@@ -558,6 +575,9 @@ if __name__ == "__main__":
             
         print(f'Minimum fragment length: {args.min_frag_len} bp')
         print(f'Maximum fragment length: {args.max_frag_len} bp')
+        print(f'Alignment seed length: {args.aln_seed_len} bp')
+        if args.aln_seed_mismatch != 0:
+            print(f'Alignment seed mismatches: {args.aln_seed_mismatch}')
         print(f'Read 1 5\'-end alignment mismatches: {args.match_after} bp')
         print(f'Allowed alignment mismatch rate: {args.aln_mismatch_rate}')
         print(f'Allowed alignment indel rate: {args.aln_indel_rate}')
@@ -652,7 +672,9 @@ if __name__ == "__main__":
                             out_nm = os.path.join(processed_dir, clean_nm), 
                             nthr = args.nthr,
                             min_frag_len = args.min_frag_len,
-                            max_frag_len = args.max_frag_len)
+                            max_frag_len = args.max_frag_len,
+                            aln_seed_len = args.aln_seed_len,
+                            aln_seed_mismatch = args.aln_seed_mismatch)
         
         align_end = time.time()
         align_time = round((align_end - align_start), 3)
