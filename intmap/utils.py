@@ -10,8 +10,6 @@ from collections import defaultdict
 from joblib import Parallel, delayed
 from datasketch import MinHash
 import math
-from bisect import bisect_left, bisect_right
-from operator import itemgetter
 
 __all__ = [
     'zipped',
@@ -260,9 +258,7 @@ def final_pass_collapse(kept_frags, len_diff, nthr, min_count, count_fc):
     grouped_data = defaultdict(list)
     for pos, count in zip(unique_pos, counts):
         grouped_data[(pos['chrom'], pos['strand'])].append((pos['pos'], count))
-        
-    print(f'grouped_data: {grouped_data}')
-    
+
     results = Parallel(n_jobs=nthr)(
         delayed(collapse_group)(
             key, pos,
@@ -272,8 +268,6 @@ def final_pass_collapse(kept_frags, len_diff, nthr, min_count, count_fc):
             read_mapping=read_mapping
         ) for key, pos in grouped_data.items()
     )
-    
-    print(f'results: {results}')
     
     for read_updates in results:
         for read_name, pos in read_updates.items():
