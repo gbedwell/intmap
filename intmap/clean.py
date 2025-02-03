@@ -261,11 +261,6 @@ def multi_exact_matches(input_dict):
     
     return multi_exact_kept
 
-def chunk_groups(groups, nthr):
-    n = max(1, math.ceil(len(groups) / nthr))
-    for i in range(0, len(groups), n):
-        yield groups[i:i + n]
-
 def verify_sequence_groups(group, seq_sim):
     if len(group) <= 1:
         return [group]
@@ -406,7 +401,7 @@ def group_mm_sequences(group, seq_sim, len_diff, k=20):
     
     return subgroups
 
-def build_position_based_index(um_kept_dict, len_diff, nthr, k=20):
+def build_position_based_index(um_kept_dict, len_diff, nthr, k):
     n_reads = len(um_kept_dict)
     n_kmers = len_diff + 1
     k_mod = k - len_diff
@@ -502,7 +497,7 @@ def assign_mm_group(mm_group):
     
     if len(valid_positions) > 0:
         # Deterministic random choice based on position hash
-        position_strings = [f"{p[0]}_{p[1]}_{p[2]}_{p[3]}" for p in valid_positions]
+        position_strings = [f"{p[0]}_{p[1] if p[3] == '+' else p[2]}_{p[3]}" for p in valid_positions]
         seed_string = ','.join(sorted(position_strings)[:2])
         seed = int(hashlib.sha256(seed_string.encode('utf-8')).hexdigest(), 16) % (2**64)
         

@@ -88,9 +88,9 @@ def compile_patterns(ltr3, linker3, ltr5, linker5,
     linker3_errors = math.floor(len(linker3) * linker3_error_rate)
     linker5_errors = math.floor(len(linker5) * linker5_error_rate)
     
-    ltr_rc = revcomp(ltr5 + ltr3)[:12]
-    linker_rc = revcomp(linker5 + linker3)[:12]
-    rc_errors = 1
+    ltr_rc = revcomp(ltr5 + ltr3)[:15]
+    linker_rc = revcomp(linker5 + linker3)[:15]
+    rc_errors = 2
     
     return {
         'ltr': {

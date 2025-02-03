@@ -122,8 +122,8 @@ parser.add_argument('-aln_seed_mismatch',
 parser.add_argument('-aln_mismatch_rate',
                     type=float, 
                     help='''The allowable mismatch rate in read alignment. 
-                    Defaults to 0.2.''',
-                    default=0.2)
+                    Defaults to 0.25.''',
+                    default=0.25)
 parser.add_argument('-aln_indel_rate',
                     type=float, 
                     help='''The allowable indel rate in read alignment. 
@@ -190,8 +190,8 @@ parser.add_argument('-min_qual',
                     type=int, 
                     help='''The minimum acceptable average base quality score. 
                     Used to filter out reads with low-quality base calls. 
-                    Defaults to 20, corresponding to a ~1-percent error rate.''',
-                    default=20)
+                    Defaults to 10.''',
+                    default=10)
 parser.add_argument('-len_diff',
                     type=int, 
                     help='''The maximum allowed difference in fragment lengths for
@@ -200,9 +200,9 @@ parser.add_argument('-len_diff',
                     default=5)
 parser.add_argument('-umi_diff',
                     type=int, 
-                    help='''The maximum allowed difference between UMIs to consider them 
-                    the same. Used in fuzzy duplicate identification. Defaults to 4.''',
-                    default=4)
+                    help='''The maximum difference between UMIs to consider them 
+                    as possible duplicates. Defaults to 8.''',
+                    default=8)
 parser.add_argument('-v_idx_dir',
                     type=str, 
                     help='''The directory path holding the Bowtie2 virus genome index. 
@@ -276,6 +276,12 @@ parser.add_argument('--reassign_mm', '-reassign_mm',
                     Whether or not to try to reassign multimapping reads based on 
                     concordance with uniquely mapping reads and similar multimapping reads.''',
                     action='store_true')
+parser.add_argument('-k',
+                    type=int, 
+                    help='''The size of the k-mers used to reassign multimapping reads.     
+                    Defaults to 20. Must be <= min_frag_len - len_diff''',
+                    default=20)
+
 
 args = parser.parse_args()
 
@@ -498,6 +504,8 @@ if __name__ == "__main__":
             parser.error('match_after must be >= 0.')
         if args.len_diff > 10:
             parser.error('len_diff must be <= 10.')
+        if args.k > (args.min_frag_len - args.len_diff) or args.k < 10:
+            parser.error('k must be <= min_frag_len - len_diff and >= 10.')
         
         if args.genome_fasta:
             genome_compression = check_genome_compression(args.genome_fasta)
@@ -593,7 +601,7 @@ if __name__ == "__main__":
             print(f'Multimapping token size: {args.token_size} bp')
             print(f'Multimapping hash similarity threshold: {args.mm_hash_similarity}')
             print(f'Multimapping sequence matching threshold: {args.seq_sim}')
-            print(f'Multimapping k-mer size: {args.min_frag_len - args.len_diff} bp')
+            print(f'Multimapping k-mer size: {args.k} bp')
             if args.reassign_mm:
                 print(f'Multimapping read reassignment: True')
             else:
@@ -911,7 +919,7 @@ if __name__ == "__main__":
 
                 del multi_exact_hashed
                 
-                kmer_size = args.min_frag_len - args.len_diff
+                kmer_size = args.k
 
                 hash_distances, hash_indices = get_nn(input_dict = multi_exact_kept, 
                                                         num_perm = args.num_perm,
