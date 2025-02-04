@@ -116,20 +116,21 @@ def compile_patterns(ltr3, linker3, ltr5, linker5,
     }
 
 # Add error rates to this to skip looking for non-perfect matches if error = 0.
-def find_pattern_match(seq, patterns, pattern_type):
+def find_pattern_match(seq, patterns, pattern_type, no_error):
     # seq = seq.decode()
     
     match = patterns[pattern_type]['perfect'].search(seq)
     if match:
         return match
     
-    match = patterns[pattern_type]['mismatch'].search(seq)
-    if match:
-        return match
-    
-    match = patterns[pattern_type]['indel'].search(seq)
-    if match:
-        return match
+    if not no_error:
+        match = patterns[pattern_type]['mismatch'].search(seq)
+        if match:
+            return match
+        
+        match = patterns[pattern_type]['indel'].search(seq)
+        if match:
+            return match
     
     return None
 
@@ -184,14 +185,10 @@ def init_params(args):
     }
     
 def extract_umis(seq, pattern_match, umi_len, umi_offset, 
-                    umi_pattern = None, position = None, no_error = None):
+                    umi_pattern = None):
     if umi_len > 0:
-        if no_error:
-            start = position - umi_offset - umi_len
-            end = position - umi_offset
-        else:
-            start = pattern_match.start() - umi_offset - umi_len
-            end = pattern_match.start() - umi_offset
+        start = pattern_match.start() - umi_offset - umi_len
+        end = pattern_match.start() - umi_offset
         
         umi = seq[start:end]
         
@@ -255,37 +252,11 @@ def process_reads_parallel(chunk1, chunk2, patterns, params, is_zipped,
     no_error = False
     if (params['ltr5_error'] == 0 and params['linker5_error'] == 0 and
         params['ltr3_error'] == 0 and params['linker3_error'] == 0):
-
         no_error = True
-        
-        sequences1 = np.array(sequences1)
-        sequences2 = np.array(sequences2)
-        qualities1 = np.array(qualities1)
-        qualities2 = np.array(qualities2)
-        headers1 = np.array(headers1)
-        headers2 = np.array(headers2)
-        
-        ltr_positions = np.char.find(sequences1, ltr_pattern)
-        linker_positions = np.char.find(sequences2, linker_pattern)
-        
-        valid_mask = (ltr_positions >= 0) & (linker_positions >= 0)
-        
-        read1_pos = ltr_positions[valid_mask]
-        read2_pos = linker_positions[valid_mask]
-        
-        sequences1 = list(sequences1[valid_mask])
-        sequences2 = list(sequences2[valid_mask])
-        qualities1 = list(qualities1[valid_mask])
-        qualities2 = list(qualities2[valid_mask])
-        headers1 = list(headers1[valid_mask])
-        headers2 = list(headers2[valid_mask])
-    else:
-        ltr_positions = np.full(len(sequences1), -1)
-        linker_positions = np.full(len(sequences2), -1)
     
-    for i, ((seq1, qual1, head1, ltr_pos), 
-            (seq2, qual2, head2, linker_pos)) in enumerate(zip(zip(sequences1, qualities1, headers1, ltr_positions), 
-                                                            zip(sequences2, qualities2, headers2, linker_positions))):
+    for i, ((seq1, qual1, head1), 
+            (seq2, qual2, head2)) in enumerate(zip(zip(sequences1, qualities1, headers1), 
+                                                    zip(sequences2, qualities2, headers2))):
         
         if head1 != head2:
             raise ValueError(f"Read pair mismatch: {head1} != {head2}")
@@ -293,23 +264,15 @@ def process_reads_parallel(chunk1, chunk2, patterns, params, is_zipped,
         seq1_str = seq1
         seq2_str = seq2
         
-        if no_error is False:
-            ltr_pattern_match = find_pattern_match(seq1_str, patterns, 'ltr')
-            linker_pattern_match = find_pattern_match(seq2_str, patterns, 'linker')
-        else:
-            ltr_pattern_match, linker_pattern_match = ltr_pattern, linker_pattern
+        ltr_pattern_match = find_pattern_match(seq1_str, patterns, 'ltr', no_error)
+        linker_pattern_match = find_pattern_match(seq2_str, patterns, 'linker', no_error)
         
         if ltr_pattern_match and linker_pattern_match:
+            start1 = ltr_pattern_match.end()
+            start2 = linker_pattern_match.end()
             
-            if no_error is False:
-                start1 = ltr_pattern_match.end()
-                start2 = linker_pattern_match.end()
-            else:
-                start1 = ltr_pos + len(ltr_pattern)
-                start2 = linker_pos + len(linker_pattern)
-            
-            linker_in_ltr = find_pattern_match(seq1_str, patterns, 'linker_rc')
-            ltr_in_linker = find_pattern_match(seq2_str, patterns, 'ltr_rc')
+            linker_in_ltr = find_pattern_match(seq1_str, patterns, 'linker_rc', False)
+            ltr_in_linker = find_pattern_match(seq2_str, patterns, 'ltr_rc', False)
 
             if linker_in_ltr and ltr_in_linker:
                 end1 = linker_in_ltr.start()
@@ -328,17 +291,12 @@ def process_reads_parallel(chunk1, chunk2, patterns, params, is_zipped,
                                     ltr_pattern_match, 
                                     params['ltr_umi_len'], 
                                     params['ltr_umi_offset'],
-                                    params['ltr_umi_pattern'],
-                                    position = ltr_pos if ltr_pos else None,
-                                    no_error = no_error
-                                    )
+                                    params['ltr_umi_pattern'])
             linker_umi = extract_umis(seq2_str, 
                                     linker_pattern_match,
                                     params['linker_umi_len'],
                                     params['linker_umi_offset'],
-                                    params['linker_umi_pattern'],
-                                    position = linker_pos if linker_pos else None,
-                                    no_error = no_error)
+                                    params['linker_umi_pattern'])
             
             if not ltr_umi or not linker_umi:
                 continue

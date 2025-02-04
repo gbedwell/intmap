@@ -69,23 +69,23 @@ parser.add_argument('-max_frag_len',
 parser.add_argument('-ltr3_error_rate',
                     type=float, 
                     help='''The acceptable error rate in the terminal LTR sequence. 
-                    Defaults to 0.''',
-                    default=0)
+                    Defaults to 0.1.''',
+                    default=0.1)
 parser.add_argument('-linker3_error_rate',
                     type=float, 
                     help='''The acceptable error rate in the terminal linker sequence.
-                    Defaults to 0.''',
-                    default=0)
+                    Defaults to 0.1.''',
+                    default=0.1)
 parser.add_argument('-ltr5_error_rate',
                     type=float, 
                     help='''The acceptable error rate in the LTR primer sequence. 
-                    Defaults to 0.''',
-                    default=0)
+                    Defaults to 0.1.''',
+                    default=0.1)
 parser.add_argument('-linker5_error_rate',
                     type=float, 
                     help='''The acceptable error rate in the linker primer sequence. 
-                    Defaults to 0.''',
-                    default=0)
+                    Defaults to 0.1.''',
+                    default=0.1)
 parser.add_argument('-crop_chunk_size',
                     type=int, 
                     help='''The chunk size for read cropping. 

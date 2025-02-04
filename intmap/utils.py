@@ -99,7 +99,7 @@ def apply_minhash(key, value, string, num_perm, token_size):
     for token in tokens:
         minhash.update(token.encode('utf8'))
     
-    minhash_values = np.array(minhash.hashvalues, dtype = np.uint64)
+    minhash_values = np.array(minhash.hashvalues, dtype = np.uint32)
     
     packed_bits = minhash_values.view(np.uint8)
     
@@ -116,8 +116,11 @@ def set_faiss_threads(nthr):
 def get_nn(input_dict, num_perm, nthr, len_diff, k):
     set_faiss_threads(nthr)
     
+    batch_size = 1000
     kmer_groups = defaultdict(dict)
     n_kmers = len_diff + 1
+    
+    dtype = np.int32
     
     for key, value in input_dict.items():
         seq = value['seq1']
@@ -129,27 +132,35 @@ def get_nn(input_dict, num_perm, nthr, len_diff, k):
     all_distances = []
     all_indices = []
     offset = 0
-    max_k = max(len(group) for group in kmer_groups.values())
     
-    for group in kmer_groups.values():
+    sorted_groups = sorted(kmer_groups.values(), key=len, reverse=True)
+    max_k = len(sorted_groups[0])
+    
+    for group in sorted_groups:
         minhash_list = [value['hash'] for value in group.values()]
         nb = len(minhash_list)
         if nb == 0:
             continue
-            
-        dim = num_perm * 64
+        dim = num_perm * 32
         db = np.array(minhash_list, dtype='uint8')
-        
         hash_index = faiss.IndexBinaryFlat(dim)
         hash_index.add(db)
         
-        distances, indices = hash_index.search(db, k = max_k)
+        if nb < batch_size:
+            distances, indices = hash_index.search(db, k = max_k)
+            indices[indices != -1] += offset
+            offset += nb
+            all_distances.append(distances)
+            all_indices.append(indices)
+        else:
+            for i in range(0, nb, batch_size):
+                chunk = db[i:i + batch_size]
+                distances, indices = hash_index.search(chunk, k = max_k)
+                indices[indices != -1] += offset
+                offset += batch_size
         
-        indices[indices != -1] += offset
-        offset += nb
-        
-        all_distances.append(distances)
-        all_indices.append(indices)
+                all_distances.append(distances)
+                all_indices.append(indices)
     
     return (np.vstack(all_distances) if all_distances else np.array([]), 
             np.vstack(all_indices) if all_indices else np.array([]))

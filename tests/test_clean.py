@@ -150,7 +150,7 @@ def test_multi_fuzzy_matches():
     
 def test_group_mm_sequences():
     test_group = [
-        {'read_name': 'read1', 'seq1': 'AAATGCGTAGCGTGGC', 'count': 1},
+        {'read_name': 'read1', 'seq1': 'ATGCGTAGCGTGGCA', 'count': 1},
         {'read_name': 'read2', 'seq1': 'TGCGTAGCGTGGC', 'count': 1},
         {'read_name': 'read3', 'seq1': 'GCGTAGCGTGGC', 'count': 1},
         {'read_name': 'read4', 'seq1': 'TACGTACGTACGT', 'count': 1}
@@ -162,7 +162,7 @@ def test_group_mm_sequences():
     
     # Verify each group contains the expected sequences
     group_seqs1 = [set(read['seq1'] for read in group) for group in subgroups1]
-    assert set(['GCGTAGCGTGGC', 'AAATGCGTAGCGTGGC', 'TGCGTAGCGTGGC']) in group_seqs1
+    assert set(['GCGTAGCGTGGC', 'ATGCGTAGCGTGGCA', 'TGCGTAGCGTGGC']) in group_seqs1
     assert set(['TACGTACGTACGT']) in group_seqs1
     
 from tests.data.clean.build_position_based_index.test_data import get_expected_data

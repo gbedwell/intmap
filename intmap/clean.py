@@ -342,7 +342,7 @@ def multi_fuzzy_matches(groups, umi_diff, frag_ratio, nthr, seq_sim):
     
     return multi_fuzzy_kept, multi_fuzzy_dup
 
-def group_mm_sequences(group, seq_sim, len_diff, k=20):
+def group_mm_sequences(group, seq_sim, len_diff, k):
     sorted_group = sorted(group, key=lambda x: len(x['seq1']))
     seqs = [entry['seq1'] for entry in sorted_group]
     
@@ -350,7 +350,7 @@ def group_mm_sequences(group, seq_sim, len_diff, k=20):
     kmer_arrays = []
     for seq in seqs:
         max_k = len(seq) - k + 1
-        kmers = np.array([hash(seq[i:i+k]) for i in range(0, min(len_diff, max_k))])
+        kmers = np.array([hash(seq[i:i+k]) for i in range(0, max_k)])
         kmer_arrays.append(kmers)
     
     # Build vectorized index
@@ -369,7 +369,7 @@ def group_mm_sequences(group, seq_sim, len_diff, k=20):
     # Fast candidate identification using matrix multiplication
     shared_kmers = kmer_matrix @ kmer_matrix.T
     n_kmers_per_seq = np.array([len(kmers) for kmers in kmer_arrays])
-    min_shared = 1
+    min_shared = np.minimum.outer(n_kmers_per_seq, n_kmers_per_seq) // 3
     
     candidates = np.where(shared_kmers >= min_shared)
     
@@ -389,11 +389,17 @@ def group_mm_sequences(group, seq_sim, len_diff, k=20):
             if j not in processed:
                 shorter_seq = min(seqs[i], seqs[j], key=len)
                 longer_seq = max(seqs[i], seqs[j], key=len)
-                max_similarity = max(
-                    seq_similarity(shorter_seq, longer_seq[pos:(pos + len(shorter_seq))])
-                    for pos in range(len_diff + 1)
-                    )
-                if max_similarity >= seq_sim:
+                n_checks = len(longer_seq) - len(shorter_seq) + 1
+                similarities = [
+                    seq_similarity(
+                        shorter_seq,
+                        longer_seq[pos:(pos + len(shorter_seq))]
+                        )
+                    for pos in range(n_checks)
+                    ]
+                
+                mean_similarity = np.mean(similarities)
+                if mean_similarity >= seq_sim:
                     current_group.append(sorted_group[j])
                     processed.add(j)
                     
@@ -458,6 +464,7 @@ def compare_to_um(mm_group, um_index, um_positions, um_read_names,
                 if i + len(um_seq) <= len(longest_mm_seq)
             ]
             
+            # Modify max_similarity here.
             if similarities:
                 max_similarity = max(similarities)
                 if max_similarity >= seq_sim:
