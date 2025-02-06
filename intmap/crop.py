@@ -13,8 +13,6 @@ from concurrent.futures import ThreadPoolExecutor
 from itertools import tee, count
 from intmap.utils import *
 import numpy as np
-from suffix_trees import STree
-
 
 def check_crop_input(ltr3, linker3, ltr1_primer, ltr5, linker5,
                     contamination, ltr5_error_rate, linker5_error_rate,
