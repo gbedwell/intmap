@@ -13,6 +13,8 @@ from concurrent.futures import ThreadPoolExecutor
 from itertools import tee, count
 from intmap.utils import *
 import numpy as np
+from suffix_trees import STree
+
 
 def check_crop_input(ltr3, linker3, ltr1_primer, ltr5, linker5,
                     contamination, ltr5_error_rate, linker5_error_rate,
@@ -112,6 +114,12 @@ def compile_patterns(ltr3, linker3, ltr5, linker5,
             'perfect': regex.compile(linker_rc),
             'mismatch': regex.compile(f'({linker_rc}){{s<={rc_errors}}}'),
             'indel': regex.compile(f'({linker_rc}){{e<={rc_errors}}}')
+        },
+        'ltr_suffix': {
+            'perfect': str(ltr5 + ltr3)[-5:]
+        },
+        'linker_suffix': {
+            'perfect': str(linker5 + linker3)[-5:]
         }
     }
 
@@ -150,7 +158,6 @@ def find_pattern_match(seq, patterns, pattern_type, no_error):
 # def qual_to_array(qual_str, offset):
 #     return np.frombuffer(qual_str.encode(), dtype=np.int8) - offset
 
-# Cache frequently used values
 def init_params(args):    
     contam_patterns = None
     if args.c:
@@ -252,7 +259,7 @@ def process_reads_parallel(chunk1, chunk2, patterns, params, is_zipped,
     if (params['ltr5_error'] == 0 and params['linker5_error'] == 0 and
         params['ltr3_error'] == 0 and params['linker3_error'] == 0):
         no_error = True
-    
+
     for i, ((seq1, qual1, head1), 
             (seq2, qual2, head2)) in enumerate(zip(zip(sequences1, qualities1, headers1), 
                                                     zip(sequences2, qualities2, headers2))):
@@ -262,6 +269,11 @@ def process_reads_parallel(chunk1, chunk2, patterns, params, is_zipped,
             
         seq1_str = seq1
         seq2_str = seq2
+        
+        if not patterns['ltr_suffix']['perfect'] in seq1_str:
+            continue
+        if not patterns['linker_suffix']['perfect'] in seq2_str:
+            continue
         
         ltr_pattern_match = find_pattern_match(seq1_str, patterns, 'ltr', no_error)
         linker_pattern_match = find_pattern_match(seq2_str, patterns, 'linker', no_error)
@@ -308,10 +320,8 @@ def process_reads_parallel(chunk1, chunk2, patterns, params, is_zipped,
                         break
 
             if not toss and len(cropped_seq1) >= params['min_len'] and len(cropped_seq2) >= params['min_len']:
-                ltr_found = (ltr_pattern_match if isinstance(ltr_pattern_match, str) 
-                                else ltr_pattern_match.group())
-                linker_found = (linker_pattern_match if isinstance(linker_pattern_match, str) 
-                                else linker_pattern_match.group())
+                ltr_found = ltr_pattern_match.group()
+                linker_found = linker_pattern_match.group()
                     
                 new_header1 = (f'{head1}\tCO:Z:1:{out_nm}\t'
                                     f'RX:Z:{ltr_umi}-{linker_umi}\t'

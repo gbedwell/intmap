@@ -127,6 +127,8 @@ def get_nn(input_dict, num_perm, nthr, len_diff, k):
         current_kmer = seq[:k]
         kmers = [current_kmer]
         for i in range(2 * len_diff):
+            if i + k > len(seq):
+                break
             current_kmer = current_kmer[1:] + seq[i + k]
             kmers.append(current_kmer)
             
