@@ -7,9 +7,11 @@ import faiss
 from scipy.sparse import csr_matrix
 from scipy.sparse.csgraph import connected_components
 from collections import defaultdict
-from joblib import Parallel, delayed
 from datasketch import MinHash
 import math
+from concurrent.futures import ThreadPoolExecutor
+from pybloom_live import BloomFilter
+
 
 __all__ = [
     'zipped',
@@ -21,13 +23,12 @@ __all__ = [
     'set_faiss_threads',
     'apply_minhash',
     'get_nn',
-    'chunk_hashes',
     'group_similar_hashes',
     'extract_grouped_entries',
     'TRANS_TABLE',
     'revcomp',
     'collapse_group',
-    'final_pass_collapse'
+    'final_pass_collapse',
 ]
 
 TRANS_TABLE = bytes.maketrans(b"acgtumrwsykvhdbnACGTUMRWSYKVHDBN", 
@@ -124,8 +125,13 @@ def get_nn(input_dict, num_perm, nthr, len_diff, k):
     
     for key, value in input_dict.items():
         seq = value['seq1']
-        kmers = sorted([seq[i:i+k] for i in range(len(seq) - k + 1)])
-        selected_kmers = kmers[:n_kmers]
+        current_kmer = seq[:k]
+        kmers = [current_kmer]
+        for i in range(2 * len_diff):
+            current_kmer = current_kmer[1:] + seq[i + k]
+            kmers.append(current_kmer)
+            
+        selected_kmers = sorted(kmers)[:n_kmers]
         for kmer in selected_kmers:
             kmer_groups[kmer].update({key: value})
     
@@ -164,11 +170,6 @@ def get_nn(input_dict, num_perm, nthr, len_diff, k):
     
     return (np.vstack(all_distances) if all_distances else np.array([]), 
             np.vstack(all_indices) if all_indices else np.array([]))
-
-def chunk_hashes(distances, indices, nthr):
-    n = math.ceil(len(distances) / nthr)
-    for i in range(0, len(distances), n):
-        yield distances[i:i + n], indices[i:i + n]
 
 def group_similar_hashes(hash_distances, hash_indices, nthr, sensitivity, num_perm, input_dict):
     hamming_threshold = (num_perm * 64) * (1 - sensitivity)
@@ -269,16 +270,13 @@ def final_pass_collapse(kept_frags, len_diff, nthr, min_count, count_fc):
     grouped_data = defaultdict(list)
     for pos, count in zip(unique_pos, counts):
         grouped_data[(pos['chrom'], pos['strand'])].append((pos['pos'], count))
-
-    results = Parallel(n_jobs=nthr)(
-        delayed(collapse_group)(
-            key, pos,
-            min_count=min_count,
-            count_fc=count_fc,
-            len_diff=len_diff,
-            read_mapping=read_mapping
-        ) for key, pos in grouped_data.items()
-    )
+    
+    with ThreadPoolExecutor(max_workers=nthr) as executor:
+        results = list(executor.map(
+            lambda x: collapse_group(*x),
+            [(key, pos, min_count, count_fc, len_diff, read_mapping)
+        for key, pos in grouped_data.items()]
+            ))
     
     for read_updates in results:
         for read_name, pos in read_updates.items():

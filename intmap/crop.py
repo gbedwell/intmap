@@ -9,7 +9,7 @@ import gzip
 import io
 import math
 from collections import defaultdict
-from joblib import Parallel, delayed
+from concurrent.futures import ThreadPoolExecutor
 from itertools import tee, count
 from intmap.utils import *
 import numpy as np
@@ -115,7 +115,6 @@ def compile_patterns(ltr3, linker3, ltr5, linker5,
         }
     }
 
-# Add error rates to this to skip looking for non-perfect matches if error = 0.
 def find_pattern_match(seq, patterns, pattern_type, no_error):
     # seq = seq.decode()
     
@@ -144,7 +143,7 @@ def find_pattern_match(seq, patterns, pattern_type, no_error):
 #                 min_qual = min(min_qual, min(ord(c) for c in line.strip()))
 #             if i >= sample_size * 4:
 #                 break
-                
+
 #     return 64 if min_qual >= 64 else 33
 
 # # Vectorized quality score conversion
@@ -237,7 +236,7 @@ def fastq_writer(file, reads):
         with open_file(file, 'at') as f:
             for read in reads:
                 f.write(f"{read['name']}\n{read['seq']}\n+\n{read['qual']}\n")
-            
+
 def process_reads_parallel(chunk1, chunk2, patterns, params, is_zipped, 
                             out_nm, processed_directory, chunk_num):
     sequences1, qualities1, headers1 = process_fastq_chunk(chunk1, params, is_zipped)
@@ -335,6 +334,8 @@ def process_reads_parallel(chunk1, chunk2, patterns, params, is_zipped,
                     # 'qual': ''.join(chr(q + params['qual_offset']) for q in cropped_qual2)
                     'qual': cropped_qual2
                 })
+        else:
+            continue
     
     tmp_file1 = os.path.join(processed_directory,    
                             f'{out_nm}_{os.getpid()}_{chunk_num}_R1_tmp.fq.gz')
@@ -377,13 +378,13 @@ def crop(file1, file2, args, processed_directory, out_nm):
                                 params['ltr3_error'], params['linker3_error'],
                                 params['ltr5_error'], params['linker5_error'])
     
-    Parallel(n_jobs = params['nthr'])(
-        delayed(process_reads_parallel)(
-            chunk1, chunk2, patterns, params, is_zipped,
-            out_nm, processed_directory, chunk_num
-            )
-        for chunk_num, (chunk1, chunk2) in enumerate(zip(chunks1, chunks2))
-    )
+    with ThreadPoolExecutor(max_workers=params['nthr']) as executor:
+        executor.map(
+            lambda x: process_reads_parallel(*x),
+            [(chunk1, chunk2, patterns, params, is_zipped, out_nm,
+                processed_directory, chunk_num)
+            for chunk_num, (chunk1, chunk2) in enumerate(zip(chunks1, chunks2))]
+        )
 
     inputs = [
         (out_file1, os.path.join(processed_directory, f"{out_nm}_*_R1_tmp.fq.gz")),
@@ -391,15 +392,11 @@ def crop(file1, file2, args, processed_directory, out_nm):
         ]
     
     op_sys = platform.system()
-    if op_sys != 'Darwin' and op_sys != 'Linux':
-        Parallel(n_jobs=2)(
-            delayed(concatenate_files)(outfile=outfile, pattern=pattern)
-            for outfile, pattern in inputs
-        )
-    else:
-        Parallel(n_jobs=2)(
-            delayed(concatenate_unix)(outfile=outfile, pattern=pattern)
-            for outfile, pattern in inputs
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        executor.map(
+            lambda x: concatenate_files(*x) if op_sys not in ('Darwin', 'Linux') 
+            else concatenate_unix(*x),
+            inputs
         )
         
     for pattern in [

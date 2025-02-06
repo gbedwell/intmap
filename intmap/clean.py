@@ -5,8 +5,6 @@ import numpy as np
 import random
 from itertools import chain, groupby, combinations
 from operator import itemgetter
-from joblib import Parallel, delayed
-import multiprocessing
 import pybktree
 import random
 import hashlib
@@ -14,6 +12,8 @@ import faiss
 from scipy.sparse import csr_matrix
 from scipy.sparse.csgraph import connected_components
 from intmap.utils import *
+from concurrent.futures import ThreadPoolExecutor
+
 
 # Calculate Hamming distance
 def hamming_distance(seq1, seq2):
@@ -271,7 +271,6 @@ def verify_sequence_groups(group, seq_sim):
     # Pre-compute sequences for all entries
     sequences = [(seq1_key(entry), seq2_key(entry)) for entry in group]
     
-    # Pre-compute concatenated sequences when needed
     compare_seqs = {}
     for i, (seq1, seq2) in enumerate(sequences):
         if seq_similarity(seq1, revcomp(seq2)) < seq_sim:
@@ -282,7 +281,6 @@ def verify_sequence_groups(group, seq_sim):
     subgroups = [[group[0]]]
     first_seqs = sequences[0]
     
-    # Use pre-computed sequences for comparisons
     for i, entry in enumerate(group[1:], 1):
         entry_seqs = sequences[i]
         compare_seq = compare_seqs.get(i, entry_seqs[0])
@@ -332,7 +330,8 @@ def multi_fuzzy_matches(groups, umi_diff, frag_ratio, nthr, seq_sim):
                 
         return kept_reads, dup_reads
 
-    results = Parallel(n_jobs = nthr)(delayed(process_group)(group) for group in groups)
+    with ThreadPoolExecutor(max_workers=nthr) as executor:
+        results = list(executor.map(process_group, groups))
     
     multi_fuzzy_kept = {}
     multi_fuzzy_dup = {}
@@ -545,19 +544,20 @@ def verify_mm_positions(mm_kept_dict, um_kept_dict, seq_sim, nthr, len_diff, k):
         )
         
     print(f'Processing multimapping read clusters...')
-    relocated_results = Parallel(n_jobs=nthr, prefer="threads")(
-        delayed(compare_to_um)(
-            mm_group = group, 
-            um_index = um_index, 
-            um_positions = um_positions, 
-            um_read_names = um_read_names, 
-            um_kept_dict = um_kept_dict, 
-            seq_sim = seq_sim, 
-            k = k, 
-            len_diff = len_diff
-            ) 
-        for group in subgroups
-    )
+    with ThreadPoolExecutor(max_workers=nthr) as executor:
+        relocated_results = list(executor.map(
+            lambda x: compare_to_um(
+                mm_group=x,
+                um_index=um_index,
+                um_positions=um_positions,
+                um_read_names=um_read_names,
+                um_kept_dict=um_kept_dict,
+                seq_sim=seq_sim,
+                k=k,
+                len_diff=len_diff
+            ),
+            subgroups
+        ))
     
     relocated_reads = {}
     remaining_groups = []
@@ -570,10 +570,11 @@ def verify_mm_positions(mm_kept_dict, um_kept_dict, seq_sim, nthr, len_diff, k):
             remaining_groups.append(subgroups[i])
 
     if remaining_groups:
-        reassigned_results = Parallel(n_jobs=nthr)(
-            delayed(assign_mm_group)(group) 
-            for group in remaining_groups
-            )
+        with ThreadPoolExecutor(max_workers=nthr) as executor:
+            reassigned_results = list(executor.map(
+                assign_mm_group,
+                remaining_groups
+            ))
         
         for group in reassigned_results:
             for read in group:
