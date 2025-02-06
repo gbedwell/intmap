@@ -10,7 +10,6 @@ from collections import defaultdict
 from datasketch import MinHash
 import math
 from concurrent.futures import ThreadPoolExecutor
-from pybloom_live import BloomFilter
 
 
 __all__ = [

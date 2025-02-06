@@ -314,8 +314,6 @@ if __name__ == "__main__":
     from scipy.sparse import csr_matrix
     from scipy.sparse.csgraph import connected_components
     from concurrent.futures import ThreadPoolExecutor
-    from pybloom_live import BloomFilter
-
     
     start_time = time.time()
 
