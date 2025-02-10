@@ -1,9 +1,10 @@
 import math
 import regex
 import pysam
-from intmap import crop
 import sys
 import numpy as np
+from intmap.utils import *
+
 
 # Read in BAM file and check R1 and R2 for
 # read name, location, and orientation.
@@ -57,7 +58,7 @@ def process_read(read, aln_mismatch_rate, aln_indel_rate, max_frag_len,
     cig_split = regex.findall('\\d+|\\D', cigar)
     if cig_split[1] != 'M':
         return None
-    if 'S' in cig_split:
+    if 'S' in cig_split: # Should never happen with end-to-end
         return None
         
     # Get MD tag. Used in a couple of places downstream.
@@ -135,7 +136,7 @@ def process_read(read, aln_mismatch_rate, aln_indel_rate, max_frag_len,
                 # Since BAM files report everything relative to the forward strand,
                 # sequences must be converted back to proper strand.
                 if strand == '-':
-                    seq = crop.revcomp(read.query_sequence)
+                    seq = revcomp(read.query_sequence)
                 else:
                     seq = read.query_sequence
 

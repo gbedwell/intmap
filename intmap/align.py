@@ -6,12 +6,13 @@ import subprocess
 # Make sure that the given genome index exists and is a bowtie2 index.
 # Adapted from UMAP run_bowtie.py
 def check_genome_idx(idx_dir, idx_name):
-    extensions = ['bt2', 'amb', 'ann', 'pac', 'sa', 'bwt']
+    # For BWA: ['amb', 'ann', 'pac', 'sa', 'bwt']
+    extensions = ['bt2']
     bt2_idx_files = [
         file for file in 
         os.listdir(idx_dir) if idx_name in file and any(file.endswith(ext) for ext in extensions)
         ]
-    if len(bt2_idx_files) < 6: # changed to 5 for BWA compatibility, Bowtie2 has 6 index files
+    if len(bt2_idx_files) < 6: # change to 5 for BWA compatibility
         raise ValueError("Given bowtie2 index does not exist.")
     
 # Make sure that the given bowtie2 and samtools exectuables exist.
@@ -57,9 +58,9 @@ def align_global(bt2_path, sam_path, bt2_idx_dir, bt2_idx_name,
 
     bt2_cmd1 = (f'{bt2_path} --end-to-end -x {bt2_idx} -1 {nonv_R1} -2 {nonv_R2} -p {nthr} '
                 f'-I {min_frag_len} -X {max_frag_len} -L {aln_seed_len} -N {aln_seed_mismatch} '
-                f'-D 20 -R 3 -i S,1,0.50 --sam-append-comment --no-mixed --no-discordant | ')
+                f'-D 20 -R 3 -i S,1,0.50 --sam-append-comment --no-mixed --no-discordant --no-unal | ')
     # bwa_cmd1 = (f'{bwa_path} mem -t {nthr} -k {seed_len} -C  -L 1000,1000 {bwa_idx} {file1} {file2} | ')
-    bt2_cmd2 = f'{sam_path} view -@ {nthr} -h -f 2 -F 2316 -b | '
+    bt2_cmd2 = f'{sam_path} view -@ {nthr} -h -f 2 -b | '
     bt2_cmd3 = f'{sam_path} sort -@ {nthr} -o {final_out} -'
     
     global_cmd = bt2_cmd1 + bt2_cmd2 + bt2_cmd3

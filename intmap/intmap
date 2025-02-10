@@ -275,6 +275,10 @@ parser.add_argument('-k',
                     help='''The size of the k-mers used to reassign multimapping reads.     
                     Defaults to 20. Must be <= min_frag_len - len_diff''',
                     default=20)
+parser.add_argument('--no_dedup', '-no_dedup',
+                    help='''Boolean.
+                    When True, the pipeline stops after alignment and QC.''',
+                    action='store_true')
 
 
 args = parser.parse_args()
@@ -304,12 +308,11 @@ if __name__ == "__main__":
     import hashlib
     import faiss
     import numpy as np
-    from itertools import chain, tee, count, groupby, combinations
+    from itertools import groupby
     from operator import itemgetter
     import json
     from datasketch import MinHash
     import pybktree
-    from bisect import bisect_left, bisect_right
     import random
     from scipy.sparse import csr_matrix
     from scipy.sparse.csgraph import connected_components
@@ -341,8 +344,8 @@ if __name__ == "__main__":
         parser.error('min_frag_len must be >= 20.')
     if args.aln_seed_len < 20:
         parser.error('aln_seed_len must be >= 20.')
-    if args.aln_seed_len > args.min_frag_len:
-        parser.error('aln_seed_len must be <= min_frag_len.')
+    # if args.aln_seed_len > args.min_frag_len:
+    #     parser.error('aln_seed_len must be <= min_frag_len.')
     if args.aln_seed_mismatch != 0 and args.aln_seed_mismatch != 1:
         parser.error('aln_seed_mismatch must be 0 or 1.')
     if args.num_perm % 8 != 0:
@@ -402,15 +405,6 @@ if __name__ == "__main__":
     print(f'5\' linker match error rate: {args.linker5_error_rate}')
     print(f'3\' linker match error rate: {args.linker3_error_rate}')
     print(f'FASTQ processing chunk size: {args.crop_chunk_size} reads')
-
-    if args.U3 is False:
-        print('Mapping end: U5')
-    else:
-        print('Mapping end: U3')
-        
-    print(f'TSD width: {args.tsd} bp')
-    
-    print('Round 1 LTR primer sequence:', args.ltr1_primer)
         
     if args.c is not None:
         print(f"Declared contamination: {', '.join(args.c)}")
@@ -432,39 +426,53 @@ if __name__ == "__main__":
     print(f'Minimum fragment length: {args.min_frag_len} bp')
     print(f'Maximum fragment length: {args.max_frag_len} bp')
     print(f'Alignment seed length: {args.aln_seed_len} bp')
+    
     if args.aln_seed_mismatch != 0:
         print(f'Alignment seed mismatches: {args.aln_seed_mismatch}')
-    print(f'Read 1 5\'-end alignment mismatches: {args.match_after} bp')
+
+    print(f'Allowed read 1 5\'-end alignment mismatches: {args.match_after} bp')
     print(f'Allowed alignment mismatch rate: {args.aln_mismatch_rate}')
     print(f'Allowed alignment indel rate: {args.aln_indel_rate}')
     print(f'Minimum alignment MAPQ score: {args.min_mapq}')
     print(f'Minimum average base quality score: {args.min_qual}')
-    print(f'Fuzzy length difference: {args.len_diff} bp')
-    print(f'Fuzzy low resolution UMI mismatches: {args.umi_diff} bp')
-    print(f'Duplicate count ratio: {args.frag_ratio}')
 
-    if args.no_mm is False:
-        print('Keep multimapping reads: True')
-        print(f'Multimapping hash length: {args.num_perm} permutations')
-        print(f'Multimapping token size: {args.token_size} bp')
-        print(f'Multimapping hash similarity threshold: {args.mm_hash_similarity}')
-        print(f'Multimapping sequence matching threshold: {args.seq_sim}')
-        print(f'Multimapping k-mer size: {args.k} bp')
-        if args.reassign_mm:
-            print(f'Multimapping read reassignment: True')
+    if args.no_dedup:
+        print(f'Stop after alignment and QC: True')
+    else:
+        if args.U3 is False:
+            print('Mapping end: U5')
         else:
-            print(f'Multimapping read reassignment: False')
-    else:
-        print('Keep multimapping reads: False')
-    
-    if args.misprime_mismatch >= 0:
-        print('Look for mispriming: True')
-        print(f'Allowed mispriming mismatches: {args.misprime_mismatch} bp')
-    else:
-        print('Look for mispriming: False')
-    
-    print(f'Minimum site count threshold: {args.min_count} sites')
-    print(f'Count fold-change: {args.count_fc}')
+            print('Mapping end: U3')
+            
+        print(f'TSD width: {args.tsd} bp')
+        
+        print(f'Fuzzy length difference: {args.len_diff} bp')
+        print(f'Fuzzy low resolution UMI mismatches: {args.umi_diff} bp')
+        print(f'Duplicate count ratio: {args.frag_ratio}')
+
+        if args.no_mm is False:
+            print('Keep multimapping reads: True')
+            print(f'Multimapping hash fingerprint length: {args.num_perm} hashes')
+            print(f'Multimapping token size: {args.token_size} bp')
+            print(f'Multimapping hash similarity threshold: {args.mm_hash_similarity}')
+            print(f'Multimapping sequence matching threshold: {args.seq_sim}')
+            print(f'Multimapping k-mer size: {args.k} bp')
+            if args.reassign_mm:
+                print(f'Multimapping read reassignment: True')
+            else:
+                print(f'Multimapping read reassignment: False')
+        else:
+            print('Keep multimapping reads: False')
+        
+        if args.misprime_mismatch >= 0:
+            print('Look for mispriming: True')
+            print('Round 1 LTR primer sequence:', args.ltr1_primer)
+            print(f'Allowed mispriming mismatches: {args.misprime_mismatch} bp')
+        else:
+            print('Look for mispriming: False')
+        
+        print(f'Minimum site count threshold: {args.min_count} sites')
+        print(f'Count fold-change: {args.count_fc}')
     
     print('\n')
     
@@ -577,6 +585,44 @@ if __name__ == "__main__":
     process_end = time.time()
     process_time = round((process_end - process_start), 3)
     print(f'{process_time} seconds elapsed', flush = True)
+
+    if args.no_dedup:
+        b2b_cmd1 = f'samtools sort -@ {args.nthr} -n -O bam {out_bam} | '
+        b2b_cmd2 = f'bedtools bamtobed -bedpe -mate1 -i - | '
+        b2b_cmd3 = '''awk 'BEGIN{OFS="\t"} {if($9=="-") print $1,$5,$3,$7,$8,$9; else print $1,$2,$6,$7,$8,$9}' | '''
+        b2b_cmd4 = f'sort -k1,1 -k2,2n -k3,3n | gzip > {frags_out}'
+        b2b_cmd = b2b_cmd1 + b2b_cmd2 + b2b_cmd3 + b2b_cmd4
+        subprocess.call(b2b_cmd, shell = True, stderr = subprocess.STDOUT)
+        
+        if not args.disorg:
+            data_types = ['alignments', 'cropped_reads', 'fragments']
+            subdirs = []
+            for i in data_types:
+                subdir = os.path.join(processed_dir, '{}'.format(i))
+                if not os.path.exists(subdir):
+                    os.makedirs(subdir)
+                subdirs.append(subdir)
+
+            file_mapping = {
+                '{}_aln.bai'.format(args.nm): subdirs[0],
+                '{}_aln.bam'.format(args.nm): subdirs[0],
+                '{}_fragments.bed.gz'.format(args.nm): subdirs[2],
+                '{}_*_cropped.fq.gz'.format(args.nm): subdirs[1]
+                }
+            
+            for pattern, target_dir in file_mapping.items():
+                for filepath in glob.glob(os.path.join(processed_dir, pattern)):
+                    shutil.move(filepath, target_dir)
+                    
+        end_time = time.time()
+        elapsed_time = round((end_time - start_time) / 60, 3)
+        print('\n', flush = True)
+        print('*** DONE with sample', args.nm, '***', flush = True)
+        print(f'Fragments mapped: {n_pairs_qc}', flush = True)
+        print(f'Total elapsed time: {elapsed_time}', 'minutes', flush = True)
+        print('\n', flush = True)
+
+        sys.exit()
     
     if n_pairs_qc == 0:
         n_mapped = 0

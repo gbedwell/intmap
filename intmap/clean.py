@@ -1,9 +1,9 @@
 import math
 from rapidfuzz.distance import Levenshtein
-from collections import defaultdict, deque, Counter
+from collections import defaultdict, deque
 import numpy as np
 import random
-from itertools import chain, groupby, combinations
+from itertools import groupby
 from operator import itemgetter
 import pybktree
 import random
@@ -13,7 +13,6 @@ from scipy.sparse import csr_matrix
 from scipy.sparse.csgraph import connected_components
 from intmap.utils import *
 from concurrent.futures import ThreadPoolExecutor
-
 
 # Calculate Hamming distance
 def hamming_distance(seq1, seq2):

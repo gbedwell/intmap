@@ -10,7 +10,6 @@ import io
 import math
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
-from itertools import tee, count
 from intmap.utils import *
 import numpy as np
 
@@ -268,10 +267,10 @@ def process_reads_parallel(chunk1, chunk2, patterns, params, is_zipped,
         seq1_str = seq1
         seq2_str = seq2
         
-        if not patterns['ltr_suffix']['perfect'] in seq1_str:
-            continue
-        if not patterns['linker_suffix']['perfect'] in seq2_str:
-            continue
+        # if not patterns['ltr_suffix']['perfect'] in seq1_str:
+        #     continue
+        # if not patterns['linker_suffix']['perfect'] in seq2_str:
+        #     continue
         
         ltr_pattern_match = find_pattern_match(seq1_str, patterns, 'ltr', no_error)
         linker_pattern_match = find_pattern_match(seq2_str, patterns, 'linker', no_error)
