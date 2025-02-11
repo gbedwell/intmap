@@ -316,7 +316,8 @@ if __name__ == "__main__":
     import random
     from scipy.sparse import csr_matrix
     from scipy.sparse.csgraph import connected_components
-    from concurrent.futures import ThreadPoolExecutor
+    import multiprocessing
+    from joblib import Parallel, delayed
     
     start_time = time.time()
 
@@ -714,11 +715,10 @@ if __name__ == "__main__":
         # Run unique_exact_matches() for each dictionary in list
         sorted_unique_all_split_list = sorted(unique_all_split_list, key=lambda x: len(x), reverse=True)
         
-        with ThreadPoolExecutor(max_workers=min(len(unique_all_split_list), args.nthr)) as executor:
-            ue_kept_list = list(executor.map(
-                clean.unique_exact_matches,
-                unique_all_split_list
-                ))
+        ue_kept_list = Parallel(n_jobs = min(len(unique_all_split_list), args.nthr))(
+                delayed(clean.unique_exact_matches)(
+                    input_dict = unique_all_split_list[entry]) 
+                for entry in range(len(sorted_unique_all_split_list)))
         
         del unique_all_split_list
         del sorted_unique_all_split_list
@@ -740,16 +740,13 @@ if __name__ == "__main__":
         print('Looking for unique fuzzy matches...', flush = True)
         sorted_ue_kept_list = sorted(ue_kept_list, key=lambda x: len(x), reverse=True)
         
-        with ThreadPoolExecutor(max_workers=min(len(sorted_ue_kept_list), args.nthr)) as executor:
-            uf_kept_list = list(executor.map(
-                lambda x: clean.unique_fuzzy_matches(
-                    input_dict=x,
-                    len_diff=args.len_diff,
-                    umi_diff=args.umi_diff,
-                    frag_ratio=args.frag_ratio
-                ),
-                sorted_ue_kept_list
-            ))
+        uf_kept_list = Parallel(n_jobs = min(len(sorted_ue_kept_list), args.nthr))(
+            delayed(clean.unique_fuzzy_matches)(
+                input_dict = sorted_ue_kept_list[entry], 
+                len_diff = args.len_diff, 
+                umi_diff = args.umi_diff, 
+                frag_ratio = args.frag_ratio) 
+            for entry in range(len(sorted_ue_kept_list)))
 
         unique_fuzzy_kept = {}
         unique_fuzzy_dup = {}
@@ -801,21 +798,17 @@ if __name__ == "__main__":
             del multi_all
 
             print('Hashing multimapping sequences for fuzzy matching...', flush = True)
-
-            multi_exact_hashed = []
-            with ThreadPoolExecutor(max_workers=args.nthr) as executor:
-                multi_exact_hashed = list(executor.map(
-                    lambda x: apply_minhash(
-                        key=x[0],
-                        value=x[1], 
-                        string=(x[1]['seq1'] 
-                                if clean.seq_similarity(x[1]['seq1'], crop.revcomp(x[1]['seq2'])) >= args.seq_sim 
-                                else x[1]['seq1'] + x[1]['seq2']),
-                        num_perm=args.num_perm,
-                        token_size=args.token_size
-                    ),
-                    multi_exact_kept.items()
-                ))
+                
+            multi_exact_hashed = Parallel(n_jobs = args.nthr)(
+                delayed(apply_minhash)(
+                    key = key, 
+                    value = value, 
+                    string = (value['seq1'] 
+                                if clean.seq_similarity(value['seq1'], revcomp(value['seq2'])) >= args.seq_sim 
+                                else value['seq1'] + value['seq2']), 
+                    num_perm = args.num_perm,
+                    token_size = args.token_size) 
+                for key, value in multi_exact_kept.items())
 
             for key, updated_value in multi_exact_hashed:
                 multi_exact_kept[key] = updated_value

@@ -12,7 +12,8 @@ import faiss
 from scipy.sparse import csr_matrix
 from scipy.sparse.csgraph import connected_components
 from intmap.utils import *
-from concurrent.futures import ThreadPoolExecutor
+import multiprocessing
+from joblib import Parallel, delayed
 
 # Calculate Hamming distance
 def hamming_distance(seq1, seq2):
@@ -329,8 +330,9 @@ def multi_fuzzy_matches(groups, umi_diff, frag_ratio, nthr, seq_sim):
                 
         return kept_reads, dup_reads
 
-    with ThreadPoolExecutor(max_workers=nthr) as executor:
-        results = list(executor.map(process_group, groups))
+    results = Parallel(n_jobs=nthr)(
+        delayed(process_group)(group) for group in groups
+        )
     
     multi_fuzzy_kept = {}
     multi_fuzzy_dup = {}
@@ -543,20 +545,18 @@ def verify_mm_positions(mm_kept_dict, um_kept_dict, seq_sim, nthr, len_diff, k):
         )
         
     print(f'Processing multimapping read clusters...')
-    with ThreadPoolExecutor(max_workers=nthr) as executor:
-        relocated_results = list(executor.map(
-            lambda x: compare_to_um(
-                mm_group=x,
-                um_index=um_index,
-                um_positions=um_positions,
-                um_read_names=um_read_names,
-                um_kept_dict=um_kept_dict,
-                seq_sim=seq_sim,
-                k=k,
-                len_diff=len_diff
-            ),
-            subgroups
-        ))
+    relocated_results = Parallel(n_jobs=nthr)(
+        delayed(compare_to_um)(
+            mm_group=x,
+            um_index=um_index,
+            um_positions=um_positions,
+            um_read_names=um_read_names,
+            um_kept_dict=um_kept_dict,
+            seq_sim=seq_sim,
+            k=k,
+            len_diff=len_diff
+        ) for x in subgroups
+    )
     
     relocated_reads = {}
     remaining_groups = []
@@ -569,11 +569,9 @@ def verify_mm_positions(mm_kept_dict, um_kept_dict, seq_sim, nthr, len_diff, k):
             remaining_groups.append(subgroups[i])
 
     if remaining_groups:
-        with ThreadPoolExecutor(max_workers=nthr) as executor:
-            reassigned_results = list(executor.map(
-                assign_mm_group,
-                remaining_groups
-            ))
+        reassigned_results = Parallel(n_jobs=nthr)(
+            delayed(assign_mm_group)(group) for group in remaining_groups
+            )
         
         for group in reassigned_results:
             for read in group:

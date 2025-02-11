@@ -9,7 +9,8 @@ import gzip
 import io
 import math
 from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor
+import multiprocessing
+from joblib import Parallel, delayed
 from intmap.utils import *
 import numpy as np
 
@@ -385,13 +386,12 @@ def crop(file1, file2, args, processed_directory, out_nm):
                                 params['ltr3_error'], params['linker3_error'],
                                 params['ltr5_error'], params['linker5_error'])
     
-    with ThreadPoolExecutor(max_workers=params['nthr']) as executor:
-        executor.map(
-            lambda x: process_reads_parallel(*x),
-            [(chunk1, chunk2, patterns, params, is_zipped, out_nm,
-                processed_directory, chunk_num)
-            for chunk_num, (chunk1, chunk2) in enumerate(zip(chunks1, chunks2))]
-        )
+    Parallel(n_jobs=params['nthr'])(
+        delayed(process_reads_parallel)(
+            chunk1, chunk2, patterns, params, is_zipped, out_nm,
+            processed_directory, chunk_num
+        ) for chunk_num, (chunk1, chunk2) in enumerate(zip(chunks1, chunks2))
+    )
 
     inputs = [
         (out_file1, os.path.join(processed_directory, f"{out_nm}_*_R1_tmp.fq.gz")),
@@ -399,12 +399,10 @@ def crop(file1, file2, args, processed_directory, out_nm):
         ]
     
     op_sys = platform.system()
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        executor.map(
-            lambda x: concatenate_files(*x) if op_sys not in ('Darwin', 'Linux') 
-            else concatenate_unix(*x),
-            inputs
-        )
+    Parallel(n_jobs=params['nthr'])(
+        delayed(concatenate_files if op_sys not in ('Darwin', 'Linux') else concatenate_unix)(*x)
+        for x in inputs
+    )
         
     for pattern in [
         os.path.join(processed_directory, f"{out_nm}_*_R1_tmp.fq.gz"),

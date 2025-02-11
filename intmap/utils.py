@@ -9,8 +9,8 @@ from scipy.sparse.csgraph import connected_components
 from collections import defaultdict
 from datasketch import MinHash
 import math
-from concurrent.futures import ThreadPoolExecutor
-
+import multiprocessing
+from joblib import Parallel, delayed
 
 __all__ = [
     'zipped',
@@ -272,12 +272,16 @@ def final_pass_collapse(kept_frags, len_diff, nthr, min_count, count_fc):
     for pos, count in zip(unique_pos, counts):
         grouped_data[(pos['chrom'], pos['strand'])].append((pos['pos'], count))
     
-    with ThreadPoolExecutor(max_workers=nthr) as executor:
-        results = list(executor.map(
-            lambda x: collapse_group(*x),
-            [(key, pos, min_count, count_fc, len_diff, read_mapping)
-        for key, pos in grouped_data.items()]
-            ))
+    results = Parallel(n_jobs=nthr)(
+        delayed(collapse_group)(
+            key, 
+            pos, 
+            min_count, 
+            count_fc, 
+            len_diff, 
+            read_mapping)
+        for key, pos in grouped_data.items()
+    )
     
     for read_updates in results:
         for read_name, pos in read_updates.items():
