@@ -35,10 +35,9 @@ def generate_test_data(n_sequences = 100, seq_length = 100, num_perm = 128):
 def test_get_nn():
     len_diff = 5
     input_dict = generate_test_data(n_sequences = 100, seq_length = 100, num_perm = 128)
-    distances, indices = get_nn(input_dict, num_perm = 128, nthr = 1, len_diff = len_diff, k = 8)
+    distances, indices = get_nn(input_dict, num_perm = 128, nthr = 1, len_diff = len_diff)
     
-    n_kmers = len_diff + 1
-    max_rows = len(input_dict) * n_kmers
+    max_rows = len(input_dict) * 1 # Number of iterations in get_nn()
     
     assert distances.shape[0] <= max_rows  # Cannot exceed max possible rows
     assert indices.shape == distances.shape  # Shapes must match
@@ -56,15 +55,14 @@ def test_group_similar_hashes():
         input_dict = input_dict, 
         num_perm = 128, 
         nthr = 1, 
-        len_diff = 5,
-        k = 8
+        len_diff = 5
         )
     
     unique_entries, grouped_entries = group_similar_hashes(
         hash_distances = distances,
         hash_indices = indices,
         nthr = 1,
-        sensitivity = 0.85,
+        similarity = 0.85,
         num_perm = 128,
         input_dict = input_dict
         )

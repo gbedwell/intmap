@@ -233,7 +233,7 @@ parser.add_argument('-genome_fasta_index',
                     default=None)
 parser.add_argument('-num_perm',
                     type=int, 
-                    help='''The number of permutations in the generated minhash fingerprint. Defaults to 64. Must be divisble by 8.''',
+                    help='''The number of permutations in the generated minhash fingerprint. Defaults to 64. Must be divisble by 8 and >= 32.''',
                     default=64)
 parser.add_argument('-token_size',
                     type=int, 
@@ -275,6 +275,11 @@ parser.add_argument('-k',
                     help='''The size of the k-mers used to reassign multimapping reads.     
                     Defaults to 20. Must be <= min_frag_len - len_diff''',
                     default=20)
+parser.add_argument('-mm_clone_threshold',
+                    type=float, 
+                    help='''The threshold used for reassigning multimapping reads. Expressed as a fraction of total uniquely mapping reads. 
+                    Defaults to 0.02.''',
+                    default=0.02)
 parser.add_argument('--no_dedup', '-no_dedup',
                     help='''Boolean.
                     When True, the pipeline stops after alignment and QC.''',
@@ -285,6 +290,7 @@ args = parser.parse_args()
 
 if __name__ == "__main__":
     import os
+    os.environ['PYTHONHASHSEED'] = '0'
     import platform
     import glob
     import sys
@@ -351,6 +357,8 @@ if __name__ == "__main__":
         parser.error('aln_seed_mismatch must be 0 or 1.')
     if args.num_perm % 8 != 0:
         parser.error('num_perm must be a multiple of 8.')
+    if args.num_perm < 32:
+        parser.error('num_perm must be >= 32.')
     if args.token_size < 2:
         parser.error('token_size must be >= 2.')
     if args.match_after < 0:
@@ -457,9 +465,10 @@ if __name__ == "__main__":
             print(f'Multimapping token size: {args.token_size} bp')
             print(f'Multimapping hash similarity threshold: {args.mm_hash_similarity}')
             print(f'Multimapping sequence matching threshold: {args.seq_sim}')
-            print(f'Multimapping k-mer size: {args.k} bp')
             if args.reassign_mm:
                 print(f'Multimapping read reassignment: True')
+                print(f'Maximum multimapping k-mer size: {args.k} bp')
+                print(f'Multimapping clone threshold: {args.mm_clone_threshold}')
             else:
                 print(f'Multimapping read reassignment: False')
         else:
@@ -736,6 +745,14 @@ if __name__ == "__main__":
             ue_kept_list.append({key: value})
             
         del unique_exact_kept
+        
+        n_exact_kept = 0
+        for entry in ue_kept_list:
+            for value in entry.values():
+                n_exact_kept += len(value)
+        
+        print(f'Number of uniquely mapping reads removed: {n_unique - n_exact_kept}',
+                flush = True)
 
         print('Looking for unique fuzzy matches...', flush = True)
         sorted_ue_kept_list = sorted(ue_kept_list, key=lambda x: len(x), reverse=True)
@@ -761,7 +778,7 @@ if __name__ == "__main__":
         del ue_kept_list
         del sorted_ue_kept_list
         del uf_kept_list
-            
+
         # Initialize the dictionary to hold the final kept reads
         kept_dict = {
             info['read_name']: {
@@ -774,7 +791,8 @@ if __name__ == "__main__":
             for info_list in unique_fuzzy_kept.values()
             for info in info_list
         }
-
+        print(f'Number of additional uniquely mapping reads removed: {n_exact_kept - len(kept_dict)}',
+                flush = True)
         # At this point, len(kept_dict) = len(kept unique fragments)
         unique_perc = (len(kept_dict) / n_unique) * 100
         print(f'{len(kept_dict)} uniquely mapping fragments retained ({unique_perc:.2f}%)', 
@@ -796,9 +814,12 @@ if __name__ == "__main__":
             
             multi_exact_kept = clean.multi_exact_matches(input_dict = multi_all)
             del multi_all
+            
+            n_multi_exact = len(multi_exact_kept)
+            print(f'Number of multimapping mapping reads removed: {n_multi - n_multi_exact}',
+                  flush = True)
 
             print('Hashing multimapping sequences for fuzzy matching...', flush = True)
-                
             multi_exact_hashed = Parallel(n_jobs = args.nthr)(
                 delayed(apply_minhash)(
                     key = key, 
@@ -815,20 +836,17 @@ if __name__ == "__main__":
 
             del multi_exact_hashed
             
-            kmer_size = args.k
-
             hash_distances, hash_indices = get_nn(input_dict = multi_exact_kept, 
                                                     num_perm = args.num_perm,
                                                     nthr = args.nthr,
-                                                    len_diff = args.len_diff,
-                                                    k = kmer_size)
+                                                    len_diff = args.len_diff)
 
             print('Grouping similar hashes...', flush = True)
             mm_solo, mm_groups = group_similar_hashes(
                 hash_distances = hash_distances, 
                 hash_indices = hash_indices, 
                 nthr = args.nthr,
-                sensitivity = args.mm_hash_similarity,
+                similarity = args.mm_hash_similarity,
                 num_perm = args.num_perm,
                 input_dict = multi_exact_kept
                 )
@@ -858,6 +876,12 @@ if __name__ == "__main__":
             mm_kept_dict.update(multi_fuzzy_kept)
             dup_dict.update(multi_fuzzy_dup)
             
+            print(f'Number of additional multimapping mapping reads removed: {n_multi_exact - len(mm_kept_dict)}',
+                  flush = True)
+            multi_perc = (len(mm_kept_dict) / n_multi) * 100
+            print(f'{len(mm_kept_dict)} multimapping fragments retained ({multi_perc:.2f}%)', 
+                    flush = True)
+            
             if args.reassign_mm:
                 print('Reassigning multimapping read positions...', flush = True)
                 verified_kept_dict = clean.verify_mm_positions(
@@ -866,7 +890,9 @@ if __name__ == "__main__":
                     seq_sim = args.seq_sim, 
                     nthr = args.nthr, 
                     len_diff = args.len_diff,
-                    k = kmer_size
+                    k = args.k,
+                    min_frag_len = args.min_frag_len,
+                    mm_clone_threshold = args.mm_clone_threshold
                     )
                 
                 if len(verified_kept_dict) != len(mm_kept_dict):
@@ -878,10 +904,6 @@ if __name__ == "__main__":
             del multi_fuzzy_kept
             del multi_fuzzy_dup
             del mm_kept_dict
-            
-            multi_perc = (len(verified_kept_dict) / n_multi) * 100
-            print(f'{len(verified_kept_dict)} multimapping fragments retained ({multi_perc:.2f}%)', 
-                    flush = True)
             
             kept_dict.update(verified_kept_dict)
             
@@ -995,7 +1017,7 @@ if __name__ == "__main__":
                     value['count'],
                     site_strand
                     ]
-                
+
                 sites.write('\t'.join(map(str, site_info)) + '\n')
                 
                 site_dict[key] = {
@@ -1039,7 +1061,7 @@ if __name__ == "__main__":
                 'count': count,
                 'strand': strand
             })
-            
+
         with gzip.open(counts_out, 'wt') as counts:
             for value in collapsed_sites:
                 collapsed_info = [value['chrom'], value['start'], value['end'],

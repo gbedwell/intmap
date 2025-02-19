@@ -11,6 +11,7 @@ from datasketch import MinHash
 import math
 import multiprocessing
 from joblib import Parallel, delayed
+from operator import itemgetter
 
 __all__ = [
     'zipped',
@@ -113,67 +114,33 @@ def set_faiss_threads(nthr):
         return True
     return False
 
-def get_nn(input_dict, num_perm, nthr, len_diff, k):
+def get_nn(input_dict, num_perm, nthr, len_diff):
     set_faiss_threads(nthr)
+    batch_size = min(1000, len(input_dict))
+    nn_k = min(len(input_dict), 1000)
+    dim = num_perm * 32
     
-    batch_size = 1000
-    kmer_groups = defaultdict(dict)
-    n_kmers = len_diff + 1
+    hashes = [value['hash'] for _, value in input_dict.items()]
+    db = np.array(hashes, dtype='uint8')
     
-    dtype = np.int32
-    
-    for key, value in input_dict.items():
-        seq = value['seq1']
-        current_kmer = seq[:k]
-        kmers = [current_kmer]
-        for i in range(2 * len_diff):
-            if i + k >= len(seq):
-                break
-            current_kmer = current_kmer[1:] + seq[i + k]
-            kmers.append(current_kmer)
-            
-        selected_kmers = sorted(kmers)[:n_kmers]
-        for kmer in selected_kmers:
-            kmer_groups[kmer].update({key: value})
-    
+    hash_index = faiss.IndexBinaryFlat(dim)
+    hash_index.add(db)
+
     all_distances = []
     all_indices = []
-    offset = 0
     
-    sorted_groups = sorted(kmer_groups.values(), key=len, reverse=True)
-    max_k = len(sorted_groups[0])
-    
-    for group in sorted_groups:
-        minhash_list = [value['hash'] for value in group.values()]
-        nb = len(minhash_list)
-        if nb == 0:
-            continue
-        dim = num_perm * 32
-        db = np.array(minhash_list, dtype='uint8')
-        hash_index = faiss.IndexBinaryFlat(dim)
-        hash_index.add(db)
+    for start_idx in range(0, len(db), batch_size):
+        end_idx = min(start_idx + batch_size, len(db))
+        query_batch = db[start_idx:end_idx]
         
-        if nb < batch_size:
-            distances, indices = hash_index.search(db, k = max_k)
-            indices[indices != -1] += offset
-            offset += nb
-            all_distances.append(distances)
-            all_indices.append(indices)
-        else:
-            for i in range(0, nb, batch_size):
-                chunk = db[i:i + batch_size]
-                distances, indices = hash_index.search(chunk, k = max_k)
-                indices[indices != -1] += offset
-                offset += batch_size
-        
-                all_distances.append(distances)
-                all_indices.append(indices)
+        distances, indices = hash_index.search(query_batch, k=nn_k)
+        all_distances.append(distances)
+        all_indices.append(indices)
     
-    return (np.vstack(all_distances) if all_distances else np.array([]), 
-            np.vstack(all_indices) if all_indices else np.array([]))
+    return np.vstack(all_distances), np.vstack(all_indices)
 
-def group_similar_hashes(hash_distances, hash_indices, nthr, sensitivity, num_perm, input_dict):
-    hamming_threshold = (num_perm * 64) * (1 - sensitivity)
+def group_similar_hashes(hash_distances, hash_indices, nthr, similarity, num_perm, input_dict):
+    hamming_threshold = (num_perm * 64) * (1 - similarity)
     
     # Use input_dict keys to get correct sequence count
     sequence_indices = range(len(input_dict))

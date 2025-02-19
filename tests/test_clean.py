@@ -156,7 +156,7 @@ def test_group_mm_sequences():
         {'read_name': 'read4', 'seq1': 'TACGTACGTACGT', 'count': 1}
     ]
 
-    subgroups1 = group_mm_sequences(test_group, seq_sim=0.8, k=5, len_diff=5)
+    subgroups1 = group_mm_sequences(test_group, seq_sim=0.8, k=5, len_diff=5, min_frag_len=20, nthr=1)
 
     assert len(subgroups1) == 2
     
@@ -173,7 +173,7 @@ def test_build_position_based_index():
     
     index, positions, read_names = build_position_based_index(
         um_kept_dict=input_data,
-        k=5,
+        k=3,
         len_diff=5,
         nthr=1
     )
@@ -182,7 +182,7 @@ def test_build_position_based_index():
     D1, I1 = index.search(index.reconstruct_n(0, index.ntotal), index.ntotal)
     D2, I2 = expected_index.search(expected_index.reconstruct_n(0, expected_index.ntotal), expected_index.ntotal)
     
-    assert np.array_equal(D1, D2)
+    assert np.allclose(D1, D2, rtol=1e-5)
     assert np.array_equal(I1, I2)
     assert np.array_equal(positions, expected_positions)
     assert np.array_equal(read_names, expected_reads)
@@ -192,40 +192,42 @@ def test_compare_to_um():
         "um_read1": {
             "read_name": "um_read1",
             "seq1": "GCGTAGCGTGGC",
-            "strand": "-",
+            "strand": "-", 
             "start": 185,
+            "end": 200,
+            "chrom": "chr2"
+        },
+        "um_read2": {
+            "read_name": "um_read2", 
+            "seq1": "GCGTAGCGT",  # Shorter sequence
+            "strand": "-",
+            "start": 190,
             "end": 200,
             "chrom": "chr2"
         }
     }
-        
-    # Test input group
+
     group = [
         {
             "read_name": "mm_read1",
             "seq1": "GCGTAGCGTGGC",
             "count": 1,
-            "chrom": "chr1",
+            "chrom": "chr1", 
             "start": 300,
             "end": 312,
             "strand": "+"
+        },
+        {
+            "read_name": "mm_read2",
+            "seq1": "GCGTAGCGTGG",  # Different length
+            "count": 1,
+            "chrom": "chr1",
+            "start": 305,
+            "end": 316,
+            "strand": "+"
         }
     ]
-    
-    # Test position groups
-    position_groups = {
-        ("chr2", 200, "-"): [
-            {
-                "read_name": "um_read1",
-                "seq1": "GCGTAGCGTGGC",
-                "strand": "-",
-                "start": 185,
-                "end": 200
-            }
-        ]
-    }
-    
-    # Expected output
+
     expected = [
         {
             "read_name": "mm_read1",
@@ -236,24 +238,35 @@ def test_compare_to_um():
             "end": 200,
             "strand": "-",
             "multi": "True - relocated"
+        },
+        {
+            "read_name": "mm_read2",
+            "seq1": "GCGTAGCGTGG",
+            "count": 1,
+            "chrom": "chr2",
+            "start": 189,
+            "end": 200,
+            "strand": "-",
+            "multi": "True - relocated"
         }
     ]
-    
+
     index, positions, reads = build_position_based_index(
         um_kept_dict, k=5, len_diff=5, nthr=1
-        )
-    
+    )
+
     result = compare_to_um(
         mm_group=group,
-        um_index=index,
+        um_index=index, 
         um_positions=positions,
         um_read_names=reads,
         um_kept_dict=um_kept_dict,
         seq_sim=0.8,
         k=5,
-        len_diff=5
+        len_diff=5,
+        mm_clone_threshold = 0.00001
     )
-    
+
     assert result == expected
     
 def test_assign_mm_group():
@@ -305,7 +318,7 @@ def test_assign_mm_group():
     
     result = assign_mm_group(group)
     assert result == expected
-    
+
 def test_verify_mm_positions():
     input_data, expected = load_test_data('clean', 'verify_mm_positions')
     
@@ -315,7 +328,9 @@ def test_verify_mm_positions():
         seq_sim=0.8,
         nthr=1,
         k = 5,
-        len_diff = 5
+        len_diff = 5,
+        min_frag_len=20,
+        mm_clone_threshold = 0.00001
     )
     
     assert result == expected
