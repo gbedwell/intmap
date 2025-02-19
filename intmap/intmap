@@ -278,8 +278,8 @@ parser.add_argument('-k',
 parser.add_argument('-mm_clone_threshold',
                     type=float, 
                     help='''The threshold used for reassigning multimapping reads. Expressed as a fraction of total uniquely mapping reads. 
-                    Defaults to 0.02.''',
-                    default=0.02)
+                    Defaults to 0.01.''',
+                    default=0.01)
 parser.add_argument('--no_dedup', '-no_dedup',
                     help='''Boolean.
                     When True, the pipeline stops after alignment and QC.''',

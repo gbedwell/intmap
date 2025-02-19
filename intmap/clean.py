@@ -514,8 +514,8 @@ def compare_to_um(mm_group, um_index, um_positions, um_read_names,
     
     longest_mm_seq = np.array(list(longest_mm_read['seq1']))
     
-    k_neighbors = 5
-    distance_threshold = (1 - seq_sim) * 4
+    k_neighbors = 10
+    distance_threshold = (1 - seq_sim) * 5
     D, I = um_index.search(mm_vectors, k_neighbors)
     
     # Batch process nearest neighbors
