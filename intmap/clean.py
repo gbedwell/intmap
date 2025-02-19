@@ -430,7 +430,7 @@ def group_mm_sequences(group, seq_sim, len_diff, min_frag_len, k, nthr):
         batch_vectors = vectors[i:batch_end]
         
 
-        k_nn = min(100 * 10 ** (1 + n_seqs // 100000), 100000)
+        k_nn = min(250 * (1 + n_seqs // 1000), 5000)
         D, I = index.search(batch_vectors, k_nn)
         
         batch_seqs = np.array(seqs[i:batch_end])
