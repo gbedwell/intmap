@@ -188,47 +188,107 @@ def test_build_position_based_index():
     assert np.array_equal(read_names, expected_reads)
     
 def test_compare_to_um():
+    # Expanded test cases with more diverse scenarios
     um_kept_dict = {
         "um_read1": {
             "read_name": "um_read1",
-            "seq1": "GCGTAGCGTGGC",
+            "seq1": "GCGTAGCGTGGCAA",  
             "strand": "-", 
-            "start": 185,
+            "start": 186,
             "end": 200,
-            "chrom": "chr2"
+            "chrom": "chr2",
+            "multi": "False"
         },
-        "um_read2": {
-            "read_name": "um_read2", 
-            "seq1": "GCGTAGCGT",  # Shorter sequence
+        "um_read2": { 
+            "read_name": "um_read2",
+            "seq1": "GCGAAGCGTCGCAA",
             "strand": "-",
-            "start": 190,
+            "start": 186,
             "end": 200,
-            "chrom": "chr2"
+            "chrom": "chr2",
+            "multi": "False"
+        },
+        "um_read3": {
+            "read_name": "um_read3",
+            "seq1": "ATCGATCGATCGAA",
+            "strand": "+",
+            "start": 500,
+            "end": 514,
+            "chrom": "chr1",
+            "multi": "False"
+        },
+        "um_read4": {
+            "read_name": "um_read4",
+            "seq1": "TGCATGCATGCAA",
+            "strand": "+",
+            "start": 1000,
+            "end": 1013,
+            "chrom": "chr3",
+            "multi": "False"
         }
     }
-
-    group = [
+    
+    group1 = [
         {
-            "read_name": "mm_read1",
+            "read_name": "mm_read1", # Perfect match to um_read1
             "seq1": "GCGTAGCGTGGC",
             "count": 1,
             "chrom": "chr1", 
             "start": 300,
             "end": 312,
-            "strand": "+"
+            "strand": "+",
+            "multi": "True"
         },
         {
-            "read_name": "mm_read2",
-            "seq1": "GCGTAGCGTGG",  # Different length
+            "read_name": "mm_read2", # Perfect match to um_read1
+            "seq1": "GCGTAGCGTGG",
             "count": 1,
             "chrom": "chr1",
             "start": 305,
             "end": 316,
-            "strand": "+"
+            "strand": "+",
+            "multi": "True"
+        }
+    ]
+    
+    group2 = [
+        {
+            "read_name": "mm_read3", # No match -- mutated
+            "seq1": "GCGTACCGTGGC",  # 2 mutations
+            "count": 1,
+            "chrom": "chr3",
+            "start": 400,
+            "end": 412,
+            "strand": "-",
+            "multi": "True"
+        }
+    ]
+    group3 = [ 
+        {
+            "read_name": "mm_read4", # Perfect match to um_read3
+            "seq1": "ATCGATCGATCG",
+            "count": 2,
+            "chrom": "chr4",
+            "start": 100,
+            "end": 112,
+            "strand": "-",
+            "multi": "True"
+        }
+    ]
+    group4 = [
+        {
+            "read_name": "mm_read5", # Perfect match to um_read1
+            "seq1": "GCGTAGCGTGGCAA",
+            "count": 1,
+            "chrom": "chr5",
+            "start": 200,
+            "end": 214,
+            "strand": "+",
+            "multi": "True"
         }
     ]
 
-    expected = [
+    expected1 = [
         {
             "read_name": "mm_read1",
             "seq1": "GCGTAGCGTGGC",
@@ -251,12 +311,40 @@ def test_compare_to_um():
         }
     ]
 
+    expected2 = None
+
+    expected3 = [
+        {
+            "read_name": "mm_read4", 
+            "seq1": "ATCGATCGATCG",
+            "count": 2,
+            "chrom": "chr1",
+            "start": 500,
+            "end": 512,
+            "strand": "+",
+            "multi": "True - relocated"
+        }
+    ]
+
+    expected4 = [
+        {
+            "read_name": "mm_read5",
+            "seq1": "GCGTAGCGTGGCAA",
+            "count": 1,
+            "chrom": "chr2",
+            "start": 186,
+            "end": 200,
+            "strand": "-",
+            "multi": "True - relocated"
+        }
+    ]
+
     index, positions, reads = build_position_based_index(
         um_kept_dict, k=5, len_diff=5, nthr=1
     )
 
-    result = compare_to_um(
-        mm_group=group,
+    result1 = compare_to_um(
+        mm_group=group1,
         um_index=index, 
         um_positions=positions,
         um_read_names=reads,
@@ -264,10 +352,52 @@ def test_compare_to_um():
         seq_sim=0.8,
         k=5,
         len_diff=5,
-        mm_clone_threshold = 0.00001
+        mm_clone_threshold=0.00001
     )
-
-    assert result == expected
+    
+    assert result1 == expected1
+    
+    result2 = compare_to_um(
+        mm_group=group2,
+        um_index=index, 
+        um_positions=positions,
+        um_read_names=reads,
+        um_kept_dict=um_kept_dict,
+        seq_sim=0.8,
+        k=5,
+        len_diff=5,
+        mm_clone_threshold=0.00001
+    )
+    
+    assert result2 == expected2
+    
+    result3 = compare_to_um(
+        mm_group=group3,
+        um_index=index, 
+        um_positions=positions,
+        um_read_names=reads,
+        um_kept_dict=um_kept_dict,
+        seq_sim=0.8,
+        k=5,
+        len_diff=5,
+        mm_clone_threshold=0.00001
+    )
+    
+    assert result3 == expected3
+    
+    result4 = compare_to_um(
+        mm_group=group4,
+        um_index=index, 
+        um_positions=positions,
+        um_read_names=reads,
+        um_kept_dict=um_kept_dict,
+        seq_sim=0.8,
+        k=5,
+        len_diff=5,
+        mm_clone_threshold=0.00001
+    )
+    
+    assert result4 == expected4
     
 def test_assign_mm_group():
     group = [
@@ -316,7 +446,7 @@ def test_assign_mm_group():
         }
     ]
     
-    result = assign_mm_group(group)
+    result, n = assign_mm_group(group)
     assert result == expected
 
 def test_verify_mm_positions():

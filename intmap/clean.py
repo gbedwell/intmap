@@ -501,7 +501,7 @@ def compare_to_um(mm_group, um_index, um_positions, um_read_names,
     
     if len(mm_group) < len(um_read_names) * mm_clone_threshold:
         return None
-    
+
     longest_mm_read = max(mm_group, key=lambda x: len(x['seq1']))
     longest_mm_seq = longest_mm_read['seq1']
     longest_mm_len = len(longest_mm_seq)
