@@ -15,6 +15,7 @@ from intmap.utils import *
 import multiprocessing
 from joblib import Parallel, delayed
 import time
+from datasketch import MinHash, LeanMinHash, MinHashLSH
 
 # Calculate Hamming distance
 def hamming_distance(seq1, seq2):
@@ -359,147 +360,165 @@ def stable_hash(s):
     raw_hash = int(hashlib.sha256(s.encode()).hexdigest()[:n_digits], 16)
     return raw_hash
 
-def generate_mm_kmers(seqs, k, max_k=25):
-    for seq in seqs:
-        max_k = min((len(seq) - k + 1), max_k)
-        yield np.array([stable_hash(seq[i:i+k]) for i in range(0, max_k)])
+def prefix_weighted_minhash(sequence, num_perm, min_frag_len, token_size):
+    minhash = MinHash(num_perm = num_perm)
+    # Weight k-mers by position from start of sequence
+    for pos, i in enumerate(range(len(sequence) - token_size + 1)):
+        kmer = sequence[i:i + token_size]
+        weight = 1 if pos < (min_frag_len - token_size + 1) else 0
+        for _ in range(weight):
+            minhash.update(kmer.encode('utf-8'))
+    return LeanMinHash(minhash)
 
-def batch_kmer_gen(seq_batch, k):
-    return list(generate_mm_kmers(seq_batch, k))
-
-### TO-DO: VERIFY group_mm_sequences MORE RIGOROUSLY ###
-def group_mm_sequences(group, seq_sim, len_diff, min_frag_len, k, nthr):
-    batch_size = min(1000, len(group))
-    sorted_group = sorted(group, key=lambda x: len(x['seq1']))
-    seqs = [entry['seq1'] for entry in sorted_group]
-    n_seqs = len(seqs)
-    set_faiss_threads(nthr)
-    # Generate k-mers
-    # kmer_arrays = list(generate_mm_kmers(seqs, min_k))
-    kmer_arrays = []
-    for i in range(0, len(seqs), batch_size):
-        batch_seqs = seqs[i:min(i + batch_size, len(seqs))]
-        batch_kmers = Parallel(n_jobs=nthr)(
-            delayed(batch_kmer_gen)([seq], k) for seq in batch_seqs
-        )
-        kmer_arrays.extend([kmers[0] for kmers in batch_kmers if kmers])
+def mm_coarse_cluster(sequences, threshold, num_perm, min_frag_len, token_size):
+    # Initialize LSH index
+    lsh = MinHashLSH(threshold = threshold, num_perm = num_perm)
     
-    # Build vectorized index
-    unique_kmers = np.unique(np.concatenate(kmer_arrays))
-    kmer_to_idx = {kmer: idx for idx, kmer in enumerate(unique_kmers)}
+    # Store sequence to minhash mapping
+    seq_to_minhash = {}
     
-    # Create fixed-size vectors for FAISS
-    vectors = np.zeros((n_seqs, len(unique_kmers)), dtype=np.float32)
-    for idx, kmers in enumerate(kmer_arrays):
-        for kmer in kmers:
-            vectors[idx, kmer_to_idx[kmer]] = 1
-
-    # Normalize vectors
-    norms = np.linalg.norm(vectors, axis=1)
-    vectors = vectors / norms[:, np.newaxis]
+    # Process sequences from longest to shortest
+    sorted_seqs = sorted(sequences, key=len, reverse=True)
+    clusters = defaultdict(list)
     
-    # Build index and compute distances
-    min_points_per_cluster = 50
-    if n_seqs < min_points_per_cluster:
-        index = faiss.IndexFlatL2(len(unique_kmers))
-        index.add(vectors)
-    else:
-        # Dynamically allocate cluster number
-        # Use k-mer variance as a metric of diversity
-        # For binary data, max_var = p(1-p) = 0.5 * 0.5
-        max_variance = 0.25
-        # Normalize variance to be between 0 and 1
-        norm_variance = np.var(vectors, axis=0).sum() / (len(unique_kmers) * max_variance)
-        # Scale cluster number gradually with sequence count
-        seq_scale = np.log10(n_seqs)
-        cluster_factor = int(norm_variance * seq_scale * min_points_per_cluster)
-        nlist = min(4096, max(1, cluster_factor))
-        quantizer = faiss.IndexFlatL2(len(unique_kmers))
-        index = faiss.IndexIVFFlat(quantizer, len(unique_kmers), nlist)
-        index.train(vectors)
-        index.add(vectors)
-        index.nprobe = max(nlist // 2, 2) if nlist > 1 else 1
-    
-    # Build connectivity graph using batched range search
-    # adj_matrix = csr_matrix((n_seqs, n_seqs), dtype=bool)
-    rows = []
-    cols = []
-    
-    for i in range(0, n_seqs, batch_size):
-        batch_end = min(i + batch_size, n_seqs)
-        batch_vectors = vectors[i:batch_end]
+    for seq in sorted_seqs:
+        minhash = prefix_weighted_minhash(seq, num_perm, min_frag_len, token_size)
+        seq_to_minhash[seq] = minhash
         
-
-        k_nn = min(250 * (1 + n_seqs // 1000), 5000)
-        D, I = index.search(batch_vectors, k_nn)
+        # Query LSH index for similar sequences
+        matches = lsh.query(minhash) if len(lsh.keys) > 0 else []
         
-        batch_seqs = np.array(seqs[i:batch_end])
-        for j in range(batch_end - i):
-            matches = I[j][D[j] < ((1 - seq_sim) * 5)]
+        if not matches:
+            # Create new cluster
+            clusters[seq].append(seq)
+            lsh.insert(seq, minhash)
+        else:
+            # Find best matching cluster
+            best_match = max(matches, key=lambda x: len(x))
+            clusters[best_match].append(seq)
             
-            if len(matches) > 0:
-                match_seqs = np.array([seqs[m] for m in matches])
-                similarities = np.array([seq_similarity(batch_seqs[j], match_seq) for match_seq in match_seqs])
-                valid_matches = matches[similarities >= seq_sim]
-                
-                # Add valid matches to graph
-                valid_matches = valid_matches[valid_matches > (i + j)]
-                if len(valid_matches) > 0:
-                    rows.extend([i+j] * len(valid_matches))
-                    cols.extend(valid_matches)
-                    rows.extend(valid_matches)
-                    cols.extend([i+j] * len(valid_matches))
+    return list(clusters.values())
+
+def refine_coarse_clusters(coarse_clusters, seq_sim):
+    refined_clusters = []
+    for cluster in coarse_clusters:
+        if len(cluster) == 1:
+            refined_clusters.append([cluster[0]])
+            continue
+        subclusters = defaultdict(list)
+        sorted_seqs = sorted(cluster, key=len, reverse=True)
+        subclusters[sorted_seqs[0]].append(sorted_seqs[0])
+        
+        for seq in sorted_seqs[1:]:
+            seq_len = len(seq)
+            match_found = False
+            for key in subclusters.keys():
+                match_found = seq_similarity(seq, key[:seq_len]) >= seq_sim
+                if match_found:
+                    subclusters[key].append(seq)
+                    break
+            if not match_found:
+                subclusters[seq].append(seq)
+        
+        refined_clusters.extend(subclusters.values())
+        
+    return refined_clusters
+
+# Write unit test for group_mm_sequences
+def group_mm_sequences(mm_reads, seq_sim, min_frag_len, num_perm, 
+                        token_size, mm_hash_similarity):
+    seq_to_entries = {}
+    for entry in mm_reads:
+        seq = entry['seq1']
+        if seq not in seq_to_entries:
+            seq_to_entries[seq] = []
+        seq_to_entries[seq].append(entry)
+    seqs = list(seq_to_entries.keys())
     
-    adj_matrix = csr_matrix(
-        (np.ones(len(rows), dtype=bool), (rows, cols)), shape=(n_seqs, n_seqs)
+    # Coarse clustering by prefix matching
+    coarse_clusters = mm_coarse_cluster(
+        sequences = seqs,
+        threshold = round(mm_hash_similarity * (1/3), 2),
+        num_perm = num_perm,
+        min_frag_len = min_frag_len,
+        token_size = token_size
     )
     
-    # Find connected components
-    n_components, labels = connected_components(adj_matrix, directed=False)
+    # Refine coarse clusters by sequence similarity
+    refined_seq_clusters = refine_coarse_clusters(
+        coarse_clusters = coarse_clusters, 
+        seq_sim = seq_sim
+        )
     
-    # Group by components
-    subgroups = []
-    for i in range(n_components):
-        component_indices = np.where(labels == i)[0]
-        subgroups.append([sorted_group[idx] for idx in component_indices])
+    del coarse_clusters
     
-    return subgroups
+    # Map sequences back to original dictionary entries
+    final_clusters = []
+    for seq_cluster in refined_seq_clusters:
+        dict_cluster = []
+        for seq in seq_cluster:
+            dict_cluster.extend(seq_to_entries[seq])
+        final_clusters.append(dict_cluster)
+    
+    return final_clusters
 
 def build_position_based_index(um_kept_dict, len_diff, nthr, k):
-    n_reads = len(um_kept_dict)
-    n_kmers = len_diff + 1
-    vectors = np.zeros((n_reads, n_kmers), dtype=np.float32)
-    positions = []
-    read_names = []
-    
-    for idx, (read_name, read) in enumerate(um_kept_dict.items()):
-        seq = read['seq1']
-        kmers = [stable_hash(''.join(seq[i:i+k])) for i in range(n_kmers)]
-        vectors[idx] = kmers / np.linalg.norm(kmers)
+    # Stratify reads by chromosome and strand
+    stratified_reads = defaultdict(list)
+    for read_name, read in um_kept_dict.items():
+        key = (read['chrom'], read['strand'])
+        stratified_reads[key].append(read)
 
-        positions.append((read['chrom'], 
-                        read['end'] if read['strand'] == '-' else read['start'], 
-                        read['strand']))
-        read_names.append(read_name)
+    def process_stratum(stratum_key, reads):
+        # Group reads by position
+        pos_groups = defaultdict(list)
+        for read in reads:
+            pos = read['end'] if read['strand'] == '-' else read['start']
+            pos_groups[pos].append(read)
+        
+        # Sort positions and get shortest read at each position
+        unique_positions = sorted(pos_groups.keys())
+        n_kmers = len_diff + 1
+        vectors = np.zeros((len(unique_positions), n_kmers), dtype=np.float32)
+        position_info = []
+        read_names = []
+        
+        for idx, pos in enumerate(unique_positions):
+            # Get read with shortest seq1 at this position
+            read = min(pos_groups[pos], key=lambda x: len(x['seq1']))
+            
+            seq = read['seq1']
+            kmers = [stable_hash(''.join(seq[i:i+k])) for i in range(n_kmers)]
+            vectors[idx] = kmers / np.linalg.norm(kmers)
+            
+            position_info.append((read['chrom'], pos, read['strand']))
+            read_names.append(read['read_name'])
+            
+        return vectors, position_info, read_names
+
+    # Process each stratum in parallel
+    results = Parallel(n_jobs=nthr)(
+        delayed(process_stratum)(key, reads) 
+        for key, reads in stratified_reads.items()
+        )
     
-    index = faiss.IndexFlatL2(n_kmers)
-    index.add(vectors)
+    # Combine results
+    all_vectors = np.vstack([r[0] for r in results])
+    all_positions = np.array([p for r in results for p in r[1]], 
+                            dtype=[('chrom', 'U20'), ('pos', np.int32), ('strand', 'U1')])
+    all_read_names = np.array([n for r in results for n in r[2]])
     
-    position_array = np.array(positions, dtype=[
-        ('chrom', 'U20'), 
-        ('pos', np.int32), 
-        ('strand', 'U1')
-    ])
+    # Build FAISS index
+    index = faiss.IndexFlatL2(len_diff + 1)
+    index.add(all_vectors)
     
-    read_array = np.array(read_names)
-    
-    return index, position_array, read_array
+    return index, all_positions, all_read_names
 
 ### TO-DO: VERIFY compare_to_um MORE RIGOROUSLY ###
 def compare_to_um(mm_group, um_index, um_positions, um_read_names, 
-                    um_kept_dict, seq_sim, k, len_diff, mm_clone_threshold):
+                    um_kept_dict, seq_sim, k, len_diff, mm_count_threshold):
     
-    if len(mm_group) < len(um_read_names) * mm_clone_threshold:
+    if len(mm_group) < mm_count_threshold:
         return None
 
     longest_mm_read = max(mm_group, key=lambda x: len(x['seq1']))
@@ -534,29 +553,17 @@ def compare_to_um(mm_group, um_index, um_positions, um_read_names,
     valid_seqs = um_seqs_batch[valid_length_mask]
     max_um_len = np.max([len(seq) for seq in valid_seqs])
 
-    # Create padded sequence array
-    padded_seqs = np.full((len(valid_seqs), max_um_len), '-', dtype=str)
+    similarities = np.zeros(len(valid_seqs))
     for i, seq in enumerate(valid_seqs):
-        padded_seqs[i, :len(seq)] = seq
+        prefix = seq[:longest_mm_len]
+        similarities[i] = seq_similarity(''.join(longest_mm_seq), ''.join(prefix))
 
-    # Create windows array
-    n_windows = len(padded_seqs[0]) - longest_mm_len + 1
-    all_windows = np.zeros((len(valid_seqs), n_windows, longest_mm_len), dtype=str)
-    for i, seq in enumerate(padded_seqs):
-        all_windows[i] = np.lib.stride_tricks.sliding_window_view(seq, longest_mm_len)
-
-    # Calculate similarities using vectorized operations
-    similarities = vectorized_seq_similarity(
-        all_windows.reshape(-1, longest_mm_len), 
-        longest_mm_seq
-    )
-    mean_similarities = similarities.reshape(len(valid_seqs), -1).mean(axis=1)
-
-    mask = mean_similarities >= seq_sim
+    # Find the best match above the similarity threshold
+    mask = similarities >= seq_sim
     if not np.any(mask):
         return None
 
-    best_match_idx = np.argmax(mean_similarities * mask)
+    best_match_idx = np.argmax(similarities * mask)
     best_position = um_positions_batch[best_match_idx]
     
     relocated_group = []
@@ -596,7 +603,7 @@ def assign_mm_group(mm_group):
         # Deterministic random choice based on position hash
         position_strings = [f"{p[0]}_{p[1] if p[3] == '+' else p[2]}_{p[3]}" for p in valid_positions]
         seed_string = ','.join(sorted(position_strings)[:2])
-        seed = int(hashlib.sha256(seed_string.encode('utf-8')).hexdigest(), 16) % (2**64)
+        seed = int(hashlib.sha256(seed_string.encode('utf-8')).hexdigest(), 16) % (2**32)
         
         random.seed(seed)
         chosen_pos = random.choices(valid_positions, k=1)[0]
@@ -617,7 +624,7 @@ def assign_mm_group(mm_group):
     return (mm_group, 0)
 
 def batch_compare_to_um(chunk, um_index, um_positions, um_read_names,
-                        um_kept_dict, seq_sim, k, len_diff, mm_clone_threshold):
+                        um_kept_dict, seq_sim, k, len_diff, mm_count_threshold):
     return [compare_to_um(
         mm_group=group,
         um_index=um_index,
@@ -627,11 +634,12 @@ def batch_compare_to_um(chunk, um_index, um_positions, um_read_names,
         seq_sim=seq_sim,
         k=k,
         len_diff=len_diff,
-        mm_clone_threshold=mm_clone_threshold
+        mm_count_threshold=mm_count_threshold
     ) for group in chunk]
         
 def verify_mm_positions(mm_kept_dict, um_kept_dict, seq_sim, nthr, len_diff, 
-                        k, min_frag_len, mm_clone_threshold):
+                        k, min_frag_len, mm_count_threshold, num_perm,
+                        token_size, mm_hash_similarity):
     
     um_index, um_positions, um_read_names = build_position_based_index(
         um_kept_dict = um_kept_dict, 
@@ -642,20 +650,28 @@ def verify_mm_positions(mm_kept_dict, um_kept_dict, seq_sim, nthr, len_diff,
     
     mm_reads = list(mm_kept_dict.values())
     subgroups = group_mm_sequences(
-        group = mm_reads, 
+        mm_reads = mm_reads, 
         seq_sim = seq_sim, 
-        len_diff = len_diff, 
-        k = k, 
         min_frag_len = min_frag_len,
-        nthr = nthr
+        num_perm = num_perm,
+        token_size = token_size,
+        mm_hash_similarity = mm_hash_similarity
         )
     print(f'Number of multimapping subgroups: {len(subgroups)}', flush = True)  
+    
+    nsub = 0
+    for group in subgroups:
+        nsub += len(group)
+        
+    if nsub != len(mm_kept_dict):
+        raise Exception(f'Failure in grouping multimapping reads.')
     
     sorted_subgroups = sorted(subgroups, key=len, reverse=True)
     subgroup_chunk_size = max(1, len(sorted_subgroups) // nthr)
     subgroup_chunks = [
         sorted_subgroups[i:i + subgroup_chunk_size] for i in range(0, len(sorted_subgroups), subgroup_chunk_size)
         ]
+    
     relocated_results = Parallel(n_jobs=nthr)(
         delayed(batch_compare_to_um)(
             chunk = chunk,
@@ -666,10 +682,10 @@ def verify_mm_positions(mm_kept_dict, um_kept_dict, seq_sim, nthr, len_diff,
             seq_sim = seq_sim, 
             k = k, 
             len_diff = len_diff,
-            mm_clone_threshold = mm_clone_threshold
+            mm_count_threshold = mm_count_threshold
             ) for chunk in subgroup_chunks
         )
-    
+        
     relocated_results = [item for sublist in relocated_results for item in sublist]
     
     relocated_reads = {}
@@ -693,12 +709,14 @@ def verify_mm_positions(mm_kept_dict, um_kept_dict, seq_sim, nthr, len_diff,
         total_singles = 0
         total_reassigned = 0
         for group, n_single in reassigned_results:
-            total_singles += n_single
+            if n_single == 1:
+                total_singles += 1
+            else:
+                total_reassigned += len(group)
             for read in group:
-                total_reassigned += 1
                 relocated_reads[read['read_name']] = read
     
-    print(f'Number of multimapping reads grouped and reassigned: {total_reassigned - total_singles}')
+    print(f'Number of multimapping reads grouped and reassigned: {total_reassigned}')
     print(f'Number of ungrouped multimapping reads: {total_singles}')
     
     mm_kept_dict.update(relocated_reads)

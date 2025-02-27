@@ -140,7 +140,7 @@ def get_nn(input_dict, num_perm, nthr, len_diff):
     return np.vstack(all_distances), np.vstack(all_indices)
 
 def group_similar_hashes(hash_distances, hash_indices, nthr, similarity, num_perm, input_dict):
-    hamming_threshold = (num_perm * 64) * (1 - similarity)
+    hamming_threshold = (num_perm * 32) * (1 - similarity)
     
     # Use input_dict keys to get correct sequence count
     sequence_indices = range(len(input_dict))

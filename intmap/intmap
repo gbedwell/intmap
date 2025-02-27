@@ -242,7 +242,7 @@ parser.add_argument('-token_size',
 parser.add_argument('-mm_hash_similarity',
                     type=float,
                     help='''Defines the Jaccard similarity between minhashes.''',
-                    default=0.80)
+                    default=0.75)
 parser.add_argument('-seq_sim',
                     type=float,
                     help='''Sequence similarity threshold. Used for validating multimapping read groups and, 
@@ -275,11 +275,12 @@ parser.add_argument('-k',
                     help='''The size of the k-mers used to reassign multimapping reads.     
                     Defaults to 20. Must be <= min_frag_len - len_diff''',
                     default=20)
-parser.add_argument('-mm_clone_threshold',
+parser.add_argument('-mm_count_threshold',
                     type=float, 
-                    help='''The threshold used for reassigning multimapping reads. Expressed as a fraction of total uniquely mapping reads. 
-                    Defaults to 0.01.''',
-                    default=0.01)
+                    help='''The minimum number of reads in a multimapping read group for 
+                    that group to be considered for relocation based on uniquely mapping read positions.
+                    Defaults to 5.''',
+                    default=5)
 parser.add_argument('--no_dedup', '-no_dedup',
                     help='''Boolean.
                     When True, the pipeline stops after alignment and QC.''',
@@ -468,7 +469,7 @@ if __name__ == "__main__":
             if args.reassign_mm:
                 print(f'Multimapping read reassignment: True')
                 print(f'Maximum multimapping k-mer size: {args.k} bp')
-                print(f'Multimapping clone threshold: {args.mm_clone_threshold}')
+                print(f'Multimapping clone threshold: {args.mm_count_threshold}')
             else:
                 print(f'Multimapping read reassignment: False')
         else:
@@ -817,7 +818,7 @@ if __name__ == "__main__":
             
             n_multi_exact = len(multi_exact_kept)
             print(f'Number of multimapping mapping reads removed: {n_multi - n_multi_exact}',
-                  flush = True)
+                    flush = True)
 
             print('Hashing multimapping sequences for fuzzy matching...', flush = True)
             multi_exact_hashed = Parallel(n_jobs = args.nthr)(
@@ -877,7 +878,7 @@ if __name__ == "__main__":
             dup_dict.update(multi_fuzzy_dup)
             
             print(f'Number of additional multimapping mapping reads removed: {n_multi_exact - len(mm_kept_dict)}',
-                  flush = True)
+                    flush = True)
             multi_perc = (len(mm_kept_dict) / n_multi) * 100
             print(f'{len(mm_kept_dict)} multimapping fragments retained ({multi_perc:.2f}%)', 
                     flush = True)
@@ -892,7 +893,10 @@ if __name__ == "__main__":
                     len_diff = args.len_diff,
                     k = args.k,
                     min_frag_len = args.min_frag_len,
-                    mm_clone_threshold = args.mm_clone_threshold
+                    mm_count_threshold = args.mm_count_threshold,
+                    num_perm = args.num_perm,
+                    token_size = args.token_size, 
+                    mm_hash_similarity = args.mm_hash_similarity
                     )
                 
                 if len(verified_kept_dict) != len(mm_kept_dict):

@@ -121,33 +121,6 @@ def test_multi_fuzzy_matches():
     assert kept == expected['kept']
     assert dup == expected['dup']
     
-# def test_build_kmer_index():
-#     sequences = [
-#         "AAATGCGTAGCGTGGC",
-#         "TGCGTAGCGTGGCGAT",
-#         "GCGTAGCGTGGC"
-#     ]
-    
-#     kmer_index = build_kmer_index(sequences, k=5, step=2)
-#     kmer_dict = dict(kmer_index)
-    
-#     expected = {
-#         hash('AAATG'): {0}, 
-#         hash('ATGCG'): {0}, 
-#         hash('GCGTA'): {0, 2}, 
-#         hash('GTAGC'): {0, 2}, 
-#         hash('AGCGT'): {0, 2}, 
-#         hash('CGTGG'): {0, 2}, 
-#         hash('TGCGT'): {1}, 
-#         hash('CGTAG'): {1}, 
-#         hash('TAGCG'): {1}, 
-#         hash('GCGTG'): {1}, 
-#         hash('GTGGC'): {1}, 
-#         hash('GGCGA'): {1}
-#     }
-    
-#     assert kmer_dict == expected
-    
 def test_group_mm_sequences():
     test_group = [
         {'read_name': 'read1', 'seq1': 'ATGCGTAGCGTGGCA', 'count': 1},
