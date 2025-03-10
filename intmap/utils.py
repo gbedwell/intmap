@@ -62,7 +62,8 @@ def open_file(filename, mode):
         return open(filename, mode)
     
 def natural_key(chrom):
-    return [int(text) if text.isdigit() else text for text in regex.split(r'(\d+)', chrom)]
+    pattern = regex.compile(r'(\d+)')
+    return [int(text) if text.isdigit() else text for text in pattern.split(chrom)]
 
 def check_genome_compression(genome_fasta):
     with open(genome_fasta, 'rb') as f:
@@ -79,13 +80,15 @@ def fetch_sequence(coordinates, genome, U3, shift):
         strand = '-' if not U3 else '+'
     else:
         strand = '+' if not U3 else '-'
+        
+    chr_len = genome.get_reference_length(chrom)
     
     if strand == '-':
-        start = (coordinates['end'] - shift) - 40
-        end = (coordinates['end'] - shift) + 15
+        start = max(((coordinates['end'] - shift) - 40), 0)
+        end = min((coordinates['end'] - shift) + 15, chr_len)
     else:
-        start = (coordinates['start'] + shift) - 15
-        end = (coordinates['start'] + shift) + 40
+        start = max(((coordinates['start'] + shift) - 15), 0)
+        end = min(((coordinates['start'] + shift) + 40), chr_len)
         
     sequence = genome.fetch(chrom, start, end)
     
@@ -118,12 +121,13 @@ def get_nn(input_dict, num_perm, nthr, len_diff):
     set_faiss_threads(nthr)
     batch_size = min(1000, len(input_dict))
     nn_k = min(len(input_dict), 1000)
-    dim = num_perm * 32
+    dim = num_perm * 4
     
-    hashes = [value['hash'] for _, value in input_dict.items()]
-    db = np.array(hashes, dtype='uint8')
+    db = np.zeros((len(input_dict), dim), dtype='uint8')
+    for i, (_, value) in enumerate(input_dict.items()):
+        db[i] = value['hash']
     
-    hash_index = faiss.IndexBinaryFlat(dim)
+    hash_index = faiss.IndexBinaryFlat(dim * 8)
     hash_index.add(db)
 
     all_distances = []
@@ -142,20 +146,18 @@ def get_nn(input_dict, num_perm, nthr, len_diff):
 def group_similar_hashes(hash_distances, hash_indices, nthr, similarity, num_perm, input_dict):
     hamming_threshold = (num_perm * 32) * (1 - similarity)
     
-    # Use input_dict keys to get correct sequence count
-    sequence_indices = range(len(input_dict))
-    n_sequences = len(sequence_indices)
+    n_sequences = len(input_dict)
     
-    # Build edges using original sequence indices
     rows, cols = [], []
-    mask = hash_distances <= hamming_threshold
-    for dist_row, idx_row, row_mask in zip(hash_distances, hash_indices, mask):
-        valid_indices = idx_row[row_mask]
-        if len(valid_indices) > 0 and idx_row[0] < n_sequences:
-            source_idx = idx_row[0]
-            valid_indices = valid_indices[valid_indices < n_sequences]
-            rows.extend([source_idx] * len(valid_indices))
-            cols.extend(valid_indices)
+    valid_queries = hash_indices[:, 0] < n_sequences
+    
+    for i in np.where(valid_queries)[0]:
+        mask = hash_distances[i] <= hamming_threshold
+        valid_idx = hash_indices[i][mask]
+        valid_idx = valid_idx[valid_idx < n_sequences]
+        if len(valid_idx) > 0:
+            rows.extend([hash_indices[i, 0]] * len(valid_idx))
+            cols.extend(valid_idx)
     
     graph = csr_matrix(
         ([1] * len(rows), (rows, cols)),
@@ -170,22 +172,28 @@ def group_similar_hashes(hash_distances, hash_indices, nthr, similarity, num_per
         return_labels=True
     )
     
+    # More efficient component extraction
     unique_entries = []
     grouped_entries = []
     
+    # Use bincount for single-item components
+    label_counts = np.bincount(labels)
+    
     for component_id in range(n_components):
-        component_indices = np.where(labels == component_id)[0]
-        if len(component_indices) == 1:
-            unique_entries.append(int(component_indices[0]))
-        else:
-            grouped_entries.append(sorted(map(int, component_indices)))
+        if label_counts[component_id] == 1:
+            # This is a single-item component
+            unique_entries.append(int(np.where(labels == component_id)[0][0]))
+        elif label_counts[component_id] > 1:
+            # This is a multi-item component
+            grouped_entries.append(sorted(np.where(labels == component_id)[0].astype(int).tolist()))
             
     return unique_entries, grouped_entries
 
 def extract_grouped_entries(groups, input_dict):
+    dict_values = list(input_dict.values())
     grouped_entries = []
     for group in groups:
-        entries = [list(input_dict.values())[index] for index in group]
+        entries = [dict_values[index] for index in group]
         grouped_entries.append(entries)
 
     return grouped_entries

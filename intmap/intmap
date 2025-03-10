@@ -133,8 +133,8 @@ parser.add_argument('-min_mapq',
                     type=int, 
                     help='''The minimum acceptable MAPQ score.
                     Does not apply to multimapping reads. 
-                    Defaults to 20.''',
-                    default=20)
+                    Defaults to 2.''',
+                    default=2)
 parser.add_argument('-match_after',
                     type=int, 
                     help='''The number of mismatched bases allowed at the start of read 1. Defaults to 2.''',
@@ -200,7 +200,7 @@ parser.add_argument('-len_diff',
                     default=5)
 parser.add_argument('-umi_diff',
                     type=int, 
-                    help='''The maximum difference between UMIs to consider them 
+                    help='''The maximum difference between UMIs to group them for further examination as 
                     as possible duplicates. Defaults to 8.''',
                     default=8)
 parser.add_argument('-v_idx_dir',
@@ -233,15 +233,15 @@ parser.add_argument('-genome_fasta_index',
                     default=None)
 parser.add_argument('-num_perm',
                     type=int, 
-                    help='''The number of permutations in the generated minhash fingerprint. Defaults to 64. Must be divisble by 8 and >= 32.''',
-                    default=64)
+                    help='''The number of permutations in the generated minhash fingerprint. Defaults to 128. Must be divisble by 8 and >= 32.''',
+                    default=128)
 parser.add_argument('-token_size',
                     type=int, 
                     help='''The token size for minhash generation. Defaults to 4.''',
                     default=4)
 parser.add_argument('-mm_hash_similarity',
                     type=float,
-                    help='''Defines the Jaccard similarity between minhashes.''',
+                    help='''Defines the Jaccard similarity between minhashes. Defaults to 0.75''',
                     default=0.75)
 parser.add_argument('-seq_sim',
                     type=float,
@@ -253,8 +253,8 @@ parser.add_argument('-misprime_mismatch',
                     type=int, 
                     help='''The number of mismatches allowed when searching for mispriming. 
                     Set to -1 to omit this step. 
-                    Defaults to 2.''',
-                    default=2)
+                    Defaults to -1.''',
+                    default=-1)
 parser.add_argument('-min_count',
                     type=int, 
                     help='''The minimum number of sites required to define a particular integration site as abundant.    
@@ -318,13 +318,13 @@ if __name__ == "__main__":
     from itertools import groupby
     from operator import itemgetter
     import json
-    from datasketch import MinHash
-    import pybktree
     import random
     from scipy.sparse import csr_matrix
     from scipy.sparse.csgraph import connected_components
     import multiprocessing
     from joblib import Parallel, delayed
+    from datasketch import MinHash, LeanMinHash, MinHashLSH
+    from functools import lru_cache
     
     start_time = time.time()
 
@@ -362,6 +362,8 @@ if __name__ == "__main__":
         parser.error('num_perm must be >= 32.')
     if args.token_size < 2:
         parser.error('token_size must be >= 2.')
+    if args.mm_hash_similarity > round(args.seq_sim - (1 / (args.num_perm ** 0.5)), 3):
+        parser.error(f'mm_hash_similarity must be <= {round(args.seq_sim - (1 / (args.num_perm ** 0.5)), 3)}')
     if args.match_after < 0:
         parser.error('match_after must be >= 0.')
     if args.len_diff > 10:
@@ -871,7 +873,10 @@ if __name__ == "__main__":
                 umi_diff = args.umi_diff,
                 frag_ratio = args.frag_ratio,
                 nthr = args.nthr,
-                seq_sim = args.seq_sim
+                seq_sim = args.seq_sim,
+                num_perm = args.num_perm,
+                token_size = args.token_size,
+                mm_hash_similarity = args.mm_hash_similarity
                 )
             
             mm_kept_dict.update(multi_fuzzy_kept)

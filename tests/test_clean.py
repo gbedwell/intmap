@@ -1,7 +1,7 @@
 from intmap.clean import unique_exact_matches
 from intmap.clean import unique_fuzzy_matches
 from intmap.clean import ranged_groupby
-from intmap.clean import cluster_entries_by_umis, build_umi_networks, traverse_umi_networks, bfs
+from intmap.clean import cluster_entries_by_umis, build_umi_networks, find_connected_components
 from intmap.clean import multi_exact_matches
 from intmap.clean import verify_sequence_groups
 from intmap.clean import multi_fuzzy_matches
@@ -75,6 +75,7 @@ def test_cluster_entries_by_umis():
     
     # Test both scenarios
     small_clusters = cluster_entries_by_umis(small_cluster_input, threshold = 4, frag_ratio = 2)
+    print(f'Small clusters: {small_clusters}')
     large_clusters = cluster_entries_by_umis(large_cluster_input, threshold = 1, frag_ratio = 2)
     
     # Verify small cluster results
@@ -116,32 +117,47 @@ def test_multi_fuzzy_matches():
         umi_diff=3,
         frag_ratio=2,
         nthr=1,
-        seq_sim=0.9
+        seq_sim=0.9,
+        num_perm=32, 
+        token_size=4, 
+        mm_hash_similarity=0.5
         )
     assert kept == expected['kept']
     assert dup == expected['dup']
     
 def test_group_mm_sequences():
-    test_group = [
-        {'read_name': 'read1', 'seq1': 'ATGCGTAGCGTGGCA', 'count': 1},
-        {'read_name': 'read2', 'seq1': 'TGCGTAGCGTGGC', 'count': 1},
-        {'read_name': 'read3', 'seq1': 'GCGTAGCGTGGC', 'count': 1},
-        {'read_name': 'read4', 'seq1': 'TACGTACGTACGT', 'count': 1}
-    ]
+    test_group = {
+        'read1': {'read_name': 'read1', 'seq1': 'AAGACTGCTTGAGCCCAGGAGTTCAAGGCTACAGTGAGCTATGATCACACCGT', 'count': 1},
+        'read2': {'read_name': 'read2', 'seq1': 'AACACTGCTTGAGCCCAGGAGTTCAAGGCTACAGTGAGCTATGATCACACC', 'count': 1},
+        'read3': {'read_name': 'read3', 'seq1': 'AAGACTGCTTGAGCCCAGGAGTTCAACGCAACAGTGAGCTATGATCA', 'count': 1},
+        'read4': {'read_name': 'read4', 'seq1': 'GCCTTGAACTCCTGGGCTCAAGCAGTCTT', 'count': 1}
+    }
 
-    subgroups1 = group_mm_sequences(test_group, seq_sim=0.8, k=5, len_diff=5, min_frag_len=20, nthr=1)
-
+    subgroups1 = group_mm_sequences(mm_reads=test_group, seq_sim=0.8, min_frag_len=25,
+                                    num_perm=32, token_size=4, mm_hash_similarity=0.5)
+    
     assert len(subgroups1) == 2
     
     # Verify each group contains the expected sequences
     group_seqs1 = [set(read['seq1'] for read in group) for group in subgroups1]
-    assert set(['GCGTAGCGTGGC', 'ATGCGTAGCGTGGCA', 'TGCGTAGCGTGGC']) in group_seqs1
-    assert set(['TACGTACGTACGT']) in group_seqs1
+    assert set(['AAGACTGCTTGAGCCCAGGAGTTCAAGGCTACAGTGAGCTATGATCACACCGT', 
+                'AACACTGCTTGAGCCCAGGAGTTCAAGGCTACAGTGAGCTATGATCACACC', 
+                'AAGACTGCTTGAGCCCAGGAGTTCAACGCAACAGTGAGCTATGATCA']) in group_seqs1
+    assert set(['GCCTTGAACTCCTGGGCTCAAGCAGTCTT']) in group_seqs1
     
 from tests.data.clean.build_position_based_index.test_data import get_expected_data
 
 def test_build_position_based_index():
     input_data, _ = load_test_data('clean', 'build_position_based_index')
+    
+    # To make new data:
+    # 1. Uncomment the following two lines
+    # from tests.data.clean.build_position_based_index.test_data import update_test_data
+    # update_test_data(input_data)
+    # NOTE: the test will fail, but it will print the new get_expected_data() function
+    # 2. Copy the new get_expected_data() function into test_data.py
+    # 3. Run test again
+    
     expected_index, expected_positions, expected_reads = get_expected_data()
     
     index, positions, read_names = build_position_based_index(
@@ -226,8 +242,8 @@ def test_compare_to_um():
     
     group2 = [
         {
-            "read_name": "mm_read3", # No match -- mutated
-            "seq1": "GCGTACCGTGGC",  # 2 mutations
+            "read_name": "mm_read3", # No match
+            "seq1": "TGCGAAACCTAG",
             "count": 1,
             "chrom": "chr3",
             "start": 400,
@@ -284,7 +300,18 @@ def test_compare_to_um():
         }
     ]
 
-    expected2 = None
+    expected2 = [
+        {
+            "read_name": "mm_read3", # No match
+            "seq1": "TGCGAAACCTAG",
+            "count": 1,
+            "chrom": "chr3",
+            "start": 400,
+            "end": 412,
+            "strand": "-",
+            "multi": "True"
+        }
+    ]
 
     expected3 = [
         {
@@ -316,7 +343,7 @@ def test_compare_to_um():
         um_kept_dict, k=5, len_diff=5, nthr=1
     )
 
-    result1 = compare_to_um(
+    result1, relocated1 = compare_to_um(
         mm_group=group1,
         um_index=index, 
         um_positions=positions,
@@ -325,12 +352,13 @@ def test_compare_to_um():
         seq_sim=0.8,
         k=5,
         len_diff=5,
-        mm_clone_threshold=0.00001
+        mm_count_threshold=1
     )
     
     assert result1 == expected1
+    assert relocated1 == True
     
-    result2 = compare_to_um(
+    result2, relocated2 = compare_to_um(
         mm_group=group2,
         um_index=index, 
         um_positions=positions,
@@ -339,12 +367,13 @@ def test_compare_to_um():
         seq_sim=0.8,
         k=5,
         len_diff=5,
-        mm_clone_threshold=0.00001
+        mm_count_threshold=1
     )
     
     assert result2 == expected2
+    assert relocated2 == False
     
-    result3 = compare_to_um(
+    result3, relocated3 = compare_to_um(
         mm_group=group3,
         um_index=index, 
         um_positions=positions,
@@ -353,12 +382,13 @@ def test_compare_to_um():
         seq_sim=0.8,
         k=5,
         len_diff=5,
-        mm_clone_threshold=0.00001
+        mm_count_threshold=1
     )
     
     assert result3 == expected3
+    assert relocated3 == True
     
-    result4 = compare_to_um(
+    result4, relocated4 = compare_to_um(
         mm_group=group4,
         um_index=index, 
         um_positions=positions,
@@ -367,10 +397,11 @@ def test_compare_to_um():
         seq_sim=0.8,
         k=5,
         len_diff=5,
-        mm_clone_threshold=0.00001
+        mm_count_threshold=1
     )
     
     assert result4 == expected4
+    assert relocated4 == True
     
 def test_assign_mm_group():
     group = [
@@ -433,7 +464,10 @@ def test_verify_mm_positions():
         k = 5,
         len_diff = 5,
         min_frag_len=20,
-        mm_clone_threshold = 0.00001
+        mm_count_threshold = 1,
+        num_perm=32, 
+        token_size=4, 
+        mm_hash_similarity=0.5
     )
     
     assert result == expected

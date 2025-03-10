@@ -19,8 +19,7 @@ setup(
 		'RapidFuzz',
 		'numpy',
 		'faiss-cpu',
-		'datasketch',
-		'pybktree'
+		'datasketch'
 	],
  	setup_requires=[
         "pytest-runner",

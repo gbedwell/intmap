@@ -14,7 +14,8 @@
             "multi": "True",
             "mean_qual": 35,
             "ltr_match": "ATGC",
-            "linker_match": "ATGC"
+            "linker_match": "ATGC",
+            "combined_umi": "AAAATTTT"
         }
     },
     "dup": {
