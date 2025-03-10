@@ -358,7 +358,6 @@ def find_connected_components(networks):
     # Return list of components sorted by node count
     return sorted(components.values(), key=len, reverse=True)
 
-# Improve unit test for unique_fuzzy_matches
 def unique_fuzzy_matches(input_dict, len_diff, umi_diff, frag_ratio):
     tmp_fuzzy_kept = defaultdict(list)
     tmp_fuzzy_dup = defaultdict(set)
@@ -765,7 +764,6 @@ def build_position_based_index(um_kept_dict, len_diff, nthr, k):
     
     return index, all_positions, all_read_names
 
-### TO-DO: VERIFY compare_to_um MORE RIGOROUSLY ###
 def compare_to_um(mm_group, um_index, um_positions, um_read_names, 
                     um_kept_dict, seq_sim, k, len_diff, mm_count_threshold):
     

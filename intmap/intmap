@@ -470,7 +470,7 @@ if __name__ == "__main__":
             print(f'Multimapping sequence matching threshold: {args.seq_sim}')
             if args.reassign_mm:
                 print(f'Multimapping read reassignment: True')
-                print(f'Maximum multimapping k-mer size: {args.k} bp')
+                print(f'Multimapping k-mer size: {args.k} bp')
                 print(f'Multimapping clone threshold: {args.mm_count_threshold}')
             else:
                 print(f'Multimapping read reassignment: False')
