@@ -511,7 +511,7 @@ def process_standard_group(group, umi_diff, frag_ratio, seq_sim):
         return kept_reads, dup_reads
 
 def large_group_lsh(group, seq_sim, num_perm, token_size, mm_hash_similarity, max_threshold):
-        lsh = MinHashLSH(threshold=min((mm_hash_similarity + 0.05), max_threshold), num_perm=num_perm)
+        lsh = MinHashLSH(threshold=min((mm_hash_similarity + 0.025), max_threshold), num_perm=num_perm)
         
         read_to_entry = {entry['read_name']: entry for entry in group}
         read_to_minhash = {}

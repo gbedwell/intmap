@@ -241,14 +241,14 @@ parser.add_argument('-token_size',
                     default=4)
 parser.add_argument('-mm_hash_similarity',
                     type=float,
-                    help='''Defines the Jaccard similarity between minhashes. Defaults to 0.75''',
-                    default=0.75)
+                    help='''Defines the Jaccard similarity between minhashes. Defaults to 0.8''',
+                    default=0.8)
 parser.add_argument('-seq_sim',
                     type=float,
                     help='''Sequence similarity threshold. Used for validating multimapping read groups and, 
                     in certain instances, assigning multimapping read positions.  
-                    Defaults to 0.90.''',
-                    default=0.90)
+                    Defaults to 0.95.''',
+                    default=0.95)
 parser.add_argument('-misprime_mismatch',
                     type=int, 
                     help='''The number of mismatches allowed when searching for mispriming. 
