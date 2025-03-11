@@ -510,8 +510,8 @@ def process_standard_group(group, umi_diff, frag_ratio, seq_sim):
         
         return kept_reads, dup_reads
 
-def large_group_lsh(group, seq_sim, num_perm, token_size, mm_hash_similarity, max_threshold):
-        lsh = MinHashLSH(threshold=min((mm_hash_similarity + 0.025), max_threshold), num_perm=num_perm)
+def large_group_lsh(group, seq_sim, num_perm, token_size, mm_hash_similarity, threshold):
+        lsh = MinHashLSH(threshold=threshold, num_perm=num_perm)
         
         read_to_entry = {entry['read_name']: entry for entry in group}
         read_to_minhash = {}
@@ -573,6 +573,7 @@ def large_group_lsh(group, seq_sim, num_perm, token_size, mm_hash_similarity, ma
 def multi_fuzzy_matches(groups, umi_diff, frag_ratio, nthr, seq_sim,
                         num_perm, token_size, mm_hash_similarity):
     max_threshold = round(seq_sim - (1 / (num_perm ** 0.5)), 3)
+    threshold = min((mm_hash_similarity + 0.05), max_threshold)
     results = Parallel(n_jobs=nthr)(
         delayed(process_group)(group, 
                                 seq_sim, 
@@ -581,7 +582,7 @@ def multi_fuzzy_matches(groups, umi_diff, frag_ratio, nthr, seq_sim,
                                 num_perm, 
                                 token_size, 
                                 mm_hash_similarity,
-                                max_threshold)
+                                threshold)
         for group in groups
         )
     
@@ -673,8 +674,7 @@ def refine_coarse_clusters(coarse_clusters, seq_sim):
         
     return refined_clusters
 
-def group_mm_sequences(mm_reads, seq_sim, min_frag_len, num_perm, 
-                        token_size, mm_hash_similarity):
+def group_mm_sequences(mm_reads, seq_sim, min_frag_len, num_perm, token_size):
         
     seq_to_entries = {}
     seqs = []
@@ -688,11 +688,11 @@ def group_mm_sequences(mm_reads, seq_sim, min_frag_len, num_perm,
     # Coarse clustering by prefix matching
     coarse_clusters = mm_coarse_cluster(
         sequences = seqs,
-        threshold = mm_hash_similarity,
+        threshold = 0.5,
         num_perm = num_perm,
         min_frag_len = min_frag_len,
         token_size = token_size
-    )
+        )
 
     # Refine coarse clusters by sequence similarity
     refined_seq_clusters = refine_coarse_clusters(
@@ -918,8 +918,7 @@ def verify_mm_positions(mm_kept_dict, um_kept_dict, seq_sim, nthr, len_diff,
         seq_sim = seq_sim, 
         min_frag_len = min_frag_len,
         num_perm = num_perm,
-        token_size = token_size,
-        mm_hash_similarity = mm_hash_similarity
+        token_size = token_size
         )
     
     print(f'Number of multimapping subgroups: {len(subgroups)}', flush = True)  

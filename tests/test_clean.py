@@ -134,7 +134,7 @@ def test_group_mm_sequences():
     }
 
     subgroups1 = group_mm_sequences(mm_reads=test_group, seq_sim=0.8, min_frag_len=25,
-                                    num_perm=32, token_size=4, mm_hash_similarity=0.5)
+                                    num_perm=32, token_size=4)
     
     assert len(subgroups1) == 2
     
