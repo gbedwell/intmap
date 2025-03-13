@@ -8,3 +8,4 @@ old_group_similar_hashes.py
 cluster_entries_w_diagnostics.py
 build_umi_index_with_hamming.py
 old_multi_fuzzy_matches.py
+old_compare_to_um.py

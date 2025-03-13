@@ -351,8 +351,7 @@ def test_compare_to_um():
         um_kept_dict=um_kept_dict,
         seq_sim=0.8,
         k=5,
-        len_diff=5,
-        mm_count_threshold=1
+        len_diff=5
     )
     
     assert result1 == expected1
@@ -366,8 +365,7 @@ def test_compare_to_um():
         um_kept_dict=um_kept_dict,
         seq_sim=0.8,
         k=5,
-        len_diff=5,
-        mm_count_threshold=1
+        len_diff=5
     )
     
     assert result2 == expected2
@@ -381,8 +379,7 @@ def test_compare_to_um():
         um_kept_dict=um_kept_dict,
         seq_sim=0.8,
         k=5,
-        len_diff=5,
-        mm_count_threshold=1
+        len_diff=5
     )
     
     assert result3 == expected3
@@ -396,8 +393,7 @@ def test_compare_to_um():
         um_kept_dict=um_kept_dict,
         seq_sim=0.8,
         k=5,
-        len_diff=5,
-        mm_count_threshold=1
+        len_diff=5
     )
     
     assert result4 == expected4
@@ -464,7 +460,6 @@ def test_verify_mm_positions():
         k = 5,
         len_diff = 5,
         min_frag_len=20,
-        mm_count_threshold = 1,
         num_perm=32, 
         token_size=4, 
         mm_hash_similarity=0.5

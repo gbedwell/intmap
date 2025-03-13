@@ -247,8 +247,8 @@ parser.add_argument('-seq_sim',
                     type=float,
                     help='''Sequence similarity threshold. Used for validating multimapping read groups and, 
                     in certain instances, assigning multimapping read positions.  
-                    Defaults to 0.9.''',
-                    default=0.9)
+                    Defaults to 0.95.''',
+                    default=0.95)
 parser.add_argument('-misprime_mismatch',
                     type=int, 
                     help='''The number of mismatches allowed when searching for mispriming. 
@@ -275,12 +275,6 @@ parser.add_argument('-k',
                     help='''The size of the k-mers used to reassign multimapping reads.     
                     Defaults to 20. Must be <= min_frag_len - len_diff''',
                     default=20)
-parser.add_argument('-mm_count_threshold',
-                    type=float, 
-                    help='''The minimum number of reads in a multimapping read group for 
-                    that group to be considered for relocation based on uniquely mapping read positions.
-                    Defaults to 5.''',
-                    default=5)
 parser.add_argument('--no_dedup', '-no_dedup',
                     help='''Boolean.
                     When True, the pipeline stops after alignment and QC.''',
@@ -291,7 +285,6 @@ args = parser.parse_args()
 
 if __name__ == "__main__":
     import os
-    os.environ['PYTHONHASHSEED'] = '0'
     import platform
     import glob
     import sys
@@ -325,6 +318,7 @@ if __name__ == "__main__":
     from joblib import Parallel, delayed
     from datasketch import MinHash, LeanMinHash, MinHashLSH
     from functools import lru_cache
+    from pybloom_live import BloomFilter
     
     start_time = time.time()
 
@@ -467,11 +461,10 @@ if __name__ == "__main__":
             print(f'Multimapping hash fingerprint length: {args.num_perm} hashes')
             print(f'Multimapping token size: {args.token_size} bp')
             print(f'Multimapping hash similarity threshold: {args.mm_hash_similarity}')
-            print(f'Multimapping sequence matching threshold: {args.seq_sim}')
+            print(f'Multimapping sequence similarity threshold: {args.seq_sim}')
             if args.reassign_mm:
                 print(f'Multimapping read reassignment: True')
                 print(f'Multimapping k-mer size: {args.k} bp')
-                print(f'Multimapping clone threshold: {args.mm_count_threshold}')
             else:
                 print(f'Multimapping read reassignment: False')
         else:
@@ -754,7 +747,9 @@ if __name__ == "__main__":
             for value in entry.values():
                 n_exact_kept += len(value)
         
-        print(f'Number of uniquely mapping reads removed: {n_unique - n_exact_kept}',
+        uniq_rm1 = n_unique - n_exact_kept
+        uniq_rm1_perc = (uniq_rm1 / n_unique) * 100
+        print(f'Number of uniquely mapping reads removed: {uniq_rm1} ({uniq_rm1_perc:.2f}%)',
                 flush = True)
 
         print('Looking for unique fuzzy matches...', flush = True)
@@ -794,7 +789,10 @@ if __name__ == "__main__":
             for info_list in unique_fuzzy_kept.values()
             for info in info_list
         }
-        print(f'Number of additional uniquely mapping reads removed: {n_exact_kept - len(kept_dict)}',
+        
+        uniq_rm2 = n_exact_kept - len(kept_dict)
+        uniq_rm2_perc = (uniq_rm2 / n_unique) * 100
+        print(f'Number of additional uniquely mapping reads removed: {uniq_rm2} ({uniq_rm2_perc:.2f}%)',
                 flush = True)
         # At this point, len(kept_dict) = len(kept unique fragments)
         unique_perc = (len(kept_dict) / n_unique) * 100
@@ -819,7 +817,9 @@ if __name__ == "__main__":
             del multi_all
             
             n_multi_exact = len(multi_exact_kept)
-            print(f'Number of multimapping mapping reads removed: {n_multi - n_multi_exact}',
+            mm_rm1 = n_multi - n_multi_exact
+            mm_rm1_perc = (mm_rm1 / n_multi) * 100
+            print(f'Number of multimapping mapping reads removed: {mm_rm1} ({mm_rm1_perc:.2f}%)',
                     flush = True)
 
             print('Hashing multimapping sequences for fuzzy matching...', flush = True)
@@ -882,10 +882,14 @@ if __name__ == "__main__":
             mm_kept_dict.update(multi_fuzzy_kept)
             dup_dict.update(multi_fuzzy_dup)
             
-            print(f'Number of additional multimapping mapping reads removed: {n_multi_exact - len(mm_kept_dict)}',
+            mm_rm2 = n_multi_exact - len(mm_kept_dict)
+            mm_rm2_perc = (mm_rm2 / n_multi) * 100
+            print(f'Number of additional multimapping mapping reads removed: {mm_rm2} ({mm_rm2_perc:.2f}%)',
                     flush = True)
-            multi_perc = (len(mm_kept_dict) / n_multi) * 100
-            print(f'{len(mm_kept_dict)} multimapping fragments retained ({multi_perc:.2f}%)', 
+            
+            n_mm_kept = len(mm_kept_dict)
+            multi_perc = (n_mm_kept / n_multi) * 100
+            print(f'{n_mm_kept} multimapping fragments retained ({multi_perc:.2f}%)', 
                     flush = True)
             
             if args.reassign_mm:
@@ -898,10 +902,8 @@ if __name__ == "__main__":
                     len_diff = args.len_diff,
                     k = args.k,
                     min_frag_len = args.min_frag_len,
-                    mm_count_threshold = args.mm_count_threshold,
                     num_perm = args.num_perm,
-                    token_size = args.token_size, 
-                    mm_hash_similarity = args.mm_hash_similarity
+                    token_size = args.token_size
                     )
                 
                 if len(verified_kept_dict) != len(mm_kept_dict):
@@ -951,7 +953,15 @@ if __name__ == "__main__":
         print(f'Removing {n_misprime} fragments due to potential mispriming ({mp_perc:.2f}% of total)', 
                 flush = True)
         n_mapped = len(kept_dict)
-        print(n_mapped, 'fragments remaining', flush = True)
+        
+        uniq_mapped = 0
+        for read_name, read in kept_dict.items():
+            if read['multi'] == False:
+                uniq_mapped += 1
+        
+        print(f'{n_mapped} fragments remaining:', flush = True)
+        print(f' {uniq_mapped} uniquely mapping fragments ({((uniq_mapped / n_mapped) * 100):.2f}% of total)')
+        print(f' {n_mapped - uniq_mapped} multimapping fragments ({(((n_mapped - uniq_mapped) / n_mapped) * 100):.2f}% of total)')
         
         mismatch_end = time.time()
         mismatch_time = round((mismatch_end - mismatch_start), 3)

@@ -19,7 +19,8 @@ setup(
 		'RapidFuzz',
 		'numpy',
 		'faiss-cpu',
-		'datasketch'
+		'datasketch',
+		'pybloom-live'
 	],
  	setup_requires=[
         "pytest-runner",

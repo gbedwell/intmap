@@ -16,6 +16,7 @@ from joblib import Parallel, delayed
 import time
 from datasketch import MinHash, LeanMinHash, MinHashLSH
 from functools import lru_cache
+from pybloom_live import BloomFilter
 
 # Calculate Hamming distance
 # def hamming_distance(seq1, seq2):
@@ -712,122 +713,119 @@ def group_mm_sequences(mm_reads, seq_sim, min_frag_len, num_perm, token_size):
     
     return final_clusters
 
-def build_position_based_index(um_kept_dict, len_diff, nthr, k):
-    # Stratify reads by chromosome and strand
+def build_position_based_index(um_kept_dict, k, nthr):
+    um_index = {}
+    
+    # Estimate capacity for Bloom filter
+    estimated_kmers = sum(1 for read in um_kept_dict.values())
+    bloom = BloomFilter(capacity = estimated_kmers * 2, error_rate = 0.01)
+    
+    # Group reads by chromosome and strand
     stratified_reads = defaultdict(list)
     for read_name, read in um_kept_dict.items():
         key = (read['chrom'], read['strand'])
         stratified_reads[key].append(read)
-
+    
     def process_stratum(stratum_key, reads):
-        # Group reads by position
+        chrom, strand = stratum_key
+        local_um_index = {}
+        local_prefix_set = set()
+        
         pos_groups = defaultdict(list)
         for read in reads:
-            pos = read['end'] if read['strand'] == '-' else read['start']
+            pos = read['end'] if strand == '-' else read['start']
             pos_groups[pos].append(read)
         
-        # Sort positions and get shortest read at each position
-        unique_positions = sorted(pos_groups.keys())
-        n_kmers = len_diff + 1
-        vectors = np.zeros((len(unique_positions), n_kmers), dtype=np.float32)
-        position_info = []
-        read_names = []
-        
-        for idx, pos in enumerate(unique_positions):
-            # Get read with shortest seq1 at this position
-            read = min(pos_groups[pos], key=lambda x: len(x['seq1']))
-            
-            seq = read['seq1']
-            kmers = [stable_hash(''.join(seq[i:i+k])) for i in range(n_kmers)]
-            vectors[idx] = kmers / np.linalg.norm(kmers)
-            
-            position_info.append((read['chrom'], pos, read['strand']))
-            read_names.append(read['read_name'])
-            
-        return vectors, position_info, read_names
-
-    # Process each stratum in parallel
+        # Process each position
+        for pos, pos_reads in pos_groups.items():
+            # Ascending sort
+            sorted_reads = sorted(pos_reads, key = lambda x: len(x['seq1']), reverse = False)
+            # Add all valid k-mer prefixes from this position
+            for read in sorted_reads:
+                seq = read['seq1']
+                prefix = seq[:k]
+                if prefix not in local_prefix_set:
+                    position_info = (chrom, pos, strand)
+                    read_id = read['read_name']
+                    local_um_index[prefix] = (position_info, read_id)
+                    local_prefix_set.add(prefix)
+    
+        return local_um_index, local_prefix_set
+    
     results = Parallel(n_jobs=nthr)(
-        delayed(process_stratum)(key, reads) 
+        delayed(process_stratum)(key, reads)
         for key, reads in stratified_reads.items()
         )
     
-    # Combine results
-    all_vectors = np.vstack([r[0] for r in results])
-    all_positions = np.array([p for r in results for p in r[1]], 
-                            dtype=[('chrom', 'U20'), ('pos', np.int32), ('strand', 'U1')])
-    all_read_names = np.array([n for r in results for n in r[2]])
+    um_index = defaultdict(list)
+    for local_index, prefix_set in results:
+        for prefix, (position_info, read_id) in local_index.items():
+            um_index[prefix].append((position_info, read_id))
+        for prefix in prefix_set:
+            bloom.add(prefix)
     
-    # Build FAISS index
-    index = faiss.IndexFlatL2(len_diff + 1)
-    index.add(all_vectors)
-    
-    return index, all_positions, all_read_names
+    return um_index, bloom
 
-def compare_to_um(mm_group, um_index, um_positions, um_read_names, 
-                    um_kept_dict, seq_sim, k, len_diff, mm_count_threshold):
+def compare_to_um(mm_group, k, um_index, bloom_filter, um_kept_dict, seq_sim):
     
-    if len(mm_group) < mm_count_threshold:
-        return (mm_group, False)
+    sorted_mm_reads = sorted(mm_group, key = lambda x: len(x['seq1']), reverse = True)
+    
+    relocation_info = {}
+    
+    for mm_read in sorted_mm_reads:
+        mm_seq = mm_read['seq1']        
+        prefix = mm_seq[:k]
+        # Check if prefix is in the bloom filter
+        if prefix not in bloom_filter:
+            continue
+        
+        # Check if prefix exists in index
+        if prefix in um_index:
+            positions = um_index[prefix]
+            best_similarity = 0
+            best_position_info = None
+            best_read_id = None
+            
+            for position_info, um_read_id in positions:
+                chrom, pos, strand = position_info
+                um_rep_read = um_kept_dict[um_read_id]
+                um_seq = um_rep_read['seq1']
+            
+                if len(um_seq) <= (len(mm_seq) * 1.2):
+                    continue
 
-    longest_mm_read = max(mm_group, key=lambda x: len(x['seq1']))
-    longest_mm_seq = longest_mm_read['seq1']
-    longest_mm_len = len(longest_mm_seq)
+                common_length = min(len(mm_seq), len(um_seq))
+                similarity = seq_similarity(mm_seq[:common_length], um_seq[:common_length])
+                
+                if similarity > best_similarity:
+                    best_similarity = similarity
+                    best_position_info = position_info
+                    best_read_id = um_read_id
+                
+            if best_similarity >= seq_sim:
+                relocation_info[mm_read['read_name']] = best_position_info
+        
+    if relocation_info:        
+        relocated_group = []
+        unrelocated_group = []
+        for read in mm_group:
+            read_name = read['read_name']
+            if read_name in relocation_info:
+                position_info = relocation_info[read_name]
+                chrom, pos, strand = position_info
+                relocated_read = read.copy()
+                read_len = int(relocated_read['end']) - int(relocated_read['start'])
+                relocated_read['chrom'] = str(chrom)
+                relocated_read['start'] = int(pos) if strand == '+' else int(pos - read_len)
+                relocated_read['end'] = int(pos + read_len) if strand == '+' else int(pos)
+                relocated_read['strand'] = str(strand)
+                relocated_read['multi'] = 'True - relocated'
+                relocated_group.append(relocated_read)
+            else:
+                unrelocated_group.append(read)
+        return (relocated_group, unrelocated_group)
     
-    # Generate k-mers from representative sequence to compare to uniquely mapping k-mers
-    n_kmers = len_diff + 1
-    mm_vectors = np.zeros((1, n_kmers), dtype=np.float32)
-    kmers = [stable_hash(''.join(longest_mm_seq[i:i+k])) for i in range(n_kmers)]
-    mm_vectors[0] = kmers / np.linalg.norm(kmers)
-    
-    longest_mm_seq = np.array(list(longest_mm_read['seq1']))
-    
-    k_neighbors = 10
-    distance_threshold = (1 - seq_sim) * 5
-    D, I = um_index.search(mm_vectors, k_neighbors)
-    
-    # Batch process nearest neighbors
-    valid_indices = I[0][D[0] < distance_threshold]
-    if len(valid_indices) == 0:
-        return (mm_group, False)
-    
-    um_reads_batch = np.array([um_kept_dict[str(name)] for name in um_read_names[valid_indices]])
-    um_seqs_batch = np.array([np.array(list(read['seq1'])) for read in um_reads_batch], dtype=object)
-    um_positions_batch = um_positions[valid_indices]
-
-    valid_length_mask = np.array([len(seq) >= longest_mm_len for seq in um_seqs_batch])
-    if not np.any(valid_length_mask):
-        return (mm_group, False)
-
-    valid_seqs = um_seqs_batch[valid_length_mask]
-    
-    valid_indices_original = np.where(valid_length_mask)[0]
-
-    similarities = np.zeros(len(valid_seqs))
-    for i, seq in enumerate(valid_seqs):
-        prefix = seq[:longest_mm_len]
-        similarities[i] = seq_similarity(''.join(longest_mm_seq), ''.join(prefix))
-
-    # Find the best match above the similarity threshold
-    mask = similarities >= seq_sim
-    if not np.any(mask):
-        return (mm_group, False)
-
-    best_match_idx = np.argmax(similarities * mask)
-    original_idx = valid_indices_original[best_match_idx]
-    best_position = um_positions_batch[original_idx]
-    
-    relocated_group = []
-    for read in mm_group:
-        relocated_read = read.copy()
-        read_len = int(relocated_read['end'] - relocated_read['start'])
-        relocated_read['chrom'] = str(best_position['chrom'])
-        relocated_read['start'] = int(best_position['pos']) if best_position['strand'] == '+' else int(best_position['pos'] - read_len)
-        relocated_read['end'] = int(best_position['pos'] + read_len) if best_position['strand'] == '+' else int(best_position['pos'])
-        relocated_read['strand'] = str(best_position['strand'])
-        relocated_read['multi'] = 'True - relocated'
-        relocated_group.append(relocated_read)
-    return (relocated_group, True)
+    return mm_group
 
 def assign_mm_group(mm_group):
     if len(mm_group) == 1:
@@ -876,52 +874,47 @@ def assign_mm_group(mm_group):
     
     return (mm_group, 0)
 
-def batch_compare_to_um(chunk, um_index, um_positions, um_read_names,
-                        um_kept_dict, seq_sim, k, len_diff, mm_count_threshold):
+def batch_compare_to_um(chunk, k, um_index, bloom_filter, um_kept_dict, seq_sim):
     relocated_reads = {}
     remaining_groups = []
     
     for group in chunk:
-        relocated_group, was_relocated = compare_to_um(
+        result = compare_to_um(
             mm_group=group,
-            um_index=um_index,
-            um_positions=um_positions,
-            um_read_names=um_read_names,
-            um_kept_dict=um_kept_dict,
-            seq_sim=seq_sim,
-            k=k,
-            len_diff=len_diff,
-            mm_count_threshold=mm_count_threshold
-        )
+            k = k,
+            um_index = um_index,
+            bloom_filter = bloom_filter,
+            um_kept_dict = um_kept_dict,
+            seq_sim = seq_sim
+            )
         
-        if was_relocated:
+        if isinstance(result, tuple) and len(result) == 2:
+            relocated_group, unrelocated_group = result
             for read in relocated_group:
                 relocated_reads[read['read_name']] = read
+            if unrelocated_group:
+                remaining_groups.append(unrelocated_group)
         else:
-            remaining_groups.append(relocated_group)
-    
+            remaining_groups.append(result)
+            
     return relocated_reads, remaining_groups
         
 def verify_mm_positions(mm_kept_dict, um_kept_dict, seq_sim, nthr, len_diff, 
-                        k, min_frag_len, mm_count_threshold, num_perm,
-                        token_size, mm_hash_similarity):
+                        k, min_frag_len, num_perm, token_size):
     
-    um_index, um_positions, um_read_names = build_position_based_index(
-        um_kept_dict = um_kept_dict, 
-        len_diff = len_diff, 
-        nthr = nthr, 
-        k = k
-        )
+    n_mm_kept = len(mm_kept_dict)
+    
+    um_index, bloom_filter = build_position_based_index(um_kept_dict, k, nthr)
     
     subgroups = group_mm_sequences(
-        mm_reads = mm_kept_dict, 
-        seq_sim = seq_sim, 
-        min_frag_len = min_frag_len,
-        num_perm = num_perm,
-        token_size = token_size
+        mm_reads=mm_kept_dict, 
+        seq_sim=seq_sim, 
+        min_frag_len=min_frag_len,
+        num_perm=num_perm,
+        token_size=token_size
         )
     
-    print(f'Number of multimapping subgroups: {len(subgroups)}', flush = True)  
+    print(f'Number of multimapping subgroups: {len(subgroups)}', flush=True)  
     
     nsub = 0
     for group in subgroups:
@@ -934,21 +927,18 @@ def verify_mm_positions(mm_kept_dict, um_kept_dict, seq_sim, nthr, len_diff,
     subgroup_chunk_size = max(1, len(sorted_subgroups) // nthr)
     subgroup_chunks = [
         sorted_subgroups[i:i + subgroup_chunk_size] for i in range(0, len(sorted_subgroups), subgroup_chunk_size)
-        ]
+    ]
     
     relocated_results = Parallel(n_jobs=nthr)(
         delayed(batch_compare_to_um)(
-            chunk = chunk,
-            um_index = um_index, 
-            um_positions = um_positions, 
-            um_read_names = um_read_names,
-            um_kept_dict = um_kept_dict, 
-            seq_sim = seq_sim, 
-            k = k, 
-            len_diff = len_diff,
-            mm_count_threshold = mm_count_threshold
-            ) for chunk in subgroup_chunks
-        )
+            chunk=chunk,
+            k=k,
+            um_index=um_index,
+            bloom_filter=bloom_filter,
+            um_kept_dict=um_kept_dict,
+            seq_sim=seq_sim
+        ) for chunk in subgroup_chunks
+    )
 
     relocated_reads = {}
     remaining_groups = []
@@ -957,13 +947,15 @@ def verify_mm_positions(mm_kept_dict, um_kept_dict, seq_sim, nthr, len_diff,
         relocated_reads.update(chunk_relocated_reads)
         remaining_groups.extend(chunk_remaining_groups)
 
-    print(f'Number of multimapping reads relocated to uniquely mapped positions: {len(relocated_reads)}',
-            flush = True)
+    n_relocated = len(relocated_reads)
+    n_relocated_perc = (n_relocated / n_mm_kept) * 100
+    print(f'Number of multimapping reads relocated to uniquely mapped positions: {n_relocated} ({n_relocated_perc:.2f}%)',
+            flush=True)
 
     if remaining_groups:
         reassigned_results = Parallel(n_jobs=nthr)(
             delayed(assign_mm_group)(group) for group in remaining_groups
-            )
+        )
 
         total_singles = 0
         total_reassigned = 0
@@ -975,8 +967,10 @@ def verify_mm_positions(mm_kept_dict, um_kept_dict, seq_sim, nthr, len_diff,
             for read in group:
                 relocated_reads[read['read_name']] = read
     
-    print(f'Number of multimapping reads grouped and reassigned: {total_reassigned}')
-    print(f'Number of ungrouped multimapping reads: {total_singles}')
+    reassigned_perc = (total_reassigned / n_mm_kept) * 100
+    singles_perc = (total_singles / n_mm_kept) * 100
+    print(f'Number of multimapping reads grouped and reassigned: {total_reassigned} ({reassigned_perc:.2f}%)')
+    print(f'Number of ungrouped multimapping reads: {total_singles} ({singles_perc:.2f}%)')
 
     return relocated_reads
 
