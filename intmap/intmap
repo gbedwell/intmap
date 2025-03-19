@@ -280,7 +280,8 @@ parser.add_argument('--no_dedup', '-no_dedup',
                     action='store_true')
 parser.add_argument('--check_consensus', '-check_consensus',
                     help='''Boolean. When True, samples reads from input files to identify
-                    common variants of the given LTR and linker sequences.''',
+                    common variants of the given LTR and linker sequences. 
+                    Results are written to stdout and saved to <name>_consensus_report.txt''',
                     action='store_true')
 parser.add_argument('-consensus_sample_size',
                     type=int,
@@ -290,9 +291,9 @@ parser.add_argument('-consensus_sample_size',
 parser.add_argument('-consensus_threshold',
                     type=float,
                     help='''The threshold for consensus calling. If the frequency of any sequence 
-                    is >= (1 - this value), that sequence will be reported.
-                    Defaults to 0.98.''',
-                    default=0.98)
+                    is >= this value, that sequence will be reported.
+                    Defaults to 0.02.''',
+                    default=0.02)
 parser.add_argument('-consensus_error_rate',
                     type=float,
                     help='''The error rate for consensus searching. Defaults to 0.3''',

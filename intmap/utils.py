@@ -293,7 +293,7 @@ def sample_reads(filename, n_reads=5000):
     
     return sequences
 
-def check_consensus(r1_file, r2_file, ltr_seq, linker_seq, sample_size=5000, threshold=0.98, error_rate=0.3):
+def check_consensus(r1_file, r2_file, ltr_seq, linker_seq, sample_size=5000, threshold=0.02, error_rate=0.3):
     print(f"Sampling {sample_size} reads from input files...", flush=True)
     r1_sequences = sample_reads(r1_file, sample_size)
     r2_sequences = sample_reads(r2_file, sample_size)
@@ -434,7 +434,7 @@ def check_consensus(r1_file, r2_file, ltr_seq, linker_seq, sample_size=5000, thr
     
     # Report R1 sequence frequencies
     report.append("R1 Sequence Frequencies:")
-    r1_significant = {seq: freq for seq, freq in r1_freqs.items() if freq >= (1-threshold)}
+    r1_significant = {seq: freq for seq, freq in r1_freqs.items() if freq >= threshold}
     r1_sorted = sorted(r1_significant.items(), key=lambda x: x[1], reverse=True)
     
     r1_significant_total = sum(r1_significant.values())
@@ -450,7 +450,7 @@ def check_consensus(r1_file, r2_file, ltr_seq, linker_seq, sample_size=5000, thr
     
     # Report R2 sequence frequencies
     report.append("R2 Sequence Frequencies:")
-    r2_significant = {seq: freq for seq, freq in r2_freqs.items() if freq >= (1-threshold)}
+    r2_significant = {seq: freq for seq, freq in r2_freqs.items() if freq >= threshold}
     r2_sorted = sorted(r2_significant.items(), key=lambda x: x[1], reverse=True)
     
     r2_significant_total = sum(r2_significant.values())
