@@ -31,8 +31,8 @@ def check_crop_input(ltr3, linker3, ltr1_primer, ltr5, linker5,
     if ltr5_char != '':
         raise ValueError('Declared 5\' LTR sequence may only contain A,T,G, and C nucleotides.')
 
-    if len(ltr5_check) < 10:
-        raise ValueError('Declared 5\' LTR sequence must be at least 10 nucleotides long.')
+    if len(ltr5_check) < 5:
+        raise ValueError('Declared 5\' LTR sequence must be at least 5 nucleotides long.')
     
     if ltr5_error_rate > 0.3:
         raise ValueError('5\' LTR sequence error rate cannot be > 0.3.')
@@ -53,8 +53,8 @@ def check_crop_input(ltr3, linker3, ltr1_primer, ltr5, linker5,
     if link5_char != '':
         raise ValueError('Declared 5\' linker sequence may only contain A,T,G, and C nucleotides.')
 
-    if len(link5_check) < 10:
-        raise ValueError('Declared 5\' linker sequence must be at least 10 nucleotides long.')
+    if len(link5_check) < 5:
+        raise ValueError('Declared 5\' linker sequence must be at least 5 nucleotides long.')
     
     if linker5_error_rate > 0.3:
         raise ValueError('5\' linker sequence error rate cannot be > 0.3.')

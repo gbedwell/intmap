@@ -2,8 +2,7 @@
 
 import argparse
 parser = argparse.ArgumentParser(prog = 'intmap',
-                                description='''Maps the locations of viral integration sites 
-                                in a genome from NGS data.''')
+                                description='''Maps the locations of viral integration sites in a genome from NGS data.''')
 parser.add_argument('-r1',
                     type=str, 
                     help='Forward/R1 read file.', 
@@ -103,11 +102,11 @@ parser.add_argument('-bt2_idx_dir',
                     type=str, 
                     help='''The directory path holding the Bowtie2 genome index.
                     Note that this should not contain the index prefix.''',
-                    required=True)
+                    default=None)
 parser.add_argument('-bt2_idx_name',
                     type=str, 
                     help='''The genome index prefix (e.g., hs1).''',
-                    required=True)
+                    default=None)
 parser.add_argument('-aln_seed_len',
                     type=int, 
                     help='''The size of the seed during alignment. 
@@ -279,6 +278,25 @@ parser.add_argument('--no_dedup', '-no_dedup',
                     help='''Boolean.
                     When True, the pipeline stops after alignment and QC.''',
                     action='store_true')
+parser.add_argument('--check_consensus', '-check_consensus',
+                    help='''Boolean. When True, samples reads from input files to identify
+                    common variants of the given LTR and linker sequences.''',
+                    action='store_true')
+parser.add_argument('-consensus_sample_size',
+                    type=int,
+                    help='''The number of reads to sample for consensus checking.
+                    Defaults to 5000.''',
+                    default=5000)
+parser.add_argument('-consensus_threshold',
+                    type=float,
+                    help='''The threshold for consensus calling. If the frequency of any sequence 
+                    is >= (1 - this value), that sequence will be reported.
+                    Defaults to 0.98.''',
+                    default=0.98)
+parser.add_argument('-consensus_error_rate',
+                    type=float,
+                    help='''The error rate for consensus searching. Defaults to 0.3''',
+                    default=0.3)
 
 
 args = parser.parse_args()
@@ -320,8 +338,40 @@ if __name__ == "__main__":
     from functools import lru_cache
     from pybloom_live import BloomFilter
     
+    if args.check_consensus:
+        print('\n')
+        print('Checking input files for consensus sequences...', flush=True)
+        
+        ltr_seq = args.ltr5 + args.ltr3
+        linker_seq = args.linker5 + args.linker3
+        
+        consensus_report = check_consensus(
+            r1_file = args.r1,
+            r2_file = args.r2,
+            ltr_seq = ltr_seq,
+            linker_seq = linker_seq,
+            sample_size = args.consensus_sample_size,
+            threshold = args.consensus_threshold,
+            error_rate = args.consensus_error_rate
+            )
+        
+        # Print and save report
+        print('\n')
+        print(consensus_report)
+        print('\n')
+        
+        consensus_report_file = f'{args.nm}_consensus_report.txt'
+        with open(consensus_report_file, 'w') as f:
+            f.write(consensus_report)
+            
+    sys.exit()
+    
     start_time = time.time()
 
+    if not args.bt2_index_dir:
+        parser.error('bt2_index_dir must be defined')
+    if not args.bt2_index_name:
+        parser.error('bt2_index_name must be defined')
     if args.ltr3 is None:
         parser.error('ltr3 must be defined.')
     if args.linker3 is None:
@@ -950,19 +1000,9 @@ if __name__ == "__main__":
                 n_misprime += 1
                 
         mp_perc = (n_misprime / n_prior) * 100
-        print(f'Removing {n_misprime} fragments due to potential mispriming ({mp_perc:.2f}% of total)', 
+        print(f'Removing {n_misprime} fragments due to potential mispriming ({mp_perc:.2f}%)', 
                 flush = True)
         n_mapped = len(kept_dict)
-        
-        uniq_mapped = 0
-        for read_name, read in kept_dict.items():
-            if read['multi'] == False:
-                uniq_mapped += 1
-        
-        print(f'{n_mapped} fragments remaining:', flush = True)
-        print(f' {uniq_mapped} uniquely mapping fragments ({((uniq_mapped / n_mapped) * 100):.2f}% of total)')
-        print(f' {n_mapped - uniq_mapped} multimapping fragments ({(((n_mapped - uniq_mapped) / n_mapped) * 100):.2f}% of total)')
-        
         mismatch_end = time.time()
         mismatch_time = round((mismatch_end - mismatch_start), 3)
         print(f'{mismatch_time} seconds elapsed', flush = True)
@@ -970,6 +1010,16 @@ if __name__ == "__main__":
     else:
         shift = args.tsd - 1 if args.U3 else 0
         n_mapped = len(kept_dict)
+
+    uniq_mapped = 0
+    for read_name, read in kept_dict.items():
+        if read['multi'] == False:
+            uniq_mapped += 1
+    
+    print('\n')
+    print(f'{n_mapped} reads retained:', flush = True)
+    print(f' {uniq_mapped} uniquely mapping reads ({((uniq_mapped / n_mapped) * 100):.2f}%)', flush = True)
+    print(f' {n_mapped - uniq_mapped} multimapping reads ({(((n_mapped - uniq_mapped) / n_mapped) * 100):.2f}%)', flush = True)
             
     if n_mapped > 0:
         final_start = time.time()

@@ -40,7 +40,7 @@
     "um_kept_dict": {
         "um_read1": {
             "read_name": "um_read1",
-            "seq1": "GCGTAGCGTGGC",
+            "seq1": "GCGTAGCGTGGCAAGAGAGCCCCATAGAGAGCTA",
             "strand": "-",
             "start": 185,
             "end": 200,

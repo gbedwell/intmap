@@ -12,6 +12,7 @@ import math
 import multiprocessing
 from joblib import Parallel, delayed
 from operator import itemgetter
+import random
 
 __all__ = [
     'zipped',
@@ -29,6 +30,8 @@ __all__ = [
     'revcomp',
     'collapse_group',
     'final_pass_collapse',
+    'sample_reads',
+    'check_consensus'
 ]
 
 TRANS_TABLE = bytes.maketrans(b"acgtumrwsykvhdbnACGTUMRWSYKVHDBN", 
@@ -266,3 +269,199 @@ def final_pass_collapse(kept_frags, len_diff, nthr, min_count, count_fc):
                 kept_frags[read_name]['start'] = pos
     
     return kept_frags
+
+def sample_reads(filename, n_reads=5000):
+    sequences = []
+    read_count = 0
+    
+    with open_file(filename, 'rt') as f:
+        line_num = 0
+        for line in f:
+            if line_num % 4 == 1:  # Sequence lines
+                if read_count < n_reads:
+                    # Fill the reservoir until we have n_reads
+                    sequences.append(line.strip())
+                else:
+                    # Use reservoir sampling for the rest
+                    j = random.randint(0, read_count)
+                    if j < n_reads:
+                        sequences[j] = line.strip()
+                
+                read_count += 1
+            
+            line_num += 1
+    
+    return sequences
+
+def check_consensus(r1_file, r2_file, ltr_seq, linker_seq, sample_size=5000, threshold=0.98, error_rate=0.3):
+    print(f"Sampling {sample_size} reads from input files...", flush=True)
+    r1_sequences = sample_reads(r1_file, sample_size)
+    r2_sequences = sample_reads(r2_file, sample_size)
+    
+    # Compile patterns using the hierarchical approach from crop.py
+    ltr_errors = math.floor(len(ltr_seq) * error_rate)
+    linker_errors = math.floor(len(linker_seq) * error_rate)
+    
+    patterns = {
+        'ltr': {
+            'perfect': regex.compile(ltr_seq),
+            'mismatch': regex.compile(f'({ltr_seq}){{s<={ltr_errors}}}'),
+            'indel': regex.compile(f'({ltr_seq}){{e<={ltr_errors}}}')
+        },
+        'linker': {
+            'perfect': regex.compile(linker_seq),
+            'mismatch': regex.compile(f'({linker_seq}){{s<={linker_errors}}}'),
+            'indel': regex.compile(f'({linker_seq}){{e<={linker_errors}}}')
+        }
+    }
+    
+    def find_pattern_match(seq, pattern_type):
+        match = patterns[pattern_type]['perfect'].search(seq)
+        if match:
+            return match, 'perfect'
+        
+        match = patterns[pattern_type]['mismatch'].search(seq)
+        if match:
+            return match, 'mismatch'
+        
+        match = patterns[pattern_type]['indel'].search(seq)
+        if match:
+            return match, 'indel'
+        
+        return None, None
+    
+    # Extract matching sequences
+    r1_matches = []
+    r2_matches = []
+    
+    print("Searching for LTR/linker sequences in sampled reads...", flush=True)
+    
+    # Process R1 sequences (expected to contain LTR)
+    for seq in r1_sequences:
+        match, match_type = find_pattern_match(seq, 'ltr')
+        if match:
+            r1_matches.append({
+                'sequence': seq,
+                'match_start': match.start(),
+                'match_end': match.end(),
+                'matched_text': match.group(),
+                'match_type': match_type
+            })
+    
+    # Process R2 sequences (expected to contain linker)
+    for seq in r2_sequences:
+        match, match_type = find_pattern_match(seq, 'linker')
+        if match:
+            r2_matches.append({
+                'sequence': seq,
+                'match_start': match.start(),
+                'match_end': match.end(),
+                'matched_text': match.group(),
+                'match_type': match_type
+            })
+    
+    print(f'Found {len(r1_matches)} R1 sequences and {len(r2_matches)} R2 sequences', flush=True)
+    
+    if not r1_matches or not r2_matches:
+        if not r1_matches and not r2_matches:
+            print(f'No matching LTR or linker sequences found in the sampled reads. Check the given inputs.')
+        if not r1_matches:
+            print(f'No matching LTR sequences found in the sampled reads. Check the given input.')
+        if not r2_matches:
+            print(f'No matching linker sequences found in the sampled reads. Check the given input.')
+        sys.exit()
+    
+    # Count sequence occurrences
+    r1_counts = {}
+    for match in r1_matches:
+        seq = match['matched_text']
+        r1_counts[seq] = r1_counts.get(seq, 0) + 1
+    
+    r2_counts = {}
+    for match in r2_matches:
+        seq = match['matched_text']
+        r2_counts[seq] = r2_counts.get(seq, 0) + 1
+    
+    # Calculate frequencies
+    r1_total = len(r1_matches)
+    r2_total = len(r2_matches)
+    
+    r1_freqs = {seq: count/r1_total for seq, count in r1_counts.items()}
+    r2_freqs = {seq: count/r2_total for seq, count in r2_counts.items()}
+    
+    # Format report
+    report = []
+    report.append("")
+    
+    report.append(f"Target LTR sequence: {ltr_seq}")
+    report.append(f"Target Linker sequence: {linker_seq}")
+    report.append(f"Sample size: {sample_size} reads")
+    report.append(f"Consensus threshold: {threshold}")
+    report.append(f"Sequences with LTR match: {len(r1_matches)}")
+    report.append(f"Sequences with linker match: {len(r2_matches)}")
+    report.append("")
+    
+    # Report match type statistics
+    r1_match_types = {}
+    for match in r1_matches:
+        match_type = match['match_type']
+        r1_match_types[match_type] = r1_match_types.get(match_type, 0) + 1
+    
+    r2_match_types = {}
+    for match in r2_matches:
+        match_type = match['match_type']
+        r2_match_types[match_type] = r2_match_types.get(match_type, 0) + 1
+    
+    report.append("R1 Match Types:")
+    for match_type in ['perfect', 'mismatch', 'indel']:
+        if match_type in r1_match_types:
+            count = r1_match_types[match_type]
+            report.append(f"  {match_type}: {count} ({count/r1_total:.2%})")
+        else:
+            report.append(f"  {match_type}: 0 (0.00%)")
+
+    report.append("")
+
+    report.append("R2 Match Types:")
+    for match_type in ['perfect', 'mismatch', 'indel']:
+        if match_type in r2_match_types:
+            count = r2_match_types[match_type]
+            report.append(f"  {match_type}: {count} ({count/r2_total:.2%})")
+        else:
+            report.append(f"  {match_type}: 0 (0.00%)")
+    
+    report.append("")
+    
+    # Report R1 sequence frequencies
+    report.append("R1 Sequence Frequencies:")
+    r1_significant = {seq: freq for seq, freq in r1_freqs.items() if freq >= (1-threshold)}
+    r1_sorted = sorted(r1_significant.items(), key=lambda x: x[1], reverse=True)
+    
+    r1_significant_total = sum(r1_significant.values())
+    r1_other = 1 - r1_significant_total
+    
+    for seq, freq in r1_sorted:
+        report.append(f"{freq:.4f}\t{seq}")
+    
+    if r1_other > 0:
+        report.append(f"{r1_other:.4f}\tOther")
+    
+    report.append("")
+    
+    # Report R2 sequence frequencies
+    report.append("R2 Sequence Frequencies:")
+    r2_significant = {seq: freq for seq, freq in r2_freqs.items() if freq >= (1-threshold)}
+    r2_sorted = sorted(r2_significant.items(), key=lambda x: x[1], reverse=True)
+    
+    r2_significant_total = sum(r2_significant.values())
+    r2_other = 1 - r2_significant_total
+    
+    for seq, freq in r2_sorted:
+        report.append(f"{freq:.4f}\t{seq}")
+    
+    if r2_other > 0:
+        report.append(f"{r2_other:.4f}\tOther")
+    
+    return "\n".join(report)
+    
+    

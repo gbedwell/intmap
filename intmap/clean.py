@@ -952,13 +952,13 @@ def verify_mm_positions(mm_kept_dict, um_kept_dict, seq_sim, nthr, len_diff,
     print(f'Number of multimapping reads relocated to uniquely mapped positions: {n_relocated} ({n_relocated_perc:.2f}%)',
             flush=True)
 
+    total_singles = 0
+    total_reassigned = 0
     if remaining_groups:
         reassigned_results = Parallel(n_jobs=nthr)(
             delayed(assign_mm_group)(group) for group in remaining_groups
         )
 
-        total_singles = 0
-        total_reassigned = 0
         for group, n_single in reassigned_results:
             if n_single == 1:
                 total_singles += 1
