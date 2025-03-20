@@ -6,7 +6,7 @@ import numpy as np
 import faiss
 from scipy.sparse import csr_matrix
 from scipy.sparse.csgraph import connected_components
-from collections import defaultdict
+from collections import defaultdict, Counter
 from datasketch import MinHash
 import math
 import multiprocessing
@@ -31,7 +31,8 @@ __all__ = [
     'collapse_group',
     'final_pass_collapse',
     'sample_reads',
-    'check_consensus'
+    'check_consensus',
+    'generate_consensus'
 ]
 
 TRANS_TABLE = bytes.maketrans(b"acgtumrwsykvhdbnACGTUMRWSYKVHDBN", 
@@ -463,5 +464,94 @@ def check_consensus(r1_file, r2_file, ltr_seq, linker_seq, sample_size=5000, thr
         report.append(f"{r2_other:.4f}\tOther")
     
     return "\n".join(report)
+
+def generate_consensus(r1_file, r2_file, consensus_length=50, sample_size=5000, threshold=0.8):
+    result = {}
     
+    print(f'Sampling {sample_size} reads from input files...')
+    r1_sequences = sample_reads(r1_file, sample_size)
+    r2_sequences = sample_reads(r2_file, sample_size)
     
+    # Process R1 file
+    print('Calculating R1 consensus sequence...')
+    trimmed_r1_sequences = []
+    for seq in r1_sequences:
+        trimmed_seq = seq[:consensus_length]
+        if len(trimmed_seq) == consensus_length:
+            trimmed_r1_sequences.append(trimmed_seq)
+    
+    if trimmed_r1_sequences:
+        r1_consensus = ''
+        
+        for i in range(consensus_length):
+            bases = [seq[i] for seq in trimmed_r1_sequences if i < len(seq)]
+            base_counts = Counter(bases)
+            total = len(bases)
+            
+            if total == 0:
+                r1_consensus += 'N'
+                continue
+            
+            frequencies = {
+                'A': base_counts.get('A', 0) / total,
+                'C': base_counts.get('C', 0) / total,
+                'G': base_counts.get('G', 0) / total,
+                'T': base_counts.get('T', 0) / total
+            }
+            
+            most_common = max(frequencies.items(), key=lambda x: x[1])
+            base, freq = most_common
+            
+            if freq >= threshold:
+                r1_consensus += base
+            else:
+                r1_consensus += 'N'
+        
+        result['R1'] = r1_consensus
+        
+        if r1_consensus[-4:] != 'NNNN':
+            print(f"Warning: The R1 consensus sequence does not end on 'NNNN' (-{r1_consensus[-4:]}). "
+                    f"Consider increasing consensus_length beyond {consensus_length} bp.")
+    
+    # Process R2 file if provided
+    print('Calculating R2 consensus sequence...')
+    trimmed_r2_sequences = []
+    for seq in r2_sequences:
+        trimmed_seq = seq[:consensus_length]
+        if len(trimmed_seq) == consensus_length:
+            trimmed_r2_sequences.append(trimmed_seq)
+    
+    if trimmed_r2_sequences:
+        r2_consensus = ''
+        
+        for i in range(consensus_length):
+            bases = [seq[i] for seq in trimmed_r2_sequences if i < len(seq)]
+            base_counts = Counter(bases)
+            total = len(bases)
+            
+            if total == 0:
+                r2_consensus += 'N'
+                continue
+            
+            frequencies = {
+                'A': base_counts.get('A', 0) / total,
+                'C': base_counts.get('C', 0) / total,
+                'G': base_counts.get('G', 0) / total,
+                'T': base_counts.get('T', 0) / total
+            }
+            
+            most_common = max(frequencies.items(), key=lambda x: x[1])
+            base, freq = most_common
+            
+            if freq >= threshold:
+                r2_consensus += base
+            else:
+                r2_consensus += 'N'
+        
+        result['R2'] = r2_consensus
+        
+        if r2_consensus[-4:] != 'NNNN':
+            print(f"Warning: The R2 consensus sequence does not end on 'NNNN' (-{r2_consensus[-4:]}). "
+                    f"Consider increasing consensus_length beyond {consensus_length} bp.")
+    
+    return result

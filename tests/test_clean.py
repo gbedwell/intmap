@@ -346,7 +346,7 @@ def test_assign_mm_group():
         }
     ]
     
-    result, n = assign_mm_group(group)
+    result, n = assign_mm_group(group, mm_group_threshold=1)
     assert result == expected
 
 def test_verify_mm_positions():
@@ -361,7 +361,8 @@ def test_verify_mm_positions():
         len_diff = 5,
         min_frag_len=20,
         num_perm=32, 
-        token_size=4
+        token_size=4,
+        mm_group_threshold=1
     )
     
     assert result == expected

@@ -827,9 +827,12 @@ def compare_to_um(mm_group, k, um_index, bloom_filter, um_kept_dict, seq_sim):
     
     return mm_group
 
-def assign_mm_group(mm_group):
+def assign_mm_group(mm_group, mm_group_threshold):
     if len(mm_group) == 1:
         return (mm_group, 1)
+    
+    if len(mm_group) > 1 and len(mm_group) < mm_group_threshold:
+        return ([read for read in mm_group], 2)
     
     # Vectorized position counting
     positions = np.array([(read['chrom'], read['start'], read['end'], read['strand']) for read in mm_group])
@@ -900,7 +903,7 @@ def batch_compare_to_um(chunk, k, um_index, bloom_filter, um_kept_dict, seq_sim)
     return relocated_reads, remaining_groups
         
 def verify_mm_positions(mm_kept_dict, um_kept_dict, seq_sim, nthr, len_diff, 
-                        k, min_frag_len, num_perm, token_size):
+                        k, min_frag_len, num_perm, token_size, mm_group_threshold):
     
     n_mm_kept = len(mm_kept_dict)
     
@@ -956,21 +959,21 @@ def verify_mm_positions(mm_kept_dict, um_kept_dict, seq_sim, nthr, len_diff,
     total_reassigned = 0
     if remaining_groups:
         reassigned_results = Parallel(n_jobs=nthr)(
-            delayed(assign_mm_group)(group) for group in remaining_groups
+            delayed(assign_mm_group)(group, mm_group_threshold) for group in remaining_groups
         )
 
         for group, n_single in reassigned_results:
-            if n_single == 1:
-                total_singles += 1
+            if n_single == 1 or n_single == 2:
+                total_singles += len(group)
             else:
                 total_reassigned += len(group)
             for read in group:
                 relocated_reads[read['read_name']] = read
     
     reassigned_perc = (total_reassigned / n_mm_kept) * 100
-    singles_perc = (total_singles / n_mm_kept) * 100
+    ungrouped_perc = (total_singles / n_mm_kept) * 100
+    print(f'Number of ungrouped multimapping reads: {total_singles} ({ungrouped_perc:.2f}%)')
     print(f'Number of multimapping reads grouped and reassigned: {total_reassigned} ({reassigned_perc:.2f}%)')
-    print(f'Number of ungrouped multimapping reads: {total_singles} ({singles_perc:.2f}%)')
 
     return relocated_reads
 

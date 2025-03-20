@@ -138,4 +138,4 @@ if __name__ == "__main__":
         
     with open(args_json, 'r') as j:
         argument_sets = json.load(j)
-        intmap_multi(argument_sets)
+    intmap_multi(argument_sets)

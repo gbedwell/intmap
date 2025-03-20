@@ -272,8 +272,13 @@ parser.add_argument('--reassign_mm', '-reassign_mm',
 parser.add_argument('-k',
                     type=int, 
                     help='''The size of the k-mers used to reassign multimapping reads.     
-                    Defaults to 20. Must be <= min_frag_len - len_diff''',
-                    default=20)
+                    Defaults to 15. Must be <= min_frag_len - len_diff''',
+                    default=15)
+parser.add_argument('-mm_group_threshold',
+                    type=int, 
+                    help='''The lower size threshold for a multimapping group to be considered for reassignment to one position.     
+                    Defaults to 12.''',
+                    default=12)
 parser.add_argument('--no_dedup', '-no_dedup',
                     help='''Boolean.
                     When True, the pipeline stops after alignment and QC.''',
@@ -290,7 +295,8 @@ parser.add_argument('-consensus_sample_size',
                     default=5000)
 parser.add_argument('-consensus_threshold',
                     type=float,
-                    help='''The threshold for consensus calling. If the frequency of any sequence 
+                    help='''The fractional threshold for sequence significance. 
+                    Used during consensus checking. If the frequency of any sequence 
                     is >= this value, that sequence will be reported.
                     Defaults to 0.02.''',
                     default=0.02)
@@ -298,6 +304,24 @@ parser.add_argument('-consensus_error_rate',
                     type=float,
                     help='''The error rate for consensus searching. Defaults to 0.3''',
                     default=0.3)
+parser.add_argument('--extract_consensus', '-extract_consensus',
+                    help='''Boolean. When True, a consensus sequence of length 
+                    consensus_length is determined from provided FASTQ files.''',
+                    action='store_true')
+parser.add_argument('-consensus_length',
+                    type=int,
+                    help='''The length of the consensus sequence to generate. Used with extract_consensus. 
+                    Defaults to 100.''',
+                    default=100)
+parser.add_argument('-consensus_base_threshold',
+                    type=float,
+                    help='''The threshold required to call a base the consensus. 
+                    Positions with base frequency values below this are returned as N. 
+                    Defaults to 0.8''',
+                    default=0.8)
+parser.add_argument('--consensus_write', '-consensus_write',
+                    help='''Boolean. When True, the results of either check_consensus or extract_consensus are written to individual files.''',
+                    action='store_true')
 
 
 args = parser.parse_args()
@@ -341,7 +365,7 @@ if __name__ == "__main__":
     
     if args.check_consensus:
         print('\n')
-        print('Checking input files for consensus sequences...', flush=True)
+        print(f'Checking {args.nm} input files for consensus sequences...', flush=True)
         
         ltr_seq = args.ltr5 + args.ltr3
         linker_seq = args.linker5 + args.linker3
@@ -361,17 +385,45 @@ if __name__ == "__main__":
         print(consensus_report)
         print('\n')
         
-        consensus_report_file = f'{args.nm}_consensus_report.txt'
-        with open(consensus_report_file, 'w') as f:
-            f.write(consensus_report)
+        if args.consensus_write:
+            consensus_report_file = f'{args.nm}_consensus_report.txt'
+            with open(consensus_report_file, 'w') as f:
+                f.write(consensus_report)
             
-    sys.exit()
+        sys.exit()
+        
+    if args.extract_consensus:
+        print('\n')
+        print(f'Determining {args.nm} consensus sequences...')
+        print(f'Consensus sequence length: {args.consensus_length} bp')
+        print(f'Consensus base-calling threshold: {args.consensus_base_threshold}')
+        
+        consensus_seqs = generate_consensus(
+            r1_file = args.r1, 
+            r2_file = args.r2, 
+            consensus_length = args.consensus_length, 
+            sample_size = args.consensus_sample_size, 
+            threshold = args.consensus_base_threshold
+        )
+        
+        print('\n')
+        print(f"R1 consensus: {consensus_seqs['R1']}")
+        print(f"R2 consensus: {consensus_seqs['R2']}")
+        print('\n')
+        
+        if args.consensus_write:
+            consensus_seqs_file = f'{args.nm}_consensus_seqs.fa'
+            with open(consensus_seqs_file, 'w') as f:
+                f.write(f">R1\n{consensus_seqs['R1']}\n>R2\n{consensus_seqs['R2']}")
+            
+        sys.exit()
+        
     
     start_time = time.time()
 
-    if not args.bt2_index_dir:
-        parser.error('bt2_index_dir must be defined')
-    if not args.bt2_index_name:
+    if not args.bt2_idx_dir:
+        parser.error('bt2_idx_dir must be defined')
+    if not args.bt2_idx_name:
         parser.error('bt2_index_name must be defined')
     if args.ltr3 is None:
         parser.error('ltr3 must be defined.')
@@ -516,6 +568,7 @@ if __name__ == "__main__":
             if args.reassign_mm:
                 print(f'Multimapping read reassignment: True')
                 print(f'Multimapping k-mer size: {args.k} bp')
+                print(f'Multimapping group size threshold: {args.mm_group_threshold} reads')
             else:
                 print(f'Multimapping read reassignment: False')
         else:
@@ -954,7 +1007,8 @@ if __name__ == "__main__":
                     k = args.k,
                     min_frag_len = args.min_frag_len,
                     num_perm = args.num_perm,
-                    token_size = args.token_size
+                    token_size = args.token_size,
+                    mm_group_threshold = args.mm_group_threshold
                     )
                 
                 if len(verified_kept_dict) != len(mm_kept_dict):
