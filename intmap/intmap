@@ -240,8 +240,8 @@ parser.add_argument('-token_size',
                     default=4)
 parser.add_argument('-mm_hash_similarity',
                     type=float,
-                    help='''Defines the Jaccard similarity threshold between MinHashes. Defaults to 0.75''',
-                    default=0.75)
+                    help='''Defines the Jaccard similarity threshold between MinHashes. Defaults to 0.85''',
+                    default=0.85)
 parser.add_argument('-seq_sim',
                     type=float,
                     help='''Sequence similarity threshold. Used for validating multimapping read groups and, 
@@ -275,10 +275,11 @@ parser.add_argument('-k',
                     Defaults to 15. Must be <= min_frag_len - len_diff''',
                     default=15)
 parser.add_argument('-mm_group_threshold',
-                    type=int, 
-                    help='''The lower size threshold for a multimapping group to be considered for reassignment to one position.     
-                    Defaults to 12.''',
-                    default=12)
+                    type=float, 
+                    help='''Defines the lower multimapping mapping group size threshold for whole-group reassignment to a probable location. 
+                    Expressed as a fraction of the total number of multimapping reads.     
+                    Defaults to 0.005.''',
+                    default=0.005)
 parser.add_argument('--no_dedup', '-no_dedup',
                     help='''Boolean.
                     When True, the pipeline stops after alignment and QC.''',
@@ -322,7 +323,16 @@ parser.add_argument('-consensus_base_threshold',
 parser.add_argument('--consensus_write', '-consensus_write',
                     help='''Boolean. When True, the results of either check_consensus or extract_consensus are written to individual files.''',
                     action='store_true')
-
+parser.add_argument('--check_ltr_umis_final_pass', '-check_ltr_umis_final_pass', '--ltr_cufp', '-ltr_cufp',
+                    help='''Boolean. Whether or not to check for conflicting (identical) LTR UMIs during the final pass. 
+                    These would be identical UMIs on fragments mapping to different genomic positions. 
+                    Defaults to False.''',
+                    action='store_true')
+parser.add_argument('--check_linker_umis_final_pass', '-check_linker_umis_final_pass', '--linker_cufp', '-linker_cufp',
+                    help='''Boolean. Whether or not to check for conflicting (identical) linker UMIs during the final pass. 
+                    These would be identical UMIs on fragments mapping to different genomic positions. 
+                    Defaults to False.''',
+                    action='store_true')
 
 args = parser.parse_args()
 
@@ -362,7 +372,7 @@ if __name__ == "__main__":
     from datasketch import MinHash, LeanMinHash, MinHashLSH
     from functools import lru_cache
     from pybloom_live import BloomFilter
-    
+
     if args.check_consensus:
         print('\n')
         print(f'Checking {args.nm} input files for consensus sequences...', flush=True)
@@ -429,7 +439,7 @@ if __name__ == "__main__":
         parser.error('ltr3 must be defined.')
     if args.linker3 is None:
         parser.error('linker3 must be defined.')
-    if args.ltr1_primer is None:
+    if args.ltr1_primer is None and args.misprime_mismatch > -1:
         parser.error('ltr1_primer must be defined.')
     if args.ltr5 is None:
         parser.error('ltr5 must be defined.')
@@ -568,7 +578,7 @@ if __name__ == "__main__":
             if args.reassign_mm:
                 print(f'Multimapping read reassignment: True')
                 print(f'Multimapping k-mer size: {args.k} bp')
-                print(f'Multimapping group size threshold: {args.mm_group_threshold} reads')
+                print(f'Multimapping group size fractional threshold: {args.mm_group_threshold}')
             else:
                 print(f'Multimapping read reassignment: False')
         else:
@@ -583,6 +593,17 @@ if __name__ == "__main__":
         
         print(f'Minimum site count threshold: {args.min_count} sites')
         print(f'Count fold-change: {args.count_fc}')
+        
+        if args.ltr_umi_len > 0:
+            if args.check_ltr_umis_final_pass:
+                print(f'Remove conflicting LTR UMIs during final pass: True')
+            else:
+                print(f'Remove conflicting LTR UMIs during final pass: False')
+        if args.linker_umi_len > 0:
+            if args.check_linker_umis_final_pass:
+                print(f'Remove conflicting linker UMIs during final pass: True')
+            else:
+                print(f'Remove conflicting linker UMIs during final pass: False')
     
     print('\n')
     
@@ -665,6 +686,7 @@ if __name__ == "__main__":
     out_bam = os.path.join(processed_dir, f'{args.nm}_aln.bam')
     out_dup = os.path.join(processed_dir, f'{args.nm}_duplicates.json.gz')
     out_mp = os.path.join(processed_dir, f'{args.nm}_misprimed.fa.gz')
+    removed_frags_out = os.path.join(processed_dir, f'{args.nm}_final_pass_removed.txt.gz')
     
     print('Parsing bam file...', flush = True)
     read_pairs = process.process_bam(out_bam)
@@ -942,7 +964,7 @@ if __name__ == "__main__":
                 multi_exact_kept[key] = updated_value
 
             del multi_exact_hashed
-            
+
             hash_distances, hash_indices = get_nn(input_dict = multi_exact_kept, 
                                                     num_perm = args.num_perm,
                                                     nthr = args.nthr,
@@ -978,9 +1000,8 @@ if __name__ == "__main__":
                 frag_ratio = args.frag_ratio,
                 nthr = args.nthr,
                 seq_sim = args.seq_sim,
-                num_perm = args.num_perm,
-                token_size = args.token_size,
-                mm_hash_similarity = args.mm_hash_similarity
+                len_diff = args.len_diff,
+                min_parallel_size = 500
                 )
             
             mm_kept_dict.update(multi_fuzzy_kept)
@@ -998,6 +1019,9 @@ if __name__ == "__main__":
             
             if args.reassign_mm:
                 print('Reassigning multimapping read positions...', flush = True)
+                mm_thresh = max(math.floor(n_mm_kept * args.mm_group_threshold), 1)
+                print(f'Multimapping group size threshold for reassignment: {mm_thresh}', flush = True)
+                
                 verified_kept_dict = clean.verify_mm_positions(
                     mm_kept_dict = mm_kept_dict, 
                     um_kept_dict = kept_dict, 
@@ -1008,7 +1032,7 @@ if __name__ == "__main__":
                     min_frag_len = args.min_frag_len,
                     num_perm = args.num_perm,
                     token_size = args.token_size,
-                    mm_group_threshold = args.mm_group_threshold
+                    mm_group_threshold = mm_thresh
                     )
                 
                 if len(verified_kept_dict) != len(mm_kept_dict):
@@ -1065,33 +1089,43 @@ if __name__ == "__main__":
     else:
         shift = args.tsd - 1 if args.U3 else 0
         n_mapped = len(kept_dict)
-
-    uniq_mapped = 0
-    for read_name, read in kept_dict.items():
-        if read['multi'] == False:
-            uniq_mapped += 1
-    
-    print('\n')
-    print(f'{n_mapped} reads retained:', flush = True)
-    print(f' {uniq_mapped} uniquely mapping reads ({((uniq_mapped / n_mapped) * 100):.2f}%)', flush = True)
-    print(f' {n_mapped - uniq_mapped} multimapping reads ({(((n_mapped - uniq_mapped) / n_mapped) * 100):.2f}%)', flush = True)
             
     if n_mapped > 0:
         final_start = time.time()
         print('\n')
         print(f'Performing final pass through kept fragments...', flush = True)
         
-        kept_dict = final_pass_collapse(
+        kept_dict, removed_dict = final_pass_collapse(
             kept_frags = kept_dict,
             len_diff = args.len_diff,
             nthr = args.nthr,
             min_count = args.min_count,
-            count_fc = args.count_fc
+            count_fc = args.count_fc,
+            ltr_cufp = args.check_ltr_umis_final_pass,
+            linker_cufp = args.check_linker_umis_final_pass
             )
+        
+        n_mapped_final = len(kept_dict)
+        if args.check_ltr_umis_final_pass or args.check_linker_umis_final_pass:
+            more_removed = n_mapped - n_mapped_final
+            if more_removed < 0:
+                raise ValueError('Error in final pass. Negative values present where they should not be.')
+            elif more_removed > 0:
+                print(f'{more_removed} additional reads removed due to conflicting UMIs', flush = True)
         
         final_end = time.time()
         final_time = round((final_end - final_start), 3)
         print(f'{final_time} seconds elapsed', flush = True)
+        
+        uniq_mapped = 0
+        for read_name, read in kept_dict.items():
+            if read['multi'] == False:
+                uniq_mapped += 1
+        
+        print('\n')
+        print(f'{n_mapped_final} reads retained:', flush = True)
+        print(f' {uniq_mapped} uniquely mapping reads ({((uniq_mapped / n_mapped_final) * 100):.2f}%)', flush = True)
+        print(f' {n_mapped_final - uniq_mapped} multimapping reads ({(((n_mapped_final - uniq_mapped) / n_mapped_final) * 100):.2f}%)', flush = True)
         
         kept_sorted = sorted(
             kept_dict.items(),
@@ -1104,11 +1138,13 @@ if __name__ == "__main__":
         del kept_sorted
 
         with (gzip.open(frags_out, 'wt') as frags, gzip.open(sites_out, 'wt') as sites, 
-                gzip.open(bc_out, 'wt') as bc):
+                gzip.open(bc_out, 'wt') as bc, gzip.open(removed_frags_out, 'wt') as removed_fp):
+            
             bc_cols = ['read_name', 'chrom', 'frag_start', 'frag_end',
                         'frag_strand', 'frag_count', 'multimapping', 'ltr_umi', 'linker_umi',
                         'ltr_match', 'linker_match', 'site_pos', 'site_strand']
             bc.write('\t'.join(bc_cols) + '\n')
+            removed_fp.write('\t'.join(bc_cols) + '\n')
             
             site_dict = {}
             
@@ -1169,6 +1205,34 @@ if __name__ == "__main__":
 
                 bc.write('\t'.join(map(str, bc_info)) + '\n')
                 
+            for key, value in removed_dict.items():
+                if value['strand'] == '-':
+                    rfp_site_start = (value['end'] - shift) - 1
+                    rfp_site_end = (value['end'] - shift)
+                    rfp_site_strand = '-' if not args.U3 else '+'
+                else:
+                    rfp_site_start = (value['start'] + shift)
+                    rfp_site_end = (value['start'] + shift) + 1
+                    rfp_site_strand = '+' if not args.U3 else '-'
+
+                rfp_info = [
+                    key,
+                    value['chrom'],
+                    value['start'] + 1,
+                    value['end'],
+                    value['strand'],
+                    value['count'],
+                    value['multi'],
+                    value['ltr_umi'],
+                    value['linker_umi'],
+                    value['ltr_match'],
+                    value['linker_match'],
+                    (rfp_site_start + 1) if rfp_site_strand == '+' else rfp_site_end,
+                    rfp_site_strand
+                    ]
+
+                removed_fp.write('\t'.join(map(str, rfp_info)) + '\n')
+                
         site_counts = defaultdict(int)
         
         for value in site_dict.values():
@@ -1206,12 +1270,12 @@ if __name__ == "__main__":
                 gzip.open(bc_out, 'wt') as bc, gzip.open(counts_out, 'wt') as counts,
                 gzip.open(out_mp, 'wt') as mp, gzip.open(out_dup, 'wt') as dups):
             pass
-        if n_pairs_qc > 0:
+        if n_pairs_qc == 0:
             print('\n', flush = True)
             print('No quality fragments were retained. No integration sites were mapped.', flush = True)
         else:
             print('\n', flush = True)
-            print('No read pairs pass initial QC. No integration sites were mapped.', flush = True)
+            print('No read pairs pass QC. No integration sites were mapped.', flush = True)
             with open(out_bam, 'wt') as frags, open(out_bam.replace('.bam', '.bai')):
                 pass
     
@@ -1233,7 +1297,8 @@ if __name__ == "__main__":
             '{}_*_cropped.fq.gz'.format(args.nm): subdirs[1],
             '{}_sites_unique.bed.gz'.format(args.nm): subdirs[3],
             '{}_misprimed.fa.gz'.format(args.nm): subdirs[4],
-            '{}_duplicates.json.gz'.format(args.nm): subdirs[4]
+            '{}_duplicates.json.gz'.format(args.nm): subdirs[4],
+            '{}_final_pass_removed.txt.gz'.format(args.nm): subdirs[4]
             }
         
         for pattern, target_dir in file_mapping.items():
@@ -1244,6 +1309,6 @@ if __name__ == "__main__":
     elapsed_time = round((end_time - start_time) / 60, 3)
     print('\n', flush = True)
     print('*** DONE with sample', args.nm, '***', flush = True)
-    print(f'Sites mapped: {n_mapped}', flush = True)
+    print(f'Sites mapped: {n_mapped_final}', flush = True)
     print(f'Total elapsed time: {elapsed_time}', 'minutes', flush = True)
     print('\n', flush = True)

@@ -234,7 +234,7 @@ def collapse_group(chrom_strand_tuple, pos_counts, len_diff, min_count,
     
     return read_updates
 
-def final_pass_collapse(kept_frags, len_diff, nthr, min_count, count_fc):
+def final_pass_collapse(kept_frags, len_diff, nthr, min_count, count_fc, ltr_cufp, linker_cufp):
     positions = np.array([(frag['chrom'], 
                             frag['end'] if frag['strand'] == '-' else frag['start'],
                             frag['strand'])
@@ -269,7 +269,64 @@ def final_pass_collapse(kept_frags, len_diff, nthr, min_count, count_fc):
             else:
                 kept_frags[read_name]['start'] = pos
     
-    return kept_frags
+    reads_to_remove = set()
+    
+    if ltr_cufp:
+        ltr_umi_groups = defaultdict(list)
+        all_n_ltr_umis = True
+        
+        for read_name, frag in kept_frags.items():
+            if frag['ltr_umi'] != 'N':
+                all_n_ltr_umis = False
+                break
+        
+        if not all_n_ltr_umis:
+            for read_name, frag in kept_frags.items():
+                ltr_umi_groups[frag['ltr_umi']].append(read_name)
+            
+            # Process each LTR UMI group
+            for ltr_umi, read_names in ltr_umi_groups.items():
+                if len(read_names) > 1:
+                    sorted_reads = sorted(
+                        read_names,
+                        key=lambda x: (kept_frags[x].get('count', 0), kept_frags[x].get('mean_qual', 0)),
+                        reverse=True
+                    )
+                    
+                    reads_to_remove.update(sorted_reads[1:])
+    
+    if linker_cufp:
+        linker_umi_groups = defaultdict(list)
+        all_n_linker_umis = True
+        
+        for read_name, frag in kept_frags.items():
+            if frag['linker_umi'] != 'N':
+                all_n_linker_umis = False
+                break
+        
+        if not all_n_linker_umis:
+            remaining_reads = {read for read in kept_frags if read not in reads_to_remove}
+            
+            for read_name in remaining_reads:
+                frag = kept_frags[read_name]
+                linker_umi_groups[frag['linker_umi']].append(read_name)
+            
+            for linker_umi, read_names in linker_umi_groups.items():
+                if len(read_names) > 1:
+                    sorted_reads = sorted(
+                        read_names,
+                        key=lambda x: (kept_frags[x].get('count', 0), kept_frags[x].get('mean_qual', 0)),
+                        reverse=True
+                    )
+                    
+                    reads_to_remove.update(sorted_reads[1:])
+    
+    removed_frags = {}
+    for read_name in reads_to_remove:
+        removed_frags[read_name] = kept_frags[read_name]
+        del kept_frags[read_name]
+    
+    return kept_frags, removed_frags
 
 def sample_reads(filename, n_reads=5000):
     sequences = []

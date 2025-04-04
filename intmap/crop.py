@@ -18,13 +18,14 @@ def check_crop_input(ltr3, linker3, ltr1_primer, ltr5, linker5,
                     contamination, ltr5_error_rate, linker5_error_rate,
                     ltr3_error_rate, linker3_error_rate):
     
-    ltr1_check = ltr1_primer.replace(' ', '')
-    ltr1_char = regex.sub('[ATGCN]', '', ltr1_check.upper())
-    if ltr1_char != '':
-        raise ValueError('Declared round 1 LTR primer may only contain A,T,G,C, and N nucleotides.')
+    if ltr1_primer is not None:
+        ltr1_check = ltr1_primer.replace(' ', '')
+        ltr1_char = regex.sub('[ATGCN]', '', ltr1_check.upper())
+        if ltr1_char != '':
+            raise ValueError('Declared round 1 LTR primer may only contain A,T,G,C, and N nucleotides.')
 
-    if len(ltr1_check) < 10:
-        raise ValueError('Declared round 1 LTR primer must be at least 10 nucleotides long.')
+        if len(ltr1_check) < 10:
+            raise ValueError('Declared round 1 LTR primer must be at least 10 nucleotides long.')
         
     ltr5_check = ltr5.replace(' ', '')
     ltr5_char = regex.sub('[ATGC]', '', ltr5_check.upper())

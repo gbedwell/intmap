@@ -96,7 +96,7 @@ def test_multi_exact_matches():
 def test_verify_sequence_groups():
     input_data, expected = load_test_data('clean', 'verify_sequence_groups')
     
-    result = [verify_sequence_groups(group, seq_sim=0.95) for group in input_data]
+    result = [verify_sequence_groups(group, seq_sim=0.95, len_diff=1, nthr=1) for group in input_data]
     assert result == expected
     
 def test_unique_fuzzy_matches():
@@ -118,9 +118,7 @@ def test_multi_fuzzy_matches():
         frag_ratio=2,
         nthr=1,
         seq_sim=0.9,
-        num_perm=32, 
-        token_size=4, 
-        mm_hash_similarity=0.5
+        len_diff = 1
         )
     assert kept == expected['kept']
     assert dup == expected['dup']

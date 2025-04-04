@@ -1,6 +1,6 @@
 import math
 from rapidfuzz.distance import Levenshtein
-from collections import defaultdict, deque
+from collections import defaultdict, deque, Counter
 import numpy as np
 import random
 from itertools import groupby
@@ -173,7 +173,7 @@ def cluster_entries_by_umis(entries, threshold, frag_ratio):
     
     # Adaptive thresholding based on cluster size
     if len(entries) > 100: 
-        entries.sort(key=itemgetter('count'), reverse=True)
+        entries.sort(key=itemgetter('count', 'mean_qual'), reverse=True)
         
         # Use first entry as reference
         first_umi = entries[0]['combined_umi']
@@ -225,7 +225,7 @@ def cluster_entries_by_umis(entries, threshold, frag_ratio):
 def build_umi_networks(umi_clusters, frag_ratio, mem_aware = False):
     networks = defaultdict(list)
     unnetworked = set()
-    count_key = itemgetter('count')
+    count_key = itemgetter('count', 'mean_qual')
     
     for cluster in umi_clusters:
         all_reads = {read['read_name'] for read in cluster}
@@ -424,70 +424,167 @@ def multi_exact_matches(input_dict):
             multi_exact_kept[multi_keys[best_idx]] = best_entry
     
     return multi_exact_kept
-
-def verify_sequence_groups(group, seq_sim):
+    
+def verify_sequence_groups_faiss(group, seq_sim, len_diff, nthr):
+    set_faiss_threads(nthr)
+    
     if len(group) <= 1:
         return [group]
     
-    seq1_key = itemgetter('seq1')
-    seq2_key = itemgetter('seq2')
-    
-    # Pre-compute sequences for all entries
-    sequences = [(seq1_key(entry), seq2_key(entry)) for entry in group]
-    
     compare_seqs = {}
-    for i, (seq1, seq2) in enumerate(sequences):
+    for i, entry in enumerate(group):
+        seq1 = entry['seq1']
+        seq2 = entry['seq2']
         if seq_similarity(seq1, revcomp(seq2)) < seq_sim:
             compare_seqs[i] = seq1 + seq2
         else:
             compare_seqs[i] = seq1
     
-    subgroups = [[group[0]]]
-    first_seqs = sequences[0]
+    k = 4
+    base_to_val = {'A': 0, 'C': 1, 'G': 2, 'T': 3, 'N': 0}
+    dim = 4**k
     
-    for i, entry in enumerate(group[1:], 1):
-        entry_seqs = sequences[i]
-        compare_seq = compare_seqs.get(i, entry_seqs[0])
+    vectors = np.zeros((len(group), dim), dtype=np.float32)
+    
+    for i, seq in compare_seqs.items():
+        kmer_counts = np.zeros(dim, dtype=np.float32)
+        for j in range(len(seq) - k + 1):
+            kmer = seq[j:j+k]
+            if all(base in base_to_val for base in kmer):
+                idx = 0
+                for base in kmer:
+                    idx = idx * 4 + base_to_val.get(base, 0)
+                kmer_counts[idx] += 1
+        vectors[i] = kmer_counts
+    
+    norms = np.sqrt(np.sum(vectors**2, axis=1))
+    norms[norms == 0] = 1
+    vectors = vectors / norms[:, np.newaxis]
+    
+    index = faiss.IndexFlatIP(dim)  # Inner product = cosine similarity for normalized vectors
+    index.add(vectors)
+    
+    D, I = index.search(vectors, min(20, len(group)))
+    
+    rows, cols = [], []
+    for i in range(len(group)):
+        seq_i = compare_seqs[i]
+        len_i = len(seq_i)
+        
+        for j_idx, j in enumerate(I[i]):
+            if i == j:
+                continue
+                
+            seq_j = compare_seqs[j]
+            len_j = len(seq_j)
             
-        matched = False
-        for subgroup in subgroups:
-            ref_idx = group.index(subgroup[0])
-            ref_seqs = sequences[ref_idx]
-            ref_seq = compare_seqs.get(ref_idx, ref_seqs[0])
+            if abs(len_i - len_j) > len_diff:
+                continue
                 
-            if seq_similarity(compare_seq, ref_seq) >= seq_sim:
-                subgroup.append(entry)
-                matched = True
-                break
+            if D[i][j_idx] < seq_sim - 0.05:
+                continue
                 
-        if not matched:
-            subgroups.append([entry])
+            sim = seq_similarity(seq_i, seq_j)
+            if sim >= seq_sim:
+                rows.append(i)
+                cols.append(j)
     
-    return subgroups
+    graph = csr_matrix(
+        ([1] * len(rows), (rows, cols)),
+        shape=(len(group), len(group)),
+        dtype=np.int8
+    )
+    graph = graph.maximum(graph.T)
+    
+    n_components, labels = connected_components(
+        csgraph=graph,
+        directed=False,
+        return_labels=True
+    )
+    
+    result = []
+    for component_id in range(n_components):
+        component_indices = np.where(labels == component_id)[0]
+        result.append([group[idx] for idx in component_indices])
+    
+    return result
 
-def process_group(group, seq_sim, umi_diff, frag_ratio, num_perm, 
-                    token_size, mm_hash_similarity, max_threshold):
-        kept_reads = {}
-        dup_reads = {}
-
-        if len(group) > 50:
-            lsh_subgroups = large_group_lsh(group, seq_sim, num_perm, token_size, mm_hash_similarity, max_threshold)
-            for subgroup in lsh_subgroups:
-                sub_kept, sub_dup = process_standard_group(subgroup, umi_diff, frag_ratio, seq_sim)
-                kept_reads.update(sub_kept)
-                dup_reads.update(sub_dup)
+def verify_sequence_groups(group, seq_sim, len_diff, nthr, min_parallel_size=500):
+    if len(group) <= 1:
+        return [group]
+    
+    if len(group) >= min_parallel_size:
+        return verify_sequence_groups_faiss(group, seq_sim, len_diff, nthr)
+    
+    seq1_key = itemgetter('seq1')
+    seq2_key = itemgetter('seq2')
+    
+    compare_seqs = {}
+    for i, entry in enumerate(group):
+        seq1 = seq1_key(entry)
+        seq2 = seq2_key(entry)
+        if seq_similarity(seq1, revcomp(seq2)) < seq_sim:
+            compare_seqs[i] = seq1 + seq2
         else:
-            sub_kept, sub_dup = process_standard_group(group, umi_diff, frag_ratio, seq_sim)
-            kept_reads.update(sub_kept)
-            dup_reads.update(sub_dup)
-                
-        return kept_reads, dup_reads
+            compare_seqs[i] = seq1
     
-def process_standard_group(group, umi_diff, frag_ratio, seq_sim):
+    entry_indices = list(range(len(group)))
+    sorted_indices = sorted(entry_indices, key=lambda i: (len(compare_seqs[i]), group[i]['read_name']), reverse=True)
+    
+    parent = list(range(len(group)))
+    rank = [0] * len(group)
+    
+    def find(x):
+        if parent[x] != x:
+            parent[x] = find(parent[x])
+        return parent[x]
+    
+    def union(x, y):
+        root_x = find(x)
+        root_y = find(y)
+        if root_x != root_y: 
+            if rank[root_x] < rank[root_y]:
+                parent[root_x] = root_y
+            else:
+                parent[root_y] = root_x
+                if rank[root_x] == rank[root_y]:
+                    rank[root_x] += 1
+    
+    for i in range(len(sorted_indices)):
+        idx_i = sorted_indices[i]
+        seq_i = compare_seqs[idx_i]
+        len_i = len(seq_i)
+        
+        for j in range(i):
+            idx_j = sorted_indices[j]
+            seq_j = compare_seqs[idx_j]
+            len_j = len(seq_j)
+            
+            if abs(len_i - len_j) > len_diff:
+                continue
+            
+            sim = seq_similarity(seq_i, seq_j)
+            if sim >= seq_sim:
+                union(idx_i, idx_j)
+    
+    subgroups = defaultdict(list)
+    for i, idx in enumerate(sorted_indices):
+        root = find(idx)
+        subgroups[root].append(group[idx])
+    
+    return list(subgroups.values())
+    
+def process_group(group, umi_diff, frag_ratio, seq_sim, len_diff, min_parallel_size, nthr):
         kept_reads = {}
         dup_reads = {}
         
-        verified_subgroups = verify_sequence_groups(group, seq_sim)
+        verified_subgroups = verify_sequence_groups(
+            group = group, 
+            seq_sim = seq_sim, 
+            len_diff = len_diff, 
+            min_parallel_size = min_parallel_size, 
+            nthr = nthr
+            )
         
         for subgroup in verified_subgroups:
             entry_clusters = cluster_entries_by_umis(
@@ -510,88 +607,53 @@ def process_standard_group(group, umi_diff, frag_ratio, seq_sim):
                 dup_reads[kept_read] = sorted(list(duplicate_reads))
         
         return kept_reads, dup_reads
-
-def large_group_lsh(group, seq_sim, num_perm, token_size, mm_hash_similarity, threshold):
-        lsh = MinHashLSH(threshold=threshold, num_perm=num_perm)
-        
-        read_to_entry = {entry['read_name']: entry for entry in group}
-        read_to_minhash = {}
-        
-        sorted_entries = sorted(group, key=itemgetter('count', 'mean_qual'), reverse=True)
-        
-        subgroups = []
-        processed_reads = set()
-        
-        for entry in sorted_entries:
-            read_name = entry['read_name']
-            
-            seq1 = entry.get('seq1', '')
-            seq2 = entry.get('seq2', '')
-            
-            if seq_similarity(seq1, revcomp(seq2)) >= seq_sim:
-                sequence = seq1
-            else:
-                sequence = seq1 + seq2
-            
-            minhash = MinHash(num_perm=num_perm)
-            for i in range(len(sequence) - token_size + 1):
-                minhash.update(sequence[i:i+token_size].encode('utf-8'))
-            
-            read_to_minhash[read_name] = minhash
-        
-        for entry in sorted_entries:
-            read_name = entry['read_name']
-            
-            if read_name in processed_reads:
-                continue
-                
-            minhash = read_to_minhash[read_name]
-            
-            similar_reads = list(lsh.query(minhash)) if len(lsh.keys) > 0 else []
-            
-            if not similar_reads:
-                subgroup = [entry]
-                processed_reads.add(read_name)
-                lsh.insert(read_name, minhash)
-                
-                for other_read, other_minhash in read_to_minhash.items():
-                    if other_read in processed_reads:
-                        continue
-                        
-                    if lsh.query(other_minhash) and read_name in lsh.query(other_minhash):
-                        subgroup.append(read_to_entry[other_read])
-                        processed_reads.add(other_read)
-                
-                subgroups.append(subgroup)
-            else:
-                processed_reads.add(read_name)
-        
-        remaining = [read_to_entry[read] for read in read_to_minhash if read not in processed_reads]
-        if remaining:
-            subgroups.append(remaining)
-        return subgroups
     
-def multi_fuzzy_matches(groups, umi_diff, frag_ratio, nthr, seq_sim,
-                        num_perm, token_size, mm_hash_similarity):
-    max_threshold = round(seq_sim - (1 / (num_perm ** 0.5)), 3)
-    threshold = min((mm_hash_similarity + 0.05), max_threshold)
-    results = Parallel(n_jobs=nthr)(
-        delayed(process_group)(group, 
-                                seq_sim, 
-                                umi_diff, 
-                                frag_ratio,
-                                num_perm, 
-                                token_size, 
-                                mm_hash_similarity,
-                                threshold)
-        for group in groups
-        )
+def multi_fuzzy_matches(groups, umi_diff, frag_ratio, nthr, seq_sim, len_diff, min_parallel_size=500):
+    
+    sorted_groups = sorted(groups, key=lambda g: (len(g), min(e['read_name'] for e in g) if g else ''), reverse=True)
+    large_groups = [g for g in sorted_groups if len(g) >= min_parallel_size]
+    regular_groups = [g for g in sorted_groups if len(g) < min_parallel_size]
     
     multi_fuzzy_kept = {}
     multi_fuzzy_dup = {}
-    for kept, dup in results:
-        multi_fuzzy_kept.update(kept)
-        multi_fuzzy_dup.update(dup)
+    
+    if large_groups:        
+        for large_group in large_groups:
+            kept, dup = process_group(
+                group = large_group,
+                seq_sim = seq_sim,
+                umi_diff = umi_diff,
+                frag_ratio = frag_ratio,
+                len_diff = len_diff,
+                min_parallel_size = min_parallel_size,
+                nthr = nthr
+                )
+            
+            multi_fuzzy_kept.update(kept)
+            multi_fuzzy_dup.update(dup)
+    
+    if regular_groups:
+        total_groups = len(regular_groups)
+        groups_per_batch = max(1, total_groups // nthr)
+        batched_groups = [regular_groups[i:i+groups_per_batch] for i in range(0, total_groups, groups_per_batch)]
+        
+        results = Parallel(n_jobs=nthr)(
+            delayed(lambda batch: [process_group(
+                group=group,
+                seq_sim=seq_sim,
+                umi_diff=umi_diff,
+                frag_ratio=frag_ratio,
+                len_diff=len_diff,
+                min_parallel_size=min_parallel_size,
+                nthr = nthr
+            ) for group in batch])(batch)
+            for batch in batched_groups
+        )
+
+        for batch_results in results:
+            for kept, dup in batch_results:
+                multi_fuzzy_kept.update(kept)
+                multi_fuzzy_dup.update(dup)
     
     return multi_fuzzy_kept, multi_fuzzy_dup
 
@@ -620,7 +682,7 @@ def mm_coarse_cluster(sequences, threshold, num_perm, min_frag_len, token_size):
     seq_to_minhash = {}
     
     # Process sequences from longest to shortest
-    sorted_seqs = sorted(sequences, key=len, reverse=True)
+    sorted_seqs = sorted(sequences, key=lambda seq: (len(seq), seq), reverse=True)
     clusters = defaultdict(list)
     
     for seq in sorted_seqs:
@@ -636,7 +698,8 @@ def mm_coarse_cluster(sequences, threshold, num_perm, min_frag_len, token_size):
             lsh.insert(seq, minhash)
         else:
             # Find best matching cluster
-            best_match = max(matches, key=lambda x: len(x))
+            sorted_matches = sorted(matches, key=lambda x: (len(x), x))
+            best_match = sorted_matches[-1]
             clusters[best_match].append(seq)
             
     return list(clusters.values())
@@ -648,7 +711,7 @@ def refine_coarse_clusters(coarse_clusters, seq_sim):
             refined_clusters.append([cluster[0]])
             continue
         subclusters = defaultdict(list)
-        sorted_seqs = sorted(cluster, key=len, reverse=True)
+        sorted_seqs = sorted(cluster, key=lambda seq: (len(seq), seq), reverse=True)
         subclusters[sorted_seqs[0]].append(sorted_seqs[0])
         
         for seq in sorted_seqs[1:]:
@@ -658,7 +721,7 @@ def refine_coarse_clusters(coarse_clusters, seq_sim):
             best_key = None
             
             # Check all keys to find the best match
-            for key in subclusters.keys():
+            for key in sorted(subclusters.keys(), key=lambda k: (len(k), k)):
                 sim_check = seq_similarity(seq, key[:seq_len])
                 if sim_check > best_similarity:
                     best_similarity = sim_check
@@ -739,7 +802,7 @@ def build_position_based_index(um_kept_dict, k, nthr):
         # Process each position
         for pos, pos_reads in pos_groups.items():
             # Ascending sort
-            sorted_reads = sorted(pos_reads, key = lambda x: len(x['seq1']), reverse = False)
+            sorted_reads = sorted(pos_reads, key=lambda x: (len(x['seq1']), x['seq1']), reverse=False)
             # Add all valid k-mer prefixes from this position
             for read in sorted_reads:
                 seq = read['seq1']
@@ -768,7 +831,7 @@ def build_position_based_index(um_kept_dict, k, nthr):
 
 def compare_to_um(mm_group, k, um_index, bloom_filter, um_kept_dict, seq_sim):
     
-    sorted_mm_reads = sorted(mm_group, key = lambda x: len(x['seq1']), reverse = True)
+    sorted_mm_reads = sorted(mm_group, key = lambda x: (len(x['seq1']), x['seq1']), reverse = True)
     
     relocation_info = {}
     
@@ -926,7 +989,9 @@ def verify_mm_positions(mm_kept_dict, um_kept_dict, seq_sim, nthr, len_diff,
     if nsub != len(mm_kept_dict):
         raise Exception(f'Failure in grouping multimapping reads.')
     
-    sorted_subgroups = sorted(subgroups, key=len, reverse=True)
+    sorted_subgroups = sorted(subgroups, 
+                            key=lambda g: (len(g), min(e['read_name'] for e in g) if g else ''), 
+                            reverse=True)
     subgroup_chunk_size = max(1, len(sorted_subgroups) // nthr)
     subgroup_chunks = [
         sorted_subgroups[i:i + subgroup_chunk_size] for i in range(0, len(sorted_subgroups), subgroup_chunk_size)

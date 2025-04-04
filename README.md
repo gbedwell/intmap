@@ -94,3 +94,9 @@ This command will create the file target_params.json and use the entries therein
 intmap-multi \
     -args_json target_params.json
 ```
+
+## Licensing
+
+This software is licensed under the BSD 3-Clause License (see LICENSE).
+
+It relies on several third-party tools, which are governed by their own licenses. See <code>THIRD_PARTY_LICENSES.md</code> for details.
