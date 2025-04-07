@@ -119,7 +119,7 @@ def process_read(read, aln_mismatch_rate, aln_indel_rate, max_frag_len,
                 # This allows easy assessment of proper LTR/linker matches based on
                 # the expected sequence.
                 matches = read.get_tag('OX')
-                ltr_match = matches[0]
+                ltr_match = matches
                     
                 read_name = read.query_name
                         
