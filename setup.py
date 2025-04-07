@@ -7,7 +7,12 @@ setup(
 	author_email='gregoryjbedwell@gmail.com',
 	packages=find_packages(),
 	python_requires='>=3.10',
-	scripts=['intmap/intmap','intmap-demux/intmap-demux','intmap-multi/intmap-multi'],
+	scripts=[
+    	'intmap/intmap',
+     	'intmap_demux/intmap_demux',
+      	'intmap_multi/intmap_multi', 
+       	'intmap_se/intmap_se'
+    ],
 	url='',
 	license='LICENSE.txt',
 	description='A CLI app for mapping retroviral integration sites from NGS data.',

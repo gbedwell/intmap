@@ -31,6 +31,11 @@ parser.add_argument('--arg_sets_only', '-arg_sets_only',
                     help='''Boolean. 
                     Whether or not to stop after saving the arguments JSON.''',
                     action='store_true')
+parser.add_argument('--single_end', '-single_end',
+                    help='''Boolean. 
+                    Whether or not the data is paired- or single-end. 
+                    When set, intmap_se is run instead of intmap.''',
+                    action='store_true')
 
 args = parser.parse_args()
 
@@ -97,9 +102,12 @@ def save_to_json(argument_sets, filename):
     with open(filename, 'w') as f:
         json.dump(argument_sets, f, indent=4)
 
-def intmap_multi(argument_sets):
+def intmap_multi(argument_sets, single_end = args.single_end):
     for args in argument_sets:
-        cmd_list = ['intmap'] + args
+        if not single_end:
+            cmd_list = ['intmap'] + args
+        else:
+            cmd_list = ['intmap_se'] + args
         cmd = ' '.join(cmd_list)
         subprocess.run(cmd, shell=True)
 

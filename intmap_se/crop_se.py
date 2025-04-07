@@ -11,7 +11,7 @@ import math
 from collections import defaultdict
 import multiprocessing
 from joblib import Parallel, delayed
-from intmap.utils import *
+from intmap_se.utils_se import *
 import numpy as np
 
 def check_crop_input(ltr3, linker3, ltr1_primer, ltr5, linker5,
@@ -50,9 +50,9 @@ def check_crop_input(ltr3, linker3, ltr1_primer, ltr5, linker5,
         raise ValueError('3\' LTR sequence error rate cannot be > 0.4.')
         
     link5_check = linker5.replace(' ', '')
-    link5_char = regex.sub('[ATGC]', '', link5_check.upper())
+    link5_char = regex.sub('[ATGCN]', '', link5_check.upper())
     if link5_char != '':
-        raise ValueError('Declared 5\' linker sequence may only contain A,T,G, and C nucleotides.')
+        raise ValueError('Declared 5\' linker sequence may only contain A,T,G,C and N nucleotides.')
 
     if len(link5_check) < 5:
         raise ValueError('Declared 5\' linker sequence must be at least 5 nucleotides long.')
@@ -61,9 +61,9 @@ def check_crop_input(ltr3, linker3, ltr1_primer, ltr5, linker5,
         raise ValueError('5\' linker sequence error rate cannot be > 0.4.')
     
     link3_check = linker3.replace(' ', '')
-    link3_char = regex.sub('[ATGC]', '', link3_check.upper())
+    link3_char = regex.sub('[ATGCN]', '', link3_check.upper())
     if link3_char != '':
-        raise ValueError('Declared 3\' linker sequence may only contain A,T,G, and C nucleotides.')
+        raise ValueError('Declared 3\' linker sequence may only contain A,T,G,C, and N nucleotides.')
 
     if len(link3_check) < 5:
         raise ValueError('Declared 3\' linker sequence must be at least 5 nucleotides long.')
@@ -174,7 +174,6 @@ def init_params(args):
         
     return {
         'file1': args.r1,
-        'file2': args.r2,
         'min_qual': 10 ** (args.min_qual / -10),
         'min_frag_len': args.min_frag_len,
         'ltr5_error': args.ltr5_error_rate,
@@ -185,10 +184,7 @@ def init_params(args):
         # 'qual_offset': detect_quality_offset(args.r1),
         'ltr_umi_len': args.ltr_umi_len,
         'ltr_umi_offset': args.ltr_umi_offset,
-        'linker_umi_len': args.linker_umi_len,
-        'linker_umi_offset': args.linker_umi_offset,
         'ltr_umi_pattern': args.ltr_umi_pattern,
-        'linker_umi_pattern': args.linker_umi_pattern,
         'contam_patterns': contam_patterns,
         'ltr5': args.ltr5,
         'ltr3': args.ltr3,
@@ -252,13 +248,11 @@ def fastq_writer(file, reads):
             for read in reads:
                 f.write(f"{read['name']}\n{read['seq']}\n+\n{read['qual']}\n")
 
-def process_reads_parallel(chunk1, chunk2, patterns, params, is_zipped, 
+def process_reads_parallel(chunk1, patterns, params, is_zipped, 
                             out_nm, processed_directory, chunk_num):
     sequences1, qualities1, headers1 = process_fastq_chunk(chunk1, params, is_zipped)
-    sequences2, qualities2, headers2 = process_fastq_chunk(chunk2, params, is_zipped)
     
     cropped_reads1 = []
-    cropped_reads2 = []
     
     ltr_pattern = params['ltr5'] + params['ltr3']
     linker_pattern = params['linker5'] + params['linker3']
@@ -268,56 +262,33 @@ def process_reads_parallel(chunk1, chunk2, patterns, params, is_zipped,
         params['ltr3_error'] == 0 and params['linker3_error'] == 0):
         no_error = True
 
-    for i, ((seq1, qual1, head1), 
-            (seq2, qual2, head2)) in enumerate(zip(zip(sequences1, qualities1, headers1), 
-                                                    zip(sequences2, qualities2, headers2))):
-        
-        if head1 != head2:
-            raise ValueError(f"Read pair mismatch: {head1} != {head2}")
-            
+    for i, (seq1, qual1, head1) in enumerate(zip(sequences1, qualities1, headers1)):
         seq1_str = seq1
-        seq2_str = seq2
         
         # if not patterns['ltr_suffix']['perfect'] in seq1_str:
         #     continue
-        # if not patterns['linker_suffix']['perfect'] in seq2_str:
-        #     continue
         
         ltr_pattern_match = find_pattern_match(seq1_str, patterns, 'ltr', no_error)
-        linker_pattern_match = find_pattern_match(seq2_str, patterns, 'linker', no_error)
         
-        if ltr_pattern_match and linker_pattern_match:
+        if ltr_pattern_match:
             start1 = ltr_pattern_match.end()
-            start2 = linker_pattern_match.end()
-            
             linker_in_ltr = find_pattern_match(seq1_str, patterns, 'linker_rc', False)
-            ltr_in_linker = find_pattern_match(seq2_str, patterns, 'ltr_rc', False)
 
-            if linker_in_ltr and ltr_in_linker:
+            if linker_in_ltr:
                 end1 = linker_in_ltr.start()
-                end2 = ltr_in_linker.start()
                 cropped_seq1 = seq1_str[start1:end1]
-                cropped_seq2 = seq2_str[start2:end2]
                 cropped_qual1 = qual1[start1:end1]
-                cropped_qual2 = qual2[start2:end2]
             else:
                 cropped_seq1 = seq1_str[start1:]
-                cropped_seq2 = seq2_str[start2:]
                 cropped_qual1 = qual1[start1:]
-                cropped_qual2 = qual2[start2:]
             
             ltr_umi = extract_umis(seq1_str, 
                                     ltr_pattern_match, 
                                     params['ltr_umi_len'], 
                                     params['ltr_umi_offset'],
                                     params['ltr_umi_pattern'])
-            linker_umi = extract_umis(seq2_str, 
-                                    linker_pattern_match,
-                                    params['linker_umi_len'],
-                                    params['linker_umi_offset'],
-                                    params['linker_umi_pattern'])
             
-            if not ltr_umi or not linker_umi:
+            if not ltr_umi:
                 continue
             
             toss = False
@@ -327,17 +298,12 @@ def process_reads_parallel(chunk1, chunk2, patterns, params, is_zipped,
                         toss = True
                         break
 
-            if not toss and len(cropped_seq1) >= params['min_len'] and len(cropped_seq2) >= params['min_len']:
+            if not toss and len(cropped_seq1) >= params['min_len']:
                 ltr_found = ltr_pattern_match.group()
-                linker_found = linker_pattern_match.group()
                     
                 new_header1 = (f'{head1}\tCO:Z:1:{out_nm}\t'
-                                    f'RX:Z:{ltr_umi}-{linker_umi}\t'
-                                    f'OX:Z:{ltr_found}-{linker_found}')
-                
-                new_header2 = (f'{head1}\tCO:Z:2:{out_nm}\t'
-                                    f'RX:Z:{ltr_umi}-{linker_umi}\t'
-                                    f'OX:Z:{ltr_found}-{linker_found}')
+                                    f'RX:Z:{ltr_umi}\t'
+                                    f'OX:Z:{ltr_found}')
                 
                 cropped_reads1.append({
                     'name': new_header1,
@@ -345,24 +311,14 @@ def process_reads_parallel(chunk1, chunk2, patterns, params, is_zipped,
                     # 'qual': ''.join(chr(q + params['qual_offset']) for q in cropped_qual1)
                     'qual': cropped_qual1
                 })
-                
-                cropped_reads2.append({
-                    'name': new_header2,
-                    'seq': cropped_seq2,
-                    # 'qual': ''.join(chr(q + params['qual_offset']) for q in cropped_qual2)
-                    'qual': cropped_qual2
-                })
         else:
             continue
     
     tmp_file1 = os.path.join(processed_directory,    
                             f'{out_nm}_{os.getpid()}_{chunk_num}_R1_tmp.fq.gz')
-    tmp_file2 = os.path.join(processed_directory,
-                            f'{out_nm}_{os.getpid()}_{chunk_num}_R2_tmp.fq.gz')
     
-    with gzip.open(tmp_file1, 'wt') as f1, gzip.open(tmp_file2, 'wt') as f2:
+    with gzip.open(tmp_file1, 'wt') as f1:
         fastq_writer(f1, cropped_reads1)
-        fastq_writer(f2, cropped_reads2)
 
 def concatenate_files(outfile, pattern):
     with gzip.open(outfile, 'wb') as out:
@@ -375,22 +331,18 @@ def concatenate_unix(outfile, pattern):
     with open(outfile, 'wb') as out:
         subprocess.run(cmd, stdout=out)
                 
-def crop(file1, file2, args, processed_directory, out_nm):
+def crop(file1, args, processed_directory, out_nm):
     out_file1 = os.path.join(processed_directory,
                             f'{out_nm}_R1_cropped.fq.gz')
-    out_file2 = os.path.join(processed_directory,
-                            f'{out_nm}_R2_cropped.fq.gz')
     
-    for f in [out_file1, out_file2]:
-        if os.path.exists(f):
-            os.remove(f)
+    if os.path.exists(out_file1):
+        os.remove(out_file1)
     
     params = init_params(args)
     
     is_zipped = zipped(params['file1'])
     
     chunks1 = list(fastq_reader(params['file1'], params['chunk_size']))
-    chunks2 = list(fastq_reader(params['file2'], params['chunk_size']))
     
     patterns = compile_patterns(params['ltr3'], params['linker3'], params['ltr5'], params['linker5'],
                                 params['ltr3_error'], params['linker3_error'],
@@ -398,14 +350,13 @@ def crop(file1, file2, args, processed_directory, out_nm):
     
     Parallel(n_jobs=params['nthr'])(
         delayed(process_reads_parallel)(
-            chunk1, chunk2, patterns, params, is_zipped, out_nm,
+            chunk1, patterns, params, is_zipped, out_nm,
             processed_directory, chunk_num
-        ) for chunk_num, (chunk1, chunk2) in enumerate(zip(chunks1, chunks2))
+        ) for chunk_num, chunk1 in enumerate(chunks1)
     )
 
     inputs = [
         (out_file1, os.path.join(processed_directory, f"{out_nm}_*_R1_tmp.fq.gz")),
-        (out_file2, os.path.join(processed_directory, f"{out_nm}_*_R2_tmp.fq.gz"))
         ]
     
     op_sys = platform.system()
@@ -416,7 +367,6 @@ def crop(file1, file2, args, processed_directory, out_nm):
         
     for pattern in [
         os.path.join(processed_directory, f"{out_nm}_*_R1_tmp.fq.gz"),
-        os.path.join(processed_directory, f"{out_nm}_*_R2_tmp.fq.gz")
         ]:
         for tmp_file in glob.glob(pattern):
             os.remove(tmp_file)

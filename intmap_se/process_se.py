@@ -3,44 +3,25 @@ import regex
 import pysam
 import sys
 import numpy as np
-from intmap.utils import *
+from intmap_se.utils_se import *
 
-
-# Read in BAM file and check R1 and R2 for
-# read name, location, and orientation.
 def process_bam(out_bam):
     bamfile = pysam.AlignmentFile(out_bam, 'rb')
     reads_dict = {}
-    read_pairs = []
+    reads = []
 
     n_reads = 0
-    n_pairs = 0
     for read in bamfile.fetch():
-        n_reads += 1
-        if read.is_proper_pair:
-            if read.query_name not in reads_dict:
-                reads_dict[read.query_name] = read
-            else:
-                previous_read = reads_dict.pop(read.query_name)
-                
-                if read.is_read1:
-                    read1, read2 = read, previous_read
-                else:
-                    read1, read2 = previous_read, read
-                    
-                if read1.reference_name == read2.reference_name:
-                    if ((read1.is_forward and read2.is_reverse) or 
-                        (read1.is_reverse and read2.is_forward)):
-                        read_pairs.append((read1, read2))
-                        n_pairs += 1
+        if read.query_name not in reads_dict:
+            reads_dict[read.query_name] = read
+            reads.append(read)
+            n_reads += 1
 
     print(f'Number of aligned reads: {n_reads}', flush = True)
     
     if n_reads > 0:
-        print(f'Number of proper pairs: {n_pairs} ({(((n_pairs * 2) / n_reads) * 100):.2f}%)',
-                flush = True)
         bamfile.close()
-        return read_pairs
+        return reads
     else:
         print(f'\nNo reads aligned to the target genome. Exiting.', flush = True)
         bamfile.close()
@@ -66,12 +47,11 @@ def process_read(read, aln_mismatch_rate, aln_indel_rate, max_frag_len,
     
     # Check that the 5' end of read 1 matches the reference after
     # match_after aligned positions.
-    if read.is_read1:
-        first_match = regex.match(r'^([ACGT]+)?(\d+)', md)
-        if first_match:
-            start_mm = len(first_match.group(1) or '')
-            if start_mm > match_after:
-                return None
+    first_match = regex.match(r'^([ACGT]+)?(\d+)', md)
+    if first_match:
+        start_mm = len(first_match.group(1) or '')
+        if start_mm > match_after:
+            return None
     
     # Make sure AS and XS tags make sense
     as_tag = read.get_tag('AS')
@@ -104,11 +84,6 @@ def process_read(read, aln_mismatch_rate, aln_indel_rate, max_frag_len,
     if mean_qual > min_qual:
         return None
     
-    # Filter by fragment length
-    tlen = read.template_length
-    if abs(tlen) > max_frag_len or abs(tlen) < min_frag_len:
-        return None
-    
     # Filter by mismatch and indel rates
     # Quantified relative to alignment length
     aln_len = read.query_alignment_length
@@ -130,7 +105,7 @@ def process_read(read, aln_mismatch_rate, aln_indel_rate, max_frag_len,
                 # Fill-in read information
                 strand = '-' if read.is_reverse else '+'
                                 
-                ltr_umi, linker_umi = read.get_tag('RX').split('-')
+                ltr_umi = read.get_tag('RX')
 
                 # Define sequences relative to sequenced strand
                 # Since BAM files report everything relative to the forward strand,
@@ -143,9 +118,8 @@ def process_read(read, aln_mismatch_rate, aln_indel_rate, max_frag_len,
                 # Report LTR/linker matches as-sequenced.
                 # This allows easy assessment of proper LTR/linker matches based on
                 # the expected sequence.
-                matches = read.get_tag('OX').split('-')
+                matches = read.get_tag('OX')
                 ltr_match = matches[0]
-                linker_match = matches[1]
                     
                 read_name = read.query_name
                         
@@ -155,15 +129,12 @@ def process_read(read, aln_mismatch_rate, aln_indel_rate, max_frag_len,
                     'reference_end': read.reference_end,
                     'query_name': read_name,
                     'strand': strand,
-                    'tlen': read.tlen,
                     'ltr_umi': ltr_umi,
-                    'linker_umi': linker_umi,
                     'duplicate_count': 1,
                     'sequence': seq,
                     'multimapping': multimapping,
                     'mean_quality': mean_qual,
-                    'ltr_match': ltr_match,
-                    'linker_match': linker_match
+                    'ltr_match': ltr_match
                 }
             else:
                 return None
@@ -171,33 +142,3 @@ def process_read(read, aln_mismatch_rate, aln_indel_rate, max_frag_len,
             return None
     else:
         return None
-
-# Perform QC on each read pair
-def process_read_pair(read1, read2, aln_mismatch_rate, aln_indel_rate, max_frag_len, 
-                        min_frag_len, min_mapq, U3, no_mm, min_qual, match_after):
-    read1_info = process_read(read = read1, 
-                            aln_mismatch_rate = aln_mismatch_rate, 
-                            aln_indel_rate = aln_indel_rate,
-                            min_frag_len = min_frag_len,
-                            max_frag_len = max_frag_len,
-                            min_mapq = min_mapq,
-                            U3 = U3,
-                            no_mm = no_mm,
-                            min_qual = min_qual,
-                            match_after = match_after)
-    
-    read2_info = process_read(read=read2, 
-                            aln_mismatch_rate = aln_mismatch_rate,
-                            aln_indel_rate = aln_indel_rate,
-                            min_frag_len = min_frag_len,
-                            max_frag_len = max_frag_len,
-                            min_mapq = min_mapq,
-                            U3 = U3,
-                            no_mm = no_mm,
-                            min_qual = min_qual,
-                            match_after = match_after)
-        
-    if read1_info and read2_info:
-        return read1_info, read2_info
-    else:
-        return None, None
