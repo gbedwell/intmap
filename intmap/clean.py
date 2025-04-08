@@ -461,7 +461,7 @@ def verify_sequence_groups_faiss(group, seq_sim, len_diff, nthr):
     norms[norms == 0] = 1
     vectors = vectors / norms[:, np.newaxis]
     
-    index = faiss.IndexFlatIP(dim)  # Inner product = cosine similarity for normalized vectors
+    index = faiss.IndexFlatIP(dim)
     index.add(vectors)
     
     D, I = index.search(vectors, min(20, len(group)))
@@ -854,7 +854,7 @@ def compare_to_um(mm_group, k, um_index, bloom_filter, um_kept_dict, seq_sim):
                 um_rep_read = um_kept_dict[um_read_id]
                 um_seq = um_rep_read['seq1']
             
-                if len(um_seq) <= (len(mm_seq) * 1.2):
+                if len(um_seq) < len(mm_seq):
                     continue
 
                 common_length = min(len(mm_seq), len(um_seq))
