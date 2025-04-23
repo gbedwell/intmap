@@ -265,31 +265,25 @@ def compile_rc_ttr(ltr_match):
         }
     }
 
-class perfect_match:
-    def __init__(self, start_pos, end_pos, sequence):
-        self._start = start_pos
-        self._end = end_pos
-        self._sequence = sequence
+# class perfect_match:
+#     def __init__(self, start_pos, end_pos, sequence):
+#         self._start = start_pos
+#         self._end = end_pos
+#         self._sequence = sequence
     
-    def start(self):
-        return self._start
+#     def start(self):
+#         return self._start
     
-    def end(self):
-        return self._end
+#     def end(self):
+#         return self._end
     
-    def group(self):
-        return self._sequence[self._start:self._end]
+#     def group(self):
+#         return self._sequence[self._start:self._end]
     
 def find_pattern_match(seq, patterns, pattern_type, no_error):
-    pattern_string = patterns[pattern_type]['perfect'].pattern
-    match = seq.find(pattern_string)
-    if match >= 0:
-        match_info = perfect_match(match, match + len(pattern_string), seq)
-        return match_info
-    
-    # match = patterns[pattern_type]['perfect'].search(seq)
-    # if match:
-    #     return match
+    match = patterns[pattern_type]['perfect'].search(seq)
+    if match:
+        return match
     
     if not no_error:
         match = patterns[pattern_type]['mismatch'].search(seq)
@@ -305,9 +299,9 @@ def find_pattern_match(seq, patterns, pattern_type, no_error):
 def find_flag_match(patterns, pattern_key, start_pos, query_seq, no_error):
     flag_found = False
     
-    flag_match = query_seq.find(patterns[pattern_key]['perfect'].pattern, start = start_pos)
+    flag_match = patterns[pattern_key]['perfect'].search(query_seq, start = start_pos)
     
-    if flag_match < 0:
+    if not flag_match:
         if not no_error:
             flag_match = patterns[pattern_key]['mismatch'].search(query_seq, start = start_pos)
             if not flag_match:
@@ -317,8 +311,8 @@ def find_flag_match(patterns, pattern_key, start_pos, query_seq, no_error):
                 
         if not flag_found:
             start_key = f"{pattern_key}_start"
-            flag_match = query_seq.find(patterns[start_key]['perfect'].pattern, start = start_pos)
-            if flag_match < 0:
+            flag_match = patterns[start_key]['perfect'].search(query_seq, start = start_pos)
+            if not flag_match:
                 if not no_error:
                     flag_match = patterns[start_key]['mismatch'].search(query_seq, start = start_pos)
                     if not flag_match:
@@ -327,14 +321,8 @@ def find_flag_match(patterns, pattern_key, start_pos, query_seq, no_error):
                         flag_found = True
             else:
                 flag_found = True
-                flag_match = perfect_match(
-                    flag_match, flag_match + len(patterns[start_key]['perfect'].pattern), query_seq
-                    )
     else:
         flag_found = True
-        flag_match = perfect_match(
-            flag_match, flag_match + len(patterns[pattern_key]['perfect'].pattern), query_seq
-            )
     
     return flag_found
 
@@ -350,10 +338,8 @@ def find_ttr(patterns, pattern_type, seq, no_error):
     for subpat in patterns[pattern_type]:
         subseq = subpat['perfect'].pattern
         subseq_term = subseq[-3:]
-        exact_pos = seq.find(subseq)
-        if exact_pos >= 0:
-            match_span = (exact_pos, (exact_pos + len(subseq)))
-            segment_match = perfect_match(match_span[0], match_span[1], seq)
+        segment_match = subpat['perfect'].search(seq)
+        if segment_match:
             match_found = True
             break
         elif not no_error:
@@ -376,16 +362,12 @@ def find_ttr(patterns, pattern_type, seq, no_error):
     return segment_match
 
 def find_pattern_match_ttr(seq, patterns, no_error, search_limit):
-    ltr5_match = seq.find(patterns['ltr5']['perfect'].pattern)
-    if ltr5_match < 0:
+    ltr5_match = patterns['ltr5']['perfect'].search(seq)
+    if not ltr5_match:
         if not no_error:
             ltr5_match = patterns['ltr5']['mismatch'].search(seq)
             if not ltr5_match:
                 ltr5_match = patterns['ltr5']['indel'].search(seq)
-        else:
-            ltr5_match = None
-    else:
-        ltr5_match = perfect_match(ltr5_match, ltr5_match + len(patterns['ltr5']['perfect'].pattern), seq)
     
     if not ltr5_match:
         return None
