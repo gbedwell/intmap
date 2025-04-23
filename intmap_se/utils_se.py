@@ -251,14 +251,14 @@ def final_pass_collapse(kept_frags, len_diff, nthr, min_count, count_fc, ltr_cuf
     for pos, count in zip(unique_pos, counts):
         grouped_data[(pos['chrom'], pos['strand'])].append((pos['pos'], count))
     
-    results = Parallel(n_jobs=nthr)(
+    results = Parallel(n_jobs=1)(
         delayed(collapse_group)(
-            key, 
-            pos, 
-            min_count, 
-            count_fc, 
-            len_diff, 
-            read_mapping)
+            chrom_strand_tuple = key, 
+            pos_counts = pos, 
+            min_count = min_count, 
+            count_fc = count_fc, 
+            len_diff = len_diff, 
+            read_mapping = read_mapping)
         for key, pos in grouped_data.items()
     )
     

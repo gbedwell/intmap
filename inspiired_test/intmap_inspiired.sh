@@ -1,13 +1,13 @@
 # Append LTR-end barcodes to the LTR-end FASTQ file
 # Outputs Undetermined_S0_L001_R2_001_bc_append.fastq.gz
-intmap-demux \
+intmap_demux \
     -r1 Undetermined_S0_L001_R2_001.fastq.gz \
     -r2 Undetermined_S0_L001_I1_001.fastq.gz \
     --append_index
 
 # Generate clone-specific FASTQ files
 # Uses linker-end barcodes on R1
-intmap-demux \
+intmap_demux \
     -r1 Undetermined_S0_L001_R1_001.fastq.gz \
     -r2 Undetermined_S0_L001_R2_001_bc_append.fastq.gz \
     -bc_r1 linker_bc.fa \
@@ -18,7 +18,7 @@ intmap-demux \
 # LTR-end barcodes for each clone are stored in separate files
 for f in demux/*_R1.fq.gz; do
     filename=$(basename "$f" _R1.fq.gz)
-    intmap-demux \
+    intmap_demux \
         -r1 "demux/${filename}_R1.fq.gz" \
         -r2 "demux/${filename}_R2.fq.gz" \
         -bc_r2 "${filename}_ltr_bc.fa" \
@@ -30,10 +30,10 @@ done
 # Note that the INSPIIRED workflow sequences the LTR-end in R2 and the linker-end in R1
 # intmap expects the LTR-end to be R1
 # intmap can be "tricked" by simply giving actual R2 reads as R1 and vice versa
-intmap-multi \
-    -setup_file inspiired_setup.txt \
-    -json_name inspiired_params
+intmap_multi \
+    -s inspiired_setup.txt \
+    -n inspiired_params > inspiired_out.txt
 
 # If inspiired_params.json already exists, run:
 intmap-multi \
-    -args_json inspiired_params.json
+    -s inspiired_params.json > inspiired_out.txt

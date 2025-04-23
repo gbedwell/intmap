@@ -1,5 +1,5 @@
 41
-r1, r2, ltr5, ltr3, linker5, linker3, ltr1_primer, c, nm, nthr, bt2_idx_dir, bt2_idx_name, v_idx_dir, v_idx_name, genome_fasta, linker_umi_offset, linker_umi_len, misprime_mismatch, reassign_mm
+r1, r2, ltr5, ltr3, linker5, linker3, ltr1_primer, c, nm, nthr, bt2_idx_dir, bt2_idx_name, v_idx_dir, v_idx_name, genome_fasta, linker_umi_offset, linker_umi_len, reassign_mm
 demux/HIV_CTRL_noLig.1_R2.fq.gz,demux/HIV_CTRL_noLig.2_R2.fq.gz,demux/HIV_CTRL_noLig.3_R2.fq.gz,demux/HIV_CTRL_noLig.4_R2.fq.gz,demux/HIV_CTRL_wLig.1_R2.fq.gz,demux/HIV_CTRL_wLig.2_R2.fq.gz,demux/HIV_CTRL_wLig.3_R2.fq.gz,demux/HIV_CTRL_wLig.4_R2.fq.gz,demux/UNINF.1_R2.fq.gz,demux/clone1.1_R2.fq.gz,demux/clone1.2_R2.fq.gz,demux/clone1.3_R2.fq.gz,demux/clone1.4_R2.fq.gz,demux/clone2.1_R2.fq.gz,demux/clone2.2_R2.fq.gz,demux/clone2.3_R2.fq.gz,demux/clone2.4_R2.fq.gz,demux/clone3.1_R2.fq.gz,demux/clone3.2_R2.fq.gz,demux/clone3.3_R2.fq.gz,demux/clone3.4_R2.fq.gz,demux/clone4.1_R2.fq.gz,demux/clone4.2_R2.fq.gz,demux/clone4.3_R2.fq.gz,demux/clone4.4_R2.fq.gz,demux/clone7.1_R2.fq.gz,demux/clone7.2_R2.fq.gz,demux/clone7.3_R2.fq.gz,demux/clone7.4_R2.fq.gz,demux/pool1.1_R2.fq.gz,demux/pool1.2_R2.fq.gz,demux/pool1.3_R2.fq.gz,demux/pool1.4_R2.fq.gz,demux/pool2.1_R2.fq.gz,demux/pool2.2_R2.fq.gz,demux/pool2.3_R2.fq.gz,demux/pool2.4_R2.fq.gz,demux/pool3.1_R2.fq.gz,demux/pool3.2_R2.fq.gz,demux/pool3.3_R2.fq.gz,demux/pool3.4_R2.fq.gz
 demux/HIV_CTRL_noLig.1_R1.fq.gz,demux/HIV_CTRL_noLig.2_R1.fq.gz,demux/HIV_CTRL_noLig.3_R1.fq.gz,demux/HIV_CTRL_noLig.4_R1.fq.gz,demux/HIV_CTRL_wLig.1_R1.fq.gz,demux/HIV_CTRL_wLig.2_R1.fq.gz,demux/HIV_CTRL_wLig.3_R1.fq.gz,demux/HIV_CTRL_wLig.4_R1.fq.gz,demux/UNINF.1_R1.fq.gz,demux/clone1.1_R1.fq.gz,demux/clone1.2_R1.fq.gz,demux/clone1.3_R1.fq.gz,demux/clone1.4_R1.fq.gz,demux/clone2.1_R1.fq.gz,demux/clone2.2_R1.fq.gz,demux/clone2.3_R1.fq.gz,demux/clone2.4_R1.fq.gz,demux/clone3.1_R1.fq.gz,demux/clone3.2_R1.fq.gz,demux/clone3.3_R1.fq.gz,demux/clone3.4_R1.fq.gz,demux/clone4.1_R1.fq.gz,demux/clone4.2_R1.fq.gz,demux/clone4.3_R1.fq.gz,demux/clone4.4_R1.fq.gz,demux/clone7.1_R1.fq.gz,demux/clone7.2_R1.fq.gz,demux/clone7.3_R1.fq.gz,demux/clone7.4_R1.fq.gz,demux/pool1.1_R1.fq.gz,demux/pool1.2_R1.fq.gz,demux/pool1.3_R1.fq.gz,demux/pool1.4_R1.fq.gz,demux/pool2.1_R1.fq.gz,demux/pool2.2_R1.fq.gz,demux/pool2.3_R1.fq.gz,demux/pool2.4_R1.fq.gz,demux/pool3.1_R1.fq.gz,demux/pool3.2_R1.fq.gz,demux/pool3.3_R1.fq.gz,demux/pool3.4_R1.fq.gz
 GAAAATCTC
@@ -17,5 +17,4 @@ p746vector
 /Users/gbedwell/Documents/github/hg18_genome/UCSC/hg18.fa.bgz
 0
 12
-2
 True

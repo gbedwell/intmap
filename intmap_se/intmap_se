@@ -12,6 +12,10 @@ parser.add_argument('-ltr3',
                     type=str, 
                     help='LTR sequence to match.', 
                     default=None)
+parser.add_argument('-ltr3_alt',
+                    type=str, 
+                    help='''Alternative orientations of ltr3. Used for distinguishing between flip and flop orientations of AAV ITRs.''', 
+                    default=None)
 parser.add_argument('-linker3',
                     type=str, 
                     help='Linker sequence to match.', 
@@ -50,6 +54,17 @@ parser.add_argument('-nm',
                     help='''The desired name of the dataset. 
                     This is used for naming output files.''',
                     required=True)
+parser.add_argument('--ttr', '-ttr', '--truncated_terminal_repeat', '-truncated_terminal_repeat',
+                    help='''Boolean. Whether or not to look for truncation of the terminal repeat. When True, 
+                    ltr5 should be a known sequence (e.g., the 2nd-round TR primer binding site), and ltr3 should 
+                    be the rest of the TR sequence immediately following ltr5.''',
+                    action='store_true')
+parser.add_argument('-min_ttr_len',
+                    type=int,
+                    help='''The minimum allowed length of the truncated terminal repeat. 
+                    Only used with ttr is True. 
+                    Defaults to 10.''',
+                    default=10)
 parser.add_argument('-min_frag_len',
                     type=int, 
                     help='''The minimum allowed fragment length. 
@@ -82,7 +97,7 @@ parser.add_argument('-linker5_error_rate',
                     default=0)
 parser.add_argument('-crop_chunk_size',
                     type=int, 
-                    help='''The chunk size for read cropping. 
+                    help='''The chunk size for read cropping. Must be divisible by 4.
                     Defaults to 100000.''',
                     default=100000)
 parser.add_argument('-bt2_path',
@@ -306,6 +321,24 @@ parser.add_argument('--check_ltr_umis_final_pass', '-check_ltr_umis_final_pass',
                     These would be identical UMIs on fragments mapping to different genomic positions. 
                     Defaults to False.''',
                     action='store_true')
+parser.add_argument('-flag_window_size',
+                    type=int,
+                    help='''The size of the window used to search ltr3 and ltr3_alt for identifying sequences. 
+                    Only used when both ltr3 and ltr3_alt are given and ttr is True. 
+                    Defaults to 12.''',
+                    default=12)
+parser.add_argument('-flag_min_diff',
+                    type=int,
+                    help='''The minimum number of differences between a given window in ltr3 and ltr3_alt for that window to be 
+                    considered a suitable flag. 
+                    Only used when both ltr3 and ltr3_alt are given and ttr is True. 
+                    Defaults to 4.''',
+                    default=4)
+parser.add_argument('-flag_search_limit',
+                    type=float,
+                    help='''A value between 0 and 1 defining the fraction of ltr3 and ltr3_alt to be searched for possible differentiating 
+                    sequences. Defaults to 0.33.''',
+                    default=0.33)
 
 args = parser.parse_args()
 
@@ -441,6 +474,12 @@ if __name__ == "__main__":
         parser.error('len_diff must be <= 10.')
     if args.k > (args.min_frag_len - args.len_diff) or args.k < 10:
         parser.error('k must be <= min_frag_len - len_diff and >= 10.')
+    if args.ltr3_alt is not None and len(args.ltr3_alt) != len(args.ltr3):
+        parser.error('ltr3 and ltr3_alt must be the same length.')
+    if args.crop_chunk_size % 4 != 0:
+        parser.error('crop_chunk_size must be divisible by 4.')
+    if args.flag_search_limit < 0 or args.flag_search_limit > 1:
+        parser.error('flag_search_limit must be between 0 and 1.')
     
     if args.genome_fasta:
         genome_compression = check_genome_compression(args.genome_fasta)
@@ -490,6 +529,12 @@ if __name__ == "__main__":
         print(f'5\' linker match error rate: {args.linker5_error_rate}')
         print(f'3\' linker match error rate: {args.linker3_error_rate}')
     print(f'FASTQ processing chunk size: {args.crop_chunk_size} reads')
+    
+    if args.ttr:
+        print(f'Truncated terminal repeats: True')
+        print(f'Minimum TTR length: {args.min_ttr_len} bp')
+    else:
+        print(f'Truncated terminal repeats: False')
         
     if args.c is not None:
         print(f"Declared contamination: {', '.join(args.c)}")
@@ -580,9 +625,9 @@ if __name__ == "__main__":
     clean_nm = args.nm.rpartition('/')[-1] if '/' in args.nm else args.nm
         
     crop_se.crop(args.r1,
-            args, 
-            processed_directory = processed_dir,
-            out_nm = clean_nm)
+                args, 
+                processed_directory = processed_dir,
+                out_nm = clean_nm)
     
     fq1 = os.path.join(processed_dir, f'{clean_nm}_R1_cropped.fq.gz')
     

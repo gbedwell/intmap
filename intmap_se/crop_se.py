@@ -128,15 +128,173 @@ def compile_patterns(ltr3, linker3, ltr5, linker5,
         },
         'linker_suffix': {
             'perfect': str(linker5 + linker3)[-5:]
+        },
+        # Used only when ttr is True.
+        'ltr5': {
+            'perfect': regex.compile(ltr5),
+            'mismatch': regex.compile(f'({ltr5}){{s<={ltr5_errors}}}'),
+            'indel': regex.compile(f'({ltr5}){{e<={ltr5_errors}}}')
         }
     }
+    
+def find_diagnostic_regions(ltr3, ltr3_alt, window, min_diff, search_limit):
+    found_region = False
+    for i in range(math.ceil(len(ltr3) * search_limit) - window + 1):
+        ltr3_sub = ltr3[i:i + window]
+        ltr3_alt_sub = ltr3_alt[i:i + window]
+        distance = hamming_distance(ltr3_sub, ltr3_alt_sub)
+        if distance >= min_diff:
+            flag_info = (ltr3_sub, ltr3_alt_sub)
+            found_region = True
+            break
+    if found_region:
+        return flag_info
+    else:
+        return (ltr3[:window], ltr3_alt[:window])
+
+def compile_patterns_ttr(ltr3, ltr3_alt, ltr5, min_ttr_len, ltr3_error_rate, 
+                            ltr5_error_rate, linker3, linker5, linker3_error_rate,
+                            linker5_error_rate, flag_window_size,
+                            flag_min_diff, flag_search_limit):
+    linker3_errors = math.floor(len(linker3) * linker3_error_rate)
+    linker5_errors = math.floor(len(linker5) * linker5_error_rate)
+    ltr5_errors = math.floor(len(ltr5) * ltr5_error_rate)
+    
+    linker_rc = revcomp(linker5 + linker3)[:15]
+    if len(linker_rc) > 10:
+        linker_rc_errors = 2
+    else:
+        linker_rc_errors = 1
+    
+    patterns = {
+        'ltr3': [],
+        'ltr3_alt': [],
+        'ltr5': {
+            'perfect': regex.compile(ltr5),
+            'mismatch': regex.compile(f'({ltr5}){{s<={ltr5_errors}}}'),
+            'indel': regex.compile(f'({ltr5}){{e<={ltr5_errors}}}')
+            },
+        'linker': {
+            'perfect': regex.compile(linker5 + linker3),
+            'mismatch': regex.compile(f'({linker5}){{s<={linker5_errors}}}({linker3}){{s<={linker3_errors}}}'),
+            'indel': regex.compile(f'({linker5}){{e<={linker5_errors}}}({linker3}){{e<={linker3_errors}}}')
+            },
+        'linker_rc': {
+            'perfect': regex.compile(linker_rc),
+            'mismatch': regex.compile(f'({linker_rc}){{s<={linker_rc_errors}}}'),
+            'indel': regex.compile(f'({linker_rc}){{e<={linker_rc_errors}}}')
+            }
+        }
+    
+    if ltr3_alt is not None:
+        flags = find_diagnostic_regions(
+            ltr3 = ltr3, 
+            ltr_alt = ltr3_alt, 
+            window = flag_window_size, 
+            min_diff = flag_min_diff, 
+            search_limit = flag_search_limit
+            )
+        
+        if len(flags[0]) > 10:
+            flag_errors = 2
+        else:
+            flag_errors = 1
+            
+        patterns.update(
+            {
+                'ltr3_flag': {
+                    'perfect': regex.compile(flags[0]),
+                    'mismatch': regex.compile(f'({flags[0]}){{s<={flag_errors}}}'),
+                    'indel': regex.compile(f'({flags[0]}){{e<={flag_errors}}}')
+                },
+                'ltr3_flag_start': {
+                    'perfect': regex.compile(ltr3[:flag_window_size]),
+                    'mismatch': regex.compile(f'({ltr3[:flag_window_size]}){{s<={flag_errors}}}'),
+                    'indel': regex.compile(f'({ltr3[:flag_window_size]}){{e<={flag_errors}}}')
+                },
+                'ltr3_alt_flag': {
+                    'perfect': regex.compile(flags[1]),
+                    'mismatch': regex.compile(f'({flags[1]}){{s<={flag_errors}}}'),
+                    'indel': regex.compile(f'({flags[1]}){{e<={flag_errors}}}')
+                },
+                'ltr3_alt_flag_start': {
+                    'perfect': regex.compile(ltr3_alt[:flag_window_size]),
+                    'mismatch': regex.compile(f'({ltr3_alt[:flag_window_size]}){{s<={flag_errors}}}'),
+                    'indel': regex.compile(f'({ltr3_alt[:flag_window_size]}){{e<={flag_errors}}}')
+                }
+            }
+        )
+    
+    for length in range(len(ltr3), (min_ttr_len - 1), -1):
+        ltr3_segment = ltr3[:length]
+        ltr3_errors = math.floor(len(ltr3_segment) * ltr3_error_rate)
+        full_ltr = ltr5 + ltr3_segment
+        
+        pattern_set = {
+            'perfect': regex.compile(full_ltr),
+            'mismatch': regex.compile(f'({ltr5}){{s<={ltr5_errors}}}({ltr3_segment}){{s<={ltr3_errors}}}'),
+            'indel': regex.compile(f'({ltr5}){{e<={ltr5_errors}}}({ltr3_segment}){{e<={ltr3_errors}}}')
+        }
+        
+        patterns['ltr3'].append(pattern_set)
+        
+    if ltr3_alt is not None:
+        for length in range(len(ltr3_alt), (min_ttr_len - 1), -1):
+            ltr3_alt_segment = ltr3_alt[:length]
+            ltr3_alt_errors = math.floor(len(ltr3_alt_segment) * ltr3_error_rate)
+            full_ltr_alt = ltr5 + ltr3_alt_segment
+            
+            pattern_set = {
+                'perfect': regex.compile(full_ltr_alt),
+                'mismatch': regex.compile(f'({ltr5}){{s<={ltr5_errors}}}({ltr3_alt_segment}){{s<={ltr3_alt_errors}}}'),
+                'indel': regex.compile(f'({ltr5}){{e<={ltr5_errors}}}({ltr3_alt_segment}){{e<={ltr3_alt_errors}}}')
+            }
+            
+            patterns['ltr3_alt'].append(pattern_set)
+    
+    return patterns
+    
+def compile_rc_ttr(ltr_match):
+    ltr_rc = revcomp(ltr_match)[:15]
+    
+    if len(ltr_rc) > 10:
+        ltr_rc_errors = 2
+    else:
+        ltr_rc_errors = 1
+    
+    return {
+        'ltr_rc': {
+            'perfect': regex.compile(ltr_rc),
+            'mismatch': regex.compile(f'({ltr_rc}){{s<={ltr_rc_errors}}}'),
+            'indel': regex.compile(f'({ltr_rc}){{e<={ltr_rc_errors}}}')
+        }
+    }
+    
+class perfect_match:
+    def __init__(self, start_pos, end_pos, sequence):
+        self._start = start_pos
+        self._end = end_pos
+        self._sequence = sequence
+    
+    def start(self):
+        return self._start
+    
+    def end(self):
+        return self._end
+    
+    def group(self):
+        return self._sequence[self._start:self._end]
 
 def find_pattern_match(seq, patterns, pattern_type, no_error):
-    # seq = seq.decode()
+    pattern_string = patterns[pattern_type]['perfect'].pattern
+    match = seq.find(pattern_string)
+    if match >= 0:
+        match_info = perfect_match(match, match + len(pattern_string), seq)
+        return match_info
     
-    match = patterns[pattern_type]['perfect'].search(seq)
-    if match:
-        return match
+    # match = patterns[pattern_type]['perfect'].search(seq)
+    # if match:
+    #     return match
     
     if not no_error:
         match = patterns[pattern_type]['mismatch'].search(seq)
@@ -148,6 +306,154 @@ def find_pattern_match(seq, patterns, pattern_type, no_error):
             return match
     
     return None
+
+def find_flag_match(patterns, pattern_key, start_pos, query_seq, no_error):
+    flag_found = False
+    
+    flag_match = query_seq.find(patterns[pattern_key]['perfect'].pattern, start = start_pos)
+    
+    if flag_match < 0:
+        if not no_error:
+            flag_match = patterns[pattern_key]['mismatch'].search(query_seq, start = start_pos)
+            if not flag_match:
+                flag_match = patterns[pattern_key]['indel'].search(query_seq, start = start_pos)
+            if flag_match:
+                flag_found = True
+                
+        if not flag_found:
+            start_key = f"{pattern_key}_start"
+            flag_match = query_seq.find(patterns[start_key]['perfect'].pattern, start = start_pos)
+            if flag_match < 0:
+                if not no_error:
+                    flag_match = patterns[start_key]['mismatch'].search(query_seq, start = start_pos)
+                    if not flag_match:
+                        flag_match = patterns[start_key]['indel'].search(query_seq, start = start_pos)
+                    if flag_match:
+                        flag_found = True
+            else:
+                flag_found = True
+                flag_match = perfect_match(
+                    flag_match, flag_match + len(patterns[start_key]['perfect'].pattern), query_seq
+                    )
+    else:
+        flag_found = True
+        flag_match = perfect_match(
+            flag_match, flag_match + len(patterns[pattern_key]['perfect'].pattern), query_seq
+            )
+    
+    return flag_found
+
+def sum_term(sub_term, match_term):
+    val1 = 1 if sub_term[0] == match_term[0] else 0
+    val2 = 1 if sub_term[1] == match_term[1] else 0
+    val3 = 2 if sub_term[2] == match_term[2] else 0
+    
+    return val1 + val2 + val3
+    
+def find_ttr(patterns, pattern_type, seq, no_error):
+    match_found = False
+    for subpat in patterns[pattern_type]:
+        subseq = subpat['perfect'].pattern
+        subseq_term = subseq[-3:]
+        exact_pos = seq.find(subseq)
+        if exact_pos >= 0:
+            match_span = (exact_pos, (exact_pos + len(subseq)))
+            segment_match = perfect_match(match_span[0], match_span[1], seq)
+            match_found = True
+            break
+        elif not no_error:
+            segment_match = subpat['mismatch'].search(seq)
+            if segment_match and sum_term(subseq_term, segment_match.group()[-3:]) > 2:
+                match_found = True
+                break
+            else:
+                segment_match = None
+            if not segment_match:
+                segment_match = subpat['indel'].search(seq)
+                if segment_match and sum_term(subseq_term, segment_match.group()[-3:]) > 2:
+                    match_found = True
+                    break
+                else:
+                    segment_match = None
+        else:
+            segment_match = None
+            
+    return segment_match
+
+def find_pattern_match_ttr(seq, patterns, no_error, search_limit):
+    ltr5_match = seq.find(patterns['ltr5']['perfect'].pattern)
+    if ltr5_match < 0:
+        if not no_error:
+            ltr5_match = patterns['ltr5']['mismatch'].search(seq)
+            if not ltr5_match:
+                ltr5_match = patterns['ltr5']['indel'].search(seq)
+        else:
+            ltr5_match = None
+    else:
+        ltr5_match = perfect_match(ltr5_match, ltr5_match + len(patterns['ltr5']['perfect'].pattern), seq)
+    
+    if not ltr5_match:
+        return None
+    
+    ltr3_flag_found = False
+    ltr3_alt_flag_found = False
+    flag_query_start = ltr5_match.end()
+    flag_query_end = ltr5_match.end() + math.ceil(len(patterns['ltr3'][0]['perfect'].pattern) * search_limit)
+    flag_query_seq = seq[flag_query_start:flag_query_end]
+    
+    if 'ltr3_flag' in patterns:
+        ltr3_flag_found = find_flag_match(
+            patterns = patterns, 
+            pattern_key = 'ltr3_flag', 
+            start_pos = 0,
+            query_seq = flag_query_seq, 
+            no_error = no_error
+            )
+    else:
+        ltr3_flag_found = True
+
+    if 'ltr3_alt_flag' in patterns:
+        ltr3_alt_flag_found = find_flag_match(
+            patterns = patterns, 
+            pattern_key = 'ltr3_alt_flag', 
+            start_pos = 0,
+            query_seq = flag_query_seq, 
+            no_error = no_error
+            )
+            
+    if not ltr3_flag_found and not ltr3_alt_flag_found:
+        return None
+    
+    if ltr3_flag_found and not ltr3_alt_flag_found:
+        segment_match = find_ttr(
+            patterns = patterns,
+            pattern_type = 'ltr3',
+            seq = seq,
+            no_error = no_error
+            )
+    elif not ltr3_flag_found and ltr3_alt_flag_found:
+        segment_match = find_ttr(
+                patterns = patterns,
+                pattern_type = 'ltr3_alt',
+                seq = seq,
+                no_error = no_error
+                )
+    elif ltr3_flag_found and ltr3_alt_flag_found:        
+        segment_match = find_ttr(
+            patterns = patterns,
+            pattern_type = 'ltr3',
+            seq = seq,
+            no_error = no_error
+            )
+        if not segment_match:
+            segment_match = find_ttr(
+                patterns = patterns,
+                pattern_type = 'ltr3_alt',
+                seq = seq,
+                no_error = no_error
+                )
+    
+    return segment_match
 
 # # Check quality score type
 # def detect_quality_offset(fastq_file, sample_size = 10000):
@@ -191,7 +497,13 @@ def init_params(args):
         'linker5': args.linker5,        
         'linker3': args.linker3,
         'nthr': args.nthr,
-        'chunk_size': args.crop_chunk_size
+        'chunk_size': args.crop_chunk_size,
+        'ltr3_alt': args.ltr3_alt,
+        'ttr': args.ttr,
+        'min_ttr_len': args.min_ttr_len,
+        'flag_window_size': args.flag_window_size,
+        'flag_min_diff': args.flag_min_diff,
+        'flag_search_limit': args.flag_search_limit
     }
     
 def extract_umis(seq, pattern_match, umi_len, umi_offset, 
@@ -247,9 +559,9 @@ def fastq_writer(file, reads):
         with open_file(file, 'at') as f:
             for read in reads:
                 f.write(f"{read['name']}\n{read['seq']}\n+\n{read['qual']}\n")
-
+            
 def process_reads_parallel(chunk1, patterns, params, is_zipped, 
-                            out_nm, processed_directory, chunk_num):
+                            out_nm, processed_directory, chunk_num, ttr):
     sequences1, qualities1, headers1 = process_fastq_chunk(chunk1, params, is_zipped)
     
     cropped_reads1 = []
@@ -268,11 +580,31 @@ def process_reads_parallel(chunk1, patterns, params, is_zipped,
         # if not patterns['ltr_suffix']['perfect'] in seq1_str:
         #     continue
         
-        ltr_pattern_match = find_pattern_match(seq1_str, patterns, 'ltr', no_error)
+        if ttr:
+            ltr_pattern_match = find_pattern_match_ttr(
+                seq = seq1_str, 
+                patterns = patterns, 
+                no_error = no_error, 
+                search_limit = params['flag_search_limit']
+                )
+            if ltr_pattern_match:
+                ttr_ltr_rc_pattern = compile_rc_ttr(ltr_pattern_match.group())
+        else:
+            ltr_pattern_match = find_pattern_match(
+                seq = seq1_str, 
+                patterns = patterns, 
+                pattern_type = 'ltr', 
+                no_error = no_error
+                )
         
         if ltr_pattern_match:
             start1 = ltr_pattern_match.end()
-            linker_in_ltr = find_pattern_match(seq1_str, patterns, 'linker_rc', False)
+            linker_in_ltr = find_pattern_match(
+                seq = seq1_str, 
+                patterns = patterns, 
+                pattern_type = 'linker_rc', 
+                no_error = False
+                )
 
             if linker_in_ltr:
                 end1 = linker_in_ltr.start()
@@ -282,11 +614,13 @@ def process_reads_parallel(chunk1, patterns, params, is_zipped,
                 cropped_seq1 = seq1_str[start1:]
                 cropped_qual1 = qual1[start1:]
             
-            ltr_umi = extract_umis(seq1_str, 
-                                    ltr_pattern_match, 
-                                    params['ltr_umi_len'], 
-                                    params['ltr_umi_offset'],
-                                    params['ltr_umi_pattern'])
+            ltr_umi = extract_umis(
+                seq = seq1_str, 
+                pattern_match = ltr_pattern_match, 
+                umi_len = params['ltr_umi_len'], 
+                umi_offset = params['ltr_umi_offset'],
+                umi_pattern = params['ltr_umi_pattern']
+                )
             
             if not ltr_umi:
                 continue
@@ -344,14 +678,44 @@ def crop(file1, args, processed_directory, out_nm):
     
     chunks1 = list(fastq_reader(params['file1'], params['chunk_size']))
     
-    patterns = compile_patterns(params['ltr3'], params['linker3'], params['ltr5'], params['linker5'],
-                                params['ltr3_error'], params['linker3_error'],
-                                params['ltr5_error'], params['linker5_error'])
+    if params['ttr']:
+        patterns = compile_patterns_ttr(
+            ltr3 = params['ltr3'],
+            ltr3_alt = params['ltr3_alt'],
+            ltr5 = params['ltr5'],
+            min_ttr_len = params['min_ttr_len'],
+            ltr3_error_rate = params['ltr3_error'],
+            ltr5_error_rate =  params['ltr5_error'],
+            linker3 = params['linker3'],
+            linker5 = params['linker5'],
+            linker3_error_rate = params['linker3_error'],
+            linker5_error_rate = params['linker5_error'],
+            flag_window_size = params['flag_window_size'], 
+            flag_min_diff = params['flag_min_diff'], 
+            flag_search_limit = params['flag_search_limit']
+        )
+    else:
+        patterns = compile_patterns(
+            ltr3 = params['ltr3'], 
+            linker3 = params['linker3'], 
+            ltr5 = params['ltr5'], 
+            linker5 = params['linker5'],
+            ltr3_error_rate = params['ltr3_error'], 
+            linker3_error_rate = params['linker3_error'],
+            ltr5_error_rate = params['ltr5_error'], 
+            linker5_error_rate = params['linker5_error']
+            )
     
     Parallel(n_jobs=params['nthr'])(
         delayed(process_reads_parallel)(
-            chunk1, patterns, params, is_zipped, out_nm,
-            processed_directory, chunk_num
+            chunk1 = chunk1, 
+            patterns = patterns, 
+            params = params, 
+            is_zipped = is_zipped, 
+            out_nm = out_nm,
+            processed_directory = processed_directory, 
+            chunk_num = chunk_num, 
+            ttr = params['ttr']
         ) for chunk_num, chunk1 in enumerate(chunks1)
     )
 
