@@ -337,8 +337,8 @@ parser.add_argument('-flag_min_diff',
 parser.add_argument('-flag_search_limit',
                     type=float,
                     help='''A value between 0 and 1 defining the fraction of ltr3 and ltr3_alt to be searched for possible differentiating 
-                    sequences. Defaults to 0.33.''',
-                    default=0.33)
+                    sequences. Defaults to 0.5.''',
+                    default=0.5)
 
 args = parser.parse_args()
 
@@ -378,6 +378,10 @@ if __name__ == "__main__":
     from datasketch import MinHash, LeanMinHash, MinHashLSH
     from functools import lru_cache
     from pybloom_live import BloomFilter
+    import pandas as pd
+    from scipy import stats
+    from scipy.interpolate import BSpline
+    import statsmodels.api as sm
 
     if args.check_consensus:
         print('\n')

@@ -13,6 +13,13 @@ import multiprocessing
 from joblib import Parallel, delayed
 from operator import itemgetter
 import random
+import pandas as pd
+from scipy import stats
+from scipy.interpolate import BSpline
+import statsmodels.api as sm
+import patsy
+import sys
+import warnings
 
 __all__ = [
     'zipped',
@@ -32,7 +39,8 @@ __all__ = [
     'final_pass_collapse',
     'sample_reads',
     'check_consensus',
-    'generate_consensus'
+    'generate_consensus',
+    'sonic_abundance'
 ]
 
 TRANS_TABLE = bytes.maketrans(b"acgtumrwsykvhdbnACGTUMRWSYKVHDBN", 
@@ -613,3 +621,369 @@ def generate_consensus(r1_file, r2_file, consensus_length=50, sample_size=5000, 
                     f"Consider increasing consensus_length beyond {consensus_length} bp.")
     
     return result
+
+def pad_tab(tab, start_at=None, end_at=None):
+    tab_keys = [int(k) for k in tab.keys()]
+    
+    if start_at is None:
+        start_at = 0
+    if end_at is None:
+        end_at = max(tab_keys) - 1 + 10
+    
+    new_tab_names = list(range(start_at, end_at + 1))
+    
+    if not all(k in new_tab_names for k in tab_keys):
+        raise ValueError("Invalid lengths - perhaps some are 0")
+    
+    new_tab = {str(i): 0.0 for i in new_tab_names}
+    
+    for k, v in tab.items():
+        new_tab[str(k)] = v
+    
+    result = {
+        'y': list(new_tab.values()),
+        'x': new_tab_names,
+        'orig': [str(x) in tab.keys() for x in new_tab_names]
+    }
+    
+    return result
+
+def mstep(x, theta, phi):
+    x = np.asarray(x)
+    phi = np.asarray(phi)
+    theta = np.asarray(theta)
+    
+    exptp = np.exp(-np.outer(phi, theta))
+    
+    denom = 1 - exptp
+    
+    # Calculate gradient
+    grad = np.sum(-(1-x) * phi[:, np.newaxis] + x * phi[:, np.newaxis] * exptp / denom, axis = 0)
+    
+    # Calculate curvature (second derivative)
+    curv = -np.sum(phi[:, np.newaxis]**2 * exptp / denom, axis=0)
+    
+    # Update theta using Newton-Raphson step
+    theta = theta - grad / curv
+    
+    return {"theta": theta, "grad": grad, "info": curv}
+
+def estep(x, theta, phi):
+    x = np.asarray(x)
+    phi = np.asarray(phi)
+    theta = np.asarray(theta)
+    
+    # Compute lambda as outer product of phi and theta
+    lambda_mat = np.outer(phi, theta)
+    
+    # Compute exp(-lambda)
+    expnl = np.exp(-lambda_mat)
+    
+    # Compute denominator
+    denom = 1 - expnl
+    
+    # Compute result
+    res = np.zeros_like(lambda_mat, dtype=float)
+    non_zero_denom = (denom != 0)
+    res[non_zero_denom] = x[non_zero_denom] * lambda_mat[non_zero_denom] / denom[non_zero_denom]
+    
+    zero_denom = ~non_zero_denom
+    if np.any(zero_denom):
+        res[zero_denom] = x[zero_denom]
+    
+    # Handle case where denominator is zero
+    wd = np.where(denom == 0)
+    if len(wd[0]) > 0:
+        res[wd] = x[wd]
+    
+    # Compute log-likelihood
+    loglik = np.sum(-lambda_mat[x == 0]) + np.sum(np.log1p(-expnl[x == 1]))
+
+    return res, loglik
+
+def phi_update_default(obj):
+    class SuppressSpecificWarnings:
+        def __enter__(self):
+            # Store the original filters
+            self.original_filters = warnings.filters.copy()
+            
+            warnings.filterwarnings("ignore", category=RuntimeWarning, 
+                                    message="overflow encountered in exp")
+            warnings.filterwarnings("ignore", category=RuntimeWarning, 
+                                    message="divide by zero encountered in divide")
+            warnings.filterwarnings("ignore", category=RuntimeWarning, 
+                                        message="invalid value encountered in multiply")
+            warnings.filterwarnings("ignore", category=RuntimeWarning, 
+                                        message="overflow encountered in divide")
+            
+            return self
+            
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            warnings.filters = self.original_filters
+            
+    row_sums = np.sum(obj, axis = 1)
+    row_dict = {str(i): row_sums[i] for i in range(len(row_sums))}
+    tmp_frame = pad_tab(row_dict)
+    
+    df = pd.DataFrame({
+        'y': tmp_frame['y'],
+        'x': tmp_frame['x']
+    })
+    
+    df['y'] = df['y'] + 1e-5
+    
+    significant_indices = df[df['y'] > 1e-5]['x'].values
+    significant_values = df[df['y'] > 1e-5]['y'].values
+    
+    knot_configs = []
+    
+    if len(significant_indices) < 4:
+        knot_configs.append({
+        'knots': list(np.percentile(significant_indices, [50]).astype(int)),
+        'degree': max(1, len(significant_indices) - 1)
+        })
+
+    knot_configs.append({
+        'knots': [50, 100],
+        'degree': 3
+    })
+    
+    knot_configs.append({
+        'knots': list(np.percentile(significant_indices, [25, 75]).astype(int)),
+        'degree': 3
+    })
+    
+    x_range = df['x'].max() - df['x'].min()
+    knot_configs.append({
+        'knots': [x_range // 3, 2 * x_range // 3],
+        'degree': 3
+    })
+    
+    with SuppressSpecificWarnings():
+        for config in knot_configs:
+            try:
+                knot_formula = f"bs(x, knots={config['knots']}, degree={config['degree']}, include_intercept=True)"
+                X = patsy.dmatrix(knot_formula, df)
+                
+                # Fit initial Poisson GLM
+                family = sm.families.Poisson()
+                model = sm.GLM(df['y'], X, family=family)
+                initial_fit = model.fit(tol=1e-8)
+                
+                # Calculate dispersion parameter (scale) using Pearson chi-square
+                mu = np.maximum(initial_fit.mu, 1e-5)
+                pearson_chi2 = ((df['y'] - mu) ** 2 / mu).sum()
+                scale = max(1.0, pearson_chi2 / initial_fit.df_resid)
+                
+                # Refit the model with the estimated scale parameter
+                fit = model.fit(scale=scale, tol=1e-8)
+                preds = np.maximum(np.exp(fit.predict()), 1e-5)
+
+                break
+                
+            except Exception as e:
+                if config == knot_configs[-1]:
+                    # print(f"All GLM fitting attempts failed. Last error: {str(e)}")
+                    preds = df['y'].values  # Just use the input values as a last resort
+                else:
+                    continue
+                    
+    orig_indices = np.where(tmp_frame['orig'])[0]
+    orig_preds = preds[orig_indices]
+    return orig_preds / np.sum(orig_preds)
+
+def maxEM(slmat):
+    # Initialize phi and theta
+    phi_old = np.sum(slmat + 1/slmat.size, axis = 1)
+    phi_old = phi_old / np.sum(phi_old)
+    theta_old = np.sum(slmat, axis = 0)
+    
+    # Do one EM step to start
+    # phi_update assures that constraints on phi are met
+    Y, _ = estep(slmat, theta_old, phi_old)
+    theta_old = np.sum(Y, axis = 0)
+    
+    row_sums = np.sum(Y, axis = 1)
+    phi_old = phi_update_default(Y)
+    
+    phi_min = np.finfo(float).eps
+    phi_old = phi_old + phi_min
+    phi_old = phi_old / np.sum(phi_old)
+    
+    llk_old = float('-inf')
+    i = 0
+    not_done = True
+    
+    min_reps = 3
+    max_reps = 2000
+    max_abs_le = 0.1
+    max_rel_le = 1e-5
+    
+    phi_new = phi_old.copy()
+    theta_new = theta_old.copy()
+    
+    while not_done:
+        # M-step
+        mres = mstep(slmat, theta_new, phi_new)
+        theta_new = mres["theta"]
+        
+        # E-step
+        Y, llk = estep(slmat, theta_new, phi_new)
+        
+        # Check increase in loglik - use one full EM step if llk doesn't increase
+        fail = 0
+        if llk > llk_old:
+            llk_old = llk
+            theta_old = theta_new.copy()
+        else:
+            fail += 1
+            theta_new = theta_old.copy()
+            Y, _ = estep(slmat, theta_new, phi_new)
+        
+        # Update phi
+        phi_new = phi_update_default(Y) + phi_min
+        phi_new = phi_new / np.sum(phi_new)
+        
+        # Add small value to avoid numerical issues
+        phi_new = phi_new + phi_min
+        phi_new = phi_new / np.sum(phi_new)
+        
+        # Check if phi update improved likelihood
+        Y, llk = estep(slmat, theta_new, phi_new)
+        if llk > llk_old:
+            llk_old = llk
+            phi_old = phi_new.copy()
+        else:
+            phi_new = phi_old.copy()
+            fail += 1
+        
+        # Check convergence criteria
+        adjs = mres["grad"]
+        max_abs = np.max(np.abs(adjs))
+        max_rel = np.max(np.abs(adjs / (theta_old + 1e-10)))
+        
+        i += 1
+        not_done = (fail < 2) and ((i < min_reps) or (max_abs > max_abs_le) or (max_rel > max_rel_le))
+        
+        if i >= max_reps:
+            print("Warning: iteration limit reached")
+            break
+    
+    return {
+        "theta": theta_new,
+        "phi": phi_new,
+        "iter": i
+    }
+    
+def estimate_abundance(location_indices, lengths, min_length=25):
+    location_indices = np.array(location_indices)
+    lengths = np.array(lengths)
+    
+    if np.min(lengths) < min_length:
+        raise ValueError(f"Minimum length ({np.min(lengths)}) is less than required ({min_length})")
+    
+    if len(location_indices) != len(lengths):
+        raise ValueError("Lengths of location_indices and lengths must be equal")
+    
+    # Find the actual min and max lengths in the data
+    min_length_actual = int(np.min(lengths))
+    max_length_actual = int(np.max(lengths))
+    
+    # Create a cross-tabulation matrix
+    n_locations = int(np.max(location_indices)) + 1
+    length_range = np.arange(min_length_actual, max_length_actual + 1)
+    
+    # Initialize the matrix
+    slmat = np.zeros((len(length_range), n_locations), dtype=int)
+    
+    # Fill the matrix with counts (not just binary indicators)
+    for loc_idx, length in zip(location_indices, lengths):
+        length_idx = int(length) - min_length_actual
+        slmat[length_idx, int(loc_idx)] += 1
+    
+    # Call maxEM with the matrix
+    result = maxEM(slmat)
+    
+    # Add additional fields to match R implementation
+    result['obs'] = np.bincount(location_indices.astype(int), minlength=n_locations)
+    
+    # Store the original data
+    result['data'] = {
+        'locations': location_indices,
+        'lengths': lengths
+    }
+    
+    return result
+
+def sonic_abundance(frag_dict, U3, shift, min_frag_len):
+    locations = []
+    lengths = []
+    
+    # Extract locations and lengths from fragment dictionary
+    for key, value in frag_dict.items():
+        if value['strand'] == '-':
+            site_start = (value['end'] - shift) - 1
+            site_end = (value['end'] - shift)
+            site_strand = '-' if not U3 else '+'
+        else:
+            site_start = (value['start'] + shift)
+            site_end = (value['start'] + shift) + 1
+            site_strand = '+' if not U3 else '-'
+
+        frag_length = value['end'] - value['start']
+        
+        site_location = f"{value['chrom']}:{site_start if site_strand == '+' else site_end}:{site_strand}"
+        
+        locations.append(site_location)
+        lengths.append(frag_length)
+    
+    # Check if we have enough data
+    if len(locations) > 0:
+        try:
+            # Convert locations to numeric indices
+            unique_locations = np.unique(locations)
+
+            # Check if each location has exactly one fragment
+            # if len(unique_locations) == len(locations):
+            #     print('Each integration site has exactly one fragment. Skipping MLE.', flush = True)
+            #     return []
+            
+            location_indices = np.array([np.where(unique_locations == loc)[0][0] for loc in locations])
+            
+            # Estimate abundance
+            abundance_result = estimate_abundance(location_indices, lengths, min_length = min_frag_len)
+
+            # Format results
+            abundance_estimates = []
+            for i, loc in enumerate(unique_locations):
+                chrom, position, strand = loc.split(':')
+                position = int(position)
+                
+                if strand == '+':
+                    start = position
+                    end = position + 1
+                else:
+                    end = position
+                    start = position - 1
+                
+                abundance_estimates.append({
+                    'chrom': chrom,
+                    'start': start,
+                    'end': end,
+                    'name': '.',
+                    'count': abundance_result['theta'][i],
+                    'strand': strand
+                })
+            
+                abundance_estimates.sort(key=lambda item: (natural_key(item['chrom']), item['start'], item['end']))
+
+            return abundance_estimates
+            
+        except Exception as e:
+            print(f'Warning: Could not estimate abundance: {str(e)}', flush=True)
+            import traceback
+            traceback.print_exc()
+            return []
+    else:
+        print('Not enough data for abundance estimation', flush=True)
+        return []

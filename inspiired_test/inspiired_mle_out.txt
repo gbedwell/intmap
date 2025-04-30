@@ -1,0 +1,596 @@
+
+
+Sample name: HIV_CTRL_noLig.1_mle
+Parsing files demux/HIV_CTRL_noLig.1_R2.fq.gz and demux/HIV_CTRL_noLig.1_R1.fq.gz
+Number of threads: 4
+Base LTR-end search sequence: GAAAATCTCTAGCA
+Base linker-end search sequence: CCGCTTAAGGGACT
+5' LTR match error rate 0
+3' LTR match error rate: 0
+5' linker match error rate: 0
+3' linker match error rate: 0
+FASTQ processing chunk size: 100000 reads
+Truncated terminal repeats: False
+Declared contamination: gtggcgcccgaa
+Linker UMI length: 12 bp
+Linker UMI offset: 0 bp
+Minimum fragment length: 25 bp
+Maximum fragment length: 1200 bp
+Alignment seed length: 22 bp
+Allowed read 1 5'-end alignment mismatches: 2 bp
+Allowed alignment mismatch rate: 0.25
+Allowed alignment indel rate: 0.05
+Minimum alignment MAPQ score: 2
+Minimum average base quality score: 10
+Mapping end: U5
+TSD width: 5 bp
+Fuzzy length difference: 5 bp
+Fuzzy low resolution UMI mismatches: 8 bp
+Duplicate count ratio: 2
+Keep multimapping reads: True
+Multimapping hash fingerprint length: 128 hashes
+Multimapping token size: 4 bp
+Multimapping hash similarity threshold: 0.85
+Multimapping sequence similarity threshold: 0.95
+Multimapping read reassignment: True
+Multimapping k-mer size: 15 bp
+Multimapping group size fractional threshold: 0.002
+Look for mispriming: False
+Minimum site count threshold: 10 sites
+Count fold-change: 2
+Remove conflicting linker UMIs during final pass: False
+
+
+Processing 102 reads...
+Cropping LTR and linker sequences...
+Number of reads retained after cropping: 40 (39.22%)
+6.152 seconds elapsed
+
+
+Aligning cropped reads...
+Removing viral reads from cropped output...
+40 reads; of these:
+  40 (100.00%) were paired; of these:
+    29 (72.50%) aligned concordantly 0 times
+    11 (27.50%) aligned concordantly exactly 1 time
+    0 (0.00%) aligned concordantly >1 times
+27.50% overall alignment rate
+[M::bam2fq_mainloop] discarded 0 singletons
+[M::bam2fq_mainloop] processed 58 reads
+
+
+Performing global (end-to-end) alignment...
+29 reads; of these:
+  29 (100.00%) were paired; of these:
+    11 (37.93%) aligned concordantly 0 times
+    15 (51.72%) aligned concordantly exactly 1 time
+    3 (10.34%) aligned concordantly >1 times
+62.07% overall alignment rate
+
+
+Indexing output bam file...
+6.077 seconds elapsed
+
+
+Performing QC on aligned reads...
+Parsing bam file...
+Number of aligned reads: 36
+Number of proper pairs: 18 (100.00%)
+Processing read pairs...
+Number of pairs that pass QC: 17 (94.44%)
+0.008 seconds elapsed
+
+
+Handling duplicate fragments...
+Starting number of uniquely mapping fragments: 16
+Collapsing unique exact matches...
+Number of uniquely mapping reads removed: 0 (0.00%)
+Looking for unique fuzzy matches...
+Number of additional uniquely mapping reads removed: 0 (0.00%)
+16 uniquely mapping fragments retained (100.00%)
+3.344 seconds elapsed
+
+
+Starting number of multimapping fragments: 1
+Collapsing multimapping exact matches...
+Number of multimapping mapping reads removed: 0 (0.00%)
+Hashing multimapping sequences for fuzzy matching...
+Grouping similar hashes...
+Looking for multimapping fuzzy matches...
+Number of additional multimapping mapping reads removed: 0 (0.00%)
+1 multimapping fragments retained (100.00%)
+Reassigning multimapping read positions...
+Multimapping group size threshold for reassignment: 1
+Number of multimapping subgroups: 1
+Number of multimapping reads relocated to uniquely mapped positions: 0 (0.00%)
+Number of ungrouped multimapping reads: 1 (100.00%)
+Number of multimapping reads grouped and reassigned: 0 (0.00%)
+0.097 seconds elapsed
+
+
+Performing final pass through kept fragments...
+0.001 seconds elapsed
+
+
+17 reads retained:
+ 16 uniquely mapping reads (94.12%)
+ 1 multimapping reads (5.88%)
+
+
+Estimating site abundances using MLE...
+Warning: Could not estimate abundance: NaN, inf or invalid value detected in weights, estimation infeasible.
+
+
+*** DONE with sample HIV_CTRL_noLig.1_mle ***
+Sites mapped: 17
+Total elapsed time: 0.263 minutes
+
+
+
+
+Sample name: HIV_CTRL_noLig.2_mle
+Parsing files demux/HIV_CTRL_noLig.2_R2.fq.gz and demux/HIV_CTRL_noLig.2_R1.fq.gz
+Number of threads: 4
+Base LTR-end search sequence: GAAAATCTCTAGCA
+Base linker-end search sequence: CCGCTTAAGGGACT
+5' LTR match error rate 0
+3' LTR match error rate: 0
+5' linker match error rate: 0
+3' linker match error rate: 0
+FASTQ processing chunk size: 100000 reads
+Truncated terminal repeats: False
+Declared contamination: gtggcgcccgaa
+Linker UMI length: 12 bp
+Linker UMI offset: 0 bp
+Minimum fragment length: 25 bp
+Maximum fragment length: 1200 bp
+Alignment seed length: 22 bp
+Allowed read 1 5'-end alignment mismatches: 2 bp
+Allowed alignment mismatch rate: 0.25
+Allowed alignment indel rate: 0.05
+Minimum alignment MAPQ score: 2
+Minimum average base quality score: 10
+Mapping end: U5
+TSD width: 5 bp
+Fuzzy length difference: 5 bp
+Fuzzy low resolution UMI mismatches: 8 bp
+Duplicate count ratio: 2
+Keep multimapping reads: True
+Multimapping hash fingerprint length: 128 hashes
+Multimapping token size: 4 bp
+Multimapping hash similarity threshold: 0.85
+Multimapping sequence similarity threshold: 0.95
+Multimapping read reassignment: True
+Multimapping k-mer size: 15 bp
+Multimapping group size fractional threshold: 0.002
+Look for mispriming: False
+Minimum site count threshold: 10 sites
+Count fold-change: 2
+Remove conflicting linker UMIs during final pass: False
+
+
+Processing 104 reads...
+Cropping LTR and linker sequences...
+Number of reads retained after cropping: 41 (39.42%)
+5.359 seconds elapsed
+
+
+Aligning cropped reads...
+Removing viral reads from cropped output...
+41 reads; of these:
+  41 (100.00%) were paired; of these:
+    22 (53.66%) aligned concordantly 0 times
+    18 (43.90%) aligned concordantly exactly 1 time
+    1 (2.44%) aligned concordantly >1 times
+46.34% overall alignment rate
+[M::bam2fq_mainloop] discarded 0 singletons
+[M::bam2fq_mainloop] processed 44 reads
+
+
+Performing global (end-to-end) alignment...
+22 reads; of these:
+  22 (100.00%) were paired; of these:
+    8 (36.36%) aligned concordantly 0 times
+    10 (45.45%) aligned concordantly exactly 1 time
+    4 (18.18%) aligned concordantly >1 times
+63.64% overall alignment rate
+
+
+Indexing output bam file...
+4.83 seconds elapsed
+
+
+Performing QC on aligned reads...
+Parsing bam file...
+Number of aligned reads: 28
+Number of proper pairs: 14 (100.00%)
+Processing read pairs...
+Number of pairs that pass QC: 14 (100.00%)
+0.008 seconds elapsed
+
+
+Handling duplicate fragments...
+Starting number of uniquely mapping fragments: 12
+Collapsing unique exact matches...
+Number of uniquely mapping reads removed: 0 (0.00%)
+Looking for unique fuzzy matches...
+Number of additional uniquely mapping reads removed: 0 (0.00%)
+12 uniquely mapping fragments retained (100.00%)
+3.251 seconds elapsed
+
+
+Starting number of multimapping fragments: 2
+Collapsing multimapping exact matches...
+Number of multimapping mapping reads removed: 0 (0.00%)
+Hashing multimapping sequences for fuzzy matching...
+Grouping similar hashes...
+Looking for multimapping fuzzy matches...
+Number of additional multimapping mapping reads removed: 0 (0.00%)
+2 multimapping fragments retained (100.00%)
+Reassigning multimapping read positions...
+Multimapping group size threshold for reassignment: 1
+Number of multimapping subgroups: 2
+Number of multimapping reads relocated to uniquely mapped positions: 0 (0.00%)
+Number of ungrouped multimapping reads: 2 (100.00%)
+Number of multimapping reads grouped and reassigned: 0 (0.00%)
+0.095 seconds elapsed
+
+
+Performing final pass through kept fragments...
+0.001 seconds elapsed
+
+
+14 reads retained:
+ 12 uniquely mapping reads (85.71%)
+ 2 multimapping reads (14.29%)
+
+
+Estimating site abundances using MLE...
+Each integration site has exactly one fragment. Skipping MLE.
+
+
+*** DONE with sample HIV_CTRL_noLig.2_mle ***
+Sites mapped: 14
+Total elapsed time: 0.226 minutes
+
+
+
+
+Sample name: HIV_CTRL_noLig.3_mle
+Parsing files demux/HIV_CTRL_noLig.3_R2.fq.gz and demux/HIV_CTRL_noLig.3_R1.fq.gz
+Number of threads: 4
+Base LTR-end search sequence: GAAAATCTCTAGCA
+Base linker-end search sequence: CCGCTTAAGGGACT
+5' LTR match error rate 0
+3' LTR match error rate: 0
+5' linker match error rate: 0
+3' linker match error rate: 0
+FASTQ processing chunk size: 100000 reads
+Truncated terminal repeats: False
+Declared contamination: gtggcgcccgaa
+Linker UMI length: 12 bp
+Linker UMI offset: 0 bp
+Minimum fragment length: 25 bp
+Maximum fragment length: 1200 bp
+Alignment seed length: 22 bp
+Allowed read 1 5'-end alignment mismatches: 2 bp
+Allowed alignment mismatch rate: 0.25
+Allowed alignment indel rate: 0.05
+Minimum alignment MAPQ score: 2
+Minimum average base quality score: 10
+Mapping end: U5
+TSD width: 5 bp
+Fuzzy length difference: 5 bp
+Fuzzy low resolution UMI mismatches: 8 bp
+Duplicate count ratio: 2
+Keep multimapping reads: True
+Multimapping hash fingerprint length: 128 hashes
+Multimapping token size: 4 bp
+Multimapping hash similarity threshold: 0.85
+Multimapping sequence similarity threshold: 0.95
+Multimapping read reassignment: True
+Multimapping k-mer size: 15 bp
+Multimapping group size fractional threshold: 0.002
+Look for mispriming: False
+Minimum site count threshold: 10 sites
+Count fold-change: 2
+Remove conflicting linker UMIs during final pass: False
+
+
+Processing 122 reads...
+Cropping LTR and linker sequences...
+Number of reads retained after cropping: 56 (45.90%)
+5.535 seconds elapsed
+
+
+Aligning cropped reads...
+Removing viral reads from cropped output...
+56 reads; of these:
+  56 (100.00%) were paired; of these:
+    33 (58.93%) aligned concordantly 0 times
+    23 (41.07%) aligned concordantly exactly 1 time
+    0 (0.00%) aligned concordantly >1 times
+41.07% overall alignment rate
+[M::bam2fq_mainloop] discarded 0 singletons
+[M::bam2fq_mainloop] processed 66 reads
+
+
+Performing global (end-to-end) alignment...
+33 reads; of these:
+  33 (100.00%) were paired; of these:
+    14 (42.42%) aligned concordantly 0 times
+    15 (45.45%) aligned concordantly exactly 1 time
+    4 (12.12%) aligned concordantly >1 times
+57.58% overall alignment rate
+
+
+Indexing output bam file...
+5.178 seconds elapsed
+
+
+Performing QC on aligned reads...
+Parsing bam file...
+Number of aligned reads: 38
+Number of proper pairs: 19 (100.00%)
+Processing read pairs...
+Number of pairs that pass QC: 19 (100.00%)
+0.008 seconds elapsed
+
+
+Handling duplicate fragments...
+Starting number of uniquely mapping fragments: 15
+Collapsing unique exact matches...
+Number of uniquely mapping reads removed: 0 (0.00%)
+Looking for unique fuzzy matches...
+Number of additional uniquely mapping reads removed: 0 (0.00%)
+15 uniquely mapping fragments retained (100.00%)
+2.743 seconds elapsed
+
+
+Starting number of multimapping fragments: 4
+Collapsing multimapping exact matches...
+Number of multimapping mapping reads removed: 0 (0.00%)
+Hashing multimapping sequences for fuzzy matching...
+Grouping similar hashes...
+Looking for multimapping fuzzy matches...
+Number of additional multimapping mapping reads removed: 0 (0.00%)
+4 multimapping fragments retained (100.00%)
+Reassigning multimapping read positions...
+Multimapping group size threshold for reassignment: 1
+Number of multimapping subgroups: 4
+Number of multimapping reads relocated to uniquely mapped positions: 0 (0.00%)
+Number of ungrouped multimapping reads: 4 (100.00%)
+Number of multimapping reads grouped and reassigned: 0 (0.00%)
+0.098 seconds elapsed
+
+
+Performing final pass through kept fragments...
+0.001 seconds elapsed
+
+
+19 reads retained:
+ 15 uniquely mapping reads (78.95%)
+ 4 multimapping reads (21.05%)
+
+
+Estimating site abundances using MLE...
+
+
+*** DONE with sample HIV_CTRL_noLig.3_mle ***
+Sites mapped: 19
+Total elapsed time: 0.228 minutes
+
+
+
+
+Sample name: HIV_CTRL_noLig.4_mle
+Parsing files demux/HIV_CTRL_noLig.4_R2.fq.gz and demux/HIV_CTRL_noLig.4_R1.fq.gz
+Number of threads: 4
+Base LTR-end search sequence: GAAAATCTCTAGCA
+Base linker-end search sequence: CCGCTTAAGGGACT
+5' LTR match error rate 0
+3' LTR match error rate: 0
+5' linker match error rate: 0
+3' linker match error rate: 0
+FASTQ processing chunk size: 100000 reads
+Truncated terminal repeats: False
+Declared contamination: gtggcgcccgaa
+Linker UMI length: 12 bp
+Linker UMI offset: 0 bp
+Minimum fragment length: 25 bp
+Maximum fragment length: 1200 bp
+Alignment seed length: 22 bp
+Allowed read 1 5'-end alignment mismatches: 2 bp
+Allowed alignment mismatch rate: 0.25
+Allowed alignment indel rate: 0.05
+Minimum alignment MAPQ score: 2
+Minimum average base quality score: 10
+Mapping end: U5
+TSD width: 5 bp
+Fuzzy length difference: 5 bp
+Fuzzy low resolution UMI mismatches: 8 bp
+Duplicate count ratio: 2
+Keep multimapping reads: True
+Multimapping hash fingerprint length: 128 hashes
+Multimapping token size: 4 bp
+Multimapping hash similarity threshold: 0.85
+Multimapping sequence similarity threshold: 0.95
+Multimapping read reassignment: True
+Multimapping k-mer size: 15 bp
+Multimapping group size fractional threshold: 0.002
+Look for mispriming: False
+Minimum site count threshold: 10 sites
+Count fold-change: 2
+Remove conflicting linker UMIs during final pass: False
+
+
+Processing 117 reads...
+Cropping LTR and linker sequences...
+Number of reads retained after cropping: 58 (49.57%)
+5.353 seconds elapsed
+
+
+Aligning cropped reads...
+Removing viral reads from cropped output...
+58 reads; of these:
+  58 (100.00%) were paired; of these:
+    39 (67.24%) aligned concordantly 0 times
+    19 (32.76%) aligned concordantly exactly 1 time
+    0 (0.00%) aligned concordantly >1 times
+32.76% overall alignment rate
+[M::bam2fq_mainloop] discarded 0 singletons
+[M::bam2fq_mainloop] processed 78 reads
+
+
+Performing global (end-to-end) alignment...
+39 reads; of these:
+  39 (100.00%) were paired; of these:
+    15 (38.46%) aligned concordantly 0 times
+    16 (41.03%) aligned concordantly exactly 1 time
+    8 (20.51%) aligned concordantly >1 times
+61.54% overall alignment rate
+
+
+Indexing output bam file...
+4.71 seconds elapsed
+
+
+Performing QC on aligned reads...
+Parsing bam file...
+Number of aligned reads: 48
+Number of proper pairs: 24 (100.00%)
+Processing read pairs...
+Number of pairs that pass QC: 24 (100.00%)
+0.011 seconds elapsed
+
+
+Handling duplicate fragments...
+Starting number of uniquely mapping fragments: 19
+Collapsing unique exact matches...
+Number of uniquely mapping reads removed: 0 (0.00%)
+Looking for unique fuzzy matches...
+Number of additional uniquely mapping reads removed: 0 (0.00%)
+19 uniquely mapping fragments retained (100.00%)
+3.238 seconds elapsed
+
+
+Starting number of multimapping fragments: 5
+Collapsing multimapping exact matches...
+Number of multimapping mapping reads removed: 0 (0.00%)
+Hashing multimapping sequences for fuzzy matching...
+Grouping similar hashes...
+Looking for multimapping fuzzy matches...
+Number of additional multimapping mapping reads removed: 0 (0.00%)
+5 multimapping fragments retained (100.00%)
+Reassigning multimapping read positions...
+Multimapping group size threshold for reassignment: 1
+Number of multimapping subgroups: 4
+Number of multimapping reads relocated to uniquely mapped positions: 0 (0.00%)
+Number of ungrouped multimapping reads: 3 (60.00%)
+Number of multimapping reads grouped and reassigned: 2 (40.00%)
+0.107 seconds elapsed
+
+
+Performing final pass through kept fragments...
+0.001 seconds elapsed
+
+
+24 reads retained:
+ 19 uniquely mapping reads (79.17%)
+ 5 multimapping reads (20.83%)
+
+
+Estimating site abundances using MLE...
+
+
+*** DONE with sample HIV_CTRL_noLig.4_mle ***
+Sites mapped: 24
+Total elapsed time: 0.225 minutes
+
+
+
+
+Sample name: HIV_CTRL_wLig.1_mle
+Parsing files demux/HIV_CTRL_wLig.1_R2.fq.gz and demux/HIV_CTRL_wLig.1_R1.fq.gz
+Number of threads: 4
+Base LTR-end search sequence: GAAAATCTCTAGCA
+Base linker-end search sequence: CCGCTTAAGGGACT
+5' LTR match error rate 0
+3' LTR match error rate: 0
+5' linker match error rate: 0
+3' linker match error rate: 0
+FASTQ processing chunk size: 100000 reads
+Truncated terminal repeats: False
+Declared contamination: gtggcgcccgaa
+Linker UMI length: 12 bp
+Linker UMI offset: 0 bp
+Minimum fragment length: 25 bp
+Maximum fragment length: 1200 bp
+Alignment seed length: 22 bp
+Allowed read 1 5'-end alignment mismatches: 2 bp
+Allowed alignment mismatch rate: 0.25
+Allowed alignment indel rate: 0.05
+Minimum alignment MAPQ score: 2
+Minimum average base quality score: 10
+Mapping end: U5
+TSD width: 5 bp
+Fuzzy length difference: 5 bp
+Fuzzy low resolution UMI mismatches: 8 bp
+Duplicate count ratio: 2
+Keep multimapping reads: True
+Multimapping hash fingerprint length: 128 hashes
+Multimapping token size: 4 bp
+Multimapping hash similarity threshold: 0.85
+Multimapping sequence similarity threshold: 0.95
+Multimapping read reassignment: True
+Multimapping k-mer size: 15 bp
+Multimapping group size fractional threshold: 0.002
+Look for mispriming: False
+Minimum site count threshold: 10 sites
+Count fold-change: 2
+Remove conflicting linker UMIs during final pass: False
+
+
+Processing 106 reads...
+Cropping LTR and linker sequences...
+Number of reads retained after cropping: 79 (74.53%)
+5.541 seconds elapsed
+
+
+Aligning cropped reads...
+Removing viral reads from cropped output...
+79 reads; of these:
+  79 (100.00%) were paired; of these:
+    38 (48.10%) aligned concordantly 0 times
+    41 (51.90%) aligned concordantly exactly 1 time
+    0 (0.00%) aligned concordantly >1 times
+51.90% overall alignment rate
+[M::bam2fq_mainloop] discarded 0 singletons
+[M::bam2fq_mainloop] processed 76 reads
+
+
+Performing global (end-to-end) alignment...
+38 reads; of these:
+  38 (100.00%) were paired; of these:
+    23 (60.53%) aligned concordantly 0 times
+    15 (39.47%) aligned concordantly exactly 1 time
+    0 (0.00%) aligned concordantly >1 times
+39.47% overall alignment rate
+
+
+Indexing output bam file...
+4.971 seconds elapsed
+
+
+Performing QC on aligned reads...
+Parsing bam file...
+Number of aligned reads: 30
+Number of proper pairs: 15 (100.00%)
+Processing read pairs...
+Number of pairs that pass QC: 15 (100.00%)
+0.009 seconds elapsed
+
+
+Handling duplicate fragments...
+Starting number of uniquely mapping fragments: 15
+Collapsing unique exact matches...

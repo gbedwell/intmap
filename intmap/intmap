@@ -364,8 +364,11 @@ parser.add_argument('-flag_min_diff',
 parser.add_argument('-flag_search_limit',
                     type=float,
                     help='''A value between 0 and 1 defining the fraction of ltr3 and ltr3_alt to be searched for possible differentiating 
-                    sequences. Defaults to 0.33.''',
-                    default=0.33)
+                    sequences. Defaults to 0.5.''',
+                    default=0.5)
+parser.add_argument('--mle', '-mle',
+                    help='''Boolean. Whether or not to additionally estimate site abundance using the SonicAbundance method.''',
+                    action='store_true')
 
 args = parser.parse_args()
 
@@ -405,6 +408,10 @@ if __name__ == "__main__":
     from datasketch import MinHash, LeanMinHash, MinHashLSH
     from functools import lru_cache
     from pybloom_live import BloomFilter
+    import pandas as pd
+    from scipy.interpolate import BSpline
+    import statsmodels.api as sm
+    import patsy
 
     if args.check_consensus:
         print('\n')
@@ -516,6 +523,8 @@ if __name__ == "__main__":
         parser.error('crop_chunk_size must be divisible by 4.')
     if args.flag_search_limit < 0 or args.flag_search_limit > 1:
         parser.error('flag_search_limit must be between 0 and 1.')
+    if args.flag_window_size > 10 and args.flag_min_diff - 2 < 2:
+        parser.error('flag_min_diff must be >= 4 when flag_win_size > 10')
     
     if args.genome_fasta:
         genome_compression = check_genome_compression(args.genome_fasta)
@@ -557,6 +566,8 @@ if __name__ == "__main__":
     print(f'Parsing files {args.r1} and {args.r2}')
     print(f'Number of threads: {args.nthr}')
     print(f'Base LTR-end search sequence: {args.ltr5 + args.ltr3}')
+    if args.ltr3_alt is not None:
+      print(f'Alternative LTR-end search sequence: {args.ltr5 + args.ltr3_alt}')
     print(f'Base linker-end search sequence: {args.linker5 + args.linker3}')
     print(f'5\' LTR match error rate {args.ltr5_error_rate}')
     print(f'3\' LTR match error rate: {args.ltr3_error_rate}')
@@ -649,6 +660,10 @@ if __name__ == "__main__":
                 print(f'Remove conflicting linker UMIs during final pass: True')
             else:
                 print(f'Remove conflicting linker UMIs during final pass: False')
+        if args.mle:
+            print(f'Estimate site abundance with MLE: True')
+        else:
+            print(f'Estimate site abundance with MLE: False')
     
     print('\n')
     
@@ -732,6 +747,7 @@ if __name__ == "__main__":
     out_dup = os.path.join(processed_dir, f'{args.nm}_duplicates.json.gz')
     out_mp = os.path.join(processed_dir, f'{args.nm}_misprimed.fa.gz')
     removed_frags_out = os.path.join(processed_dir, f'{args.nm}_final_pass_removed.txt.gz')
+    mle_out = os.path.join(processed_dir, f'{args.nm}_sites_unique_mle.bed.gz')
     
     print('Parsing bam file...', flush = True)
     read_pairs = process.process_bam(out_bam)
@@ -1180,6 +1196,20 @@ if __name__ == "__main__":
         
         del kept_dict
         del kept_sorted
+        
+        if args.mle:
+            print('\n')
+            print(f'Estimating site abundances using MLE...', flush = True)
+            mle_start = time.time()
+            mle_estimates = sonic_abundance(
+                frag_dict = kept_frags, 
+                U3 = args.U3, 
+                shift = shift, 
+                min_frag_len = args.min_frag_len
+                )
+            mle_end = time.time()
+            mle_time = round((mle_end - mle_start), 3)
+            print(f'{mle_time} seconds elapsed', flush = True)
 
         with (gzip.open(frags_out, 'wt') as frags, gzip.open(sites_out, 'wt') as sites, 
                 gzip.open(bc_out, 'wt') as bc, gzip.open(removed_frags_out, 'wt') as removed_fp):
@@ -1292,7 +1322,7 @@ if __name__ == "__main__":
                 'name': '.',
                 'count': count,
                 'strand': strand
-            })
+                })
 
         with gzip.open(counts_out, 'wt') as counts:
             for value in collapsed_sites:
@@ -1308,7 +1338,14 @@ if __name__ == "__main__":
                 
         with gzip.open(out_dup, 'wt', encoding = 'utf-8') as dups:
             json.dump(dup_dict, dups, indent = 4)
-
+            
+        if args.mle:
+            with gzip.open(mle_out, 'wt') as sa:
+                for value in mle_estimates:
+                    mle_info = [value['chrom'], value['start'], value['end'],
+                                    value['name'], value['count'], value['strand']]
+                
+                    sa.write('\t'.join(map(str, mle_info)) + '\n')
     else:
         with (gzip.open(frags_out, 'wt') as frags, gzip.open(sites_out, 'wt') as sites, 
                 gzip.open(bc_out, 'wt') as bc, gzip.open(counts_out, 'wt') as counts,
@@ -1342,7 +1379,8 @@ if __name__ == "__main__":
             '{}_sites_unique.bed.gz'.format(args.nm): subdirs[3],
             '{}_misprimed.fa.gz'.format(args.nm): subdirs[4],
             '{}_duplicates.json.gz'.format(args.nm): subdirs[4],
-            '{}_final_pass_removed.txt.gz'.format(args.nm): subdirs[4]
+            '{}_final_pass_removed.txt.gz'.format(args.nm): subdirs[4],
+            '{}_sites_unique_mle.bed.gz'.format(args.nm): subdirs[3]
             }
         
         for pattern, target_dir in file_mapping.items():

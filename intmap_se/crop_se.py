@@ -14,6 +14,11 @@ from joblib import Parallel, delayed
 from intmap_se.utils_se import *
 import numpy as np
 
+def hamming_distance(seq1, seq2):
+    if len(seq1) != len(seq2):
+        return ValueError('Sequences must be of equal length.')
+    return sum(x1 != x2 for x1, x2 in zip(seq1, seq2))
+
 def check_crop_input(ltr3, linker3, ltr1_primer, ltr5, linker5,
                     contamination, ltr5_error_rate, linker5_error_rate,
                     ltr3_error_rate, linker3_error_rate):
@@ -128,12 +133,6 @@ def compile_patterns(ltr3, linker3, ltr5, linker5,
         },
         'linker_suffix': {
             'perfect': str(linker5 + linker3)[-5:]
-        },
-        # Used only when ttr is True.
-        'ltr5': {
-            'perfect': regex.compile(ltr5),
-            'mismatch': regex.compile(f'({ltr5}){{s<={ltr5_errors}}}'),
-            'indel': regex.compile(f'({ltr5}){{e<={ltr5_errors}}}')
         }
     }
     
@@ -189,7 +188,7 @@ def compile_patterns_ttr(ltr3, ltr3_alt, ltr5, min_ttr_len, ltr3_error_rate,
     if ltr3_alt is not None:
         flags = find_diagnostic_regions(
             ltr3 = ltr3, 
-            ltr_alt = ltr3_alt, 
+            ltr3_alt = ltr3_alt, 
             window = flag_window_size, 
             min_diff = flag_min_diff, 
             search_limit = flag_search_limit
@@ -244,13 +243,13 @@ def compile_patterns_ttr(ltr3, ltr3_alt, ltr5, min_ttr_len, ltr3_error_rate,
             ltr3_alt_errors = math.floor(len(ltr3_alt_segment) * ltr3_error_rate)
             full_ltr_alt = ltr5 + ltr3_alt_segment
             
-            pattern_set = {
+            alt_pattern_set = {
                 'perfect': regex.compile(full_ltr_alt),
                 'mismatch': regex.compile(f'({ltr5}){{s<={ltr5_errors}}}({ltr3_alt_segment}){{s<={ltr3_alt_errors}}}'),
                 'indel': regex.compile(f'({ltr5}){{e<={ltr5_errors}}}({ltr3_alt_segment}){{e<={ltr3_alt_errors}}}')
             }
             
-            patterns['ltr3_alt'].append(pattern_set)
+            patterns['ltr3_alt'].append(alt_pattern_set)
     
     return patterns
     
@@ -304,24 +303,24 @@ def find_pattern_match(seq, patterns, pattern_type, no_error):
 def find_flag_match(patterns, pattern_key, start_pos, query_seq, no_error):
     flag_found = False
     
-    flag_match = patterns[pattern_key]['perfect'].search(query_seq, start = start_pos)
+    flag_match = patterns[pattern_key]['perfect'].search(query_seq, pos = start_pos)
     
     if not flag_match:
         if not no_error:
-            flag_match = patterns[pattern_key]['mismatch'].search(query_seq, start = start_pos)
+            flag_match = patterns[pattern_key]['mismatch'].search(query_seq, pos = start_pos)
             if not flag_match:
-                flag_match = patterns[pattern_key]['indel'].search(query_seq, start = start_pos)
+                flag_match = patterns[pattern_key]['indel'].search(query_seq, pos = start_pos)
             if flag_match:
                 flag_found = True
                 
         if not flag_found:
             start_key = f"{pattern_key}_start"
-            flag_match = patterns[start_key]['perfect'].search(query_seq, start = start_pos)
+            flag_match = patterns[start_key]['perfect'].search(query_seq, pos = start_pos)
             if not flag_match:
                 if not no_error:
-                    flag_match = patterns[start_key]['mismatch'].search(query_seq, start = start_pos)
+                    flag_match = patterns[start_key]['mismatch'].search(query_seq, pos = start_pos)
                     if not flag_match:
-                        flag_match = patterns[start_key]['indel'].search(query_seq, start = start_pos)
+                        flag_match = patterns[start_key]['indel'].search(query_seq, pos = start_pos)
                     if flag_match:
                         flag_found = True
             else:
@@ -420,20 +419,32 @@ def find_pattern_match_ttr(seq, patterns, no_error, search_limit):
                 seq = seq,
                 no_error = no_error
                 )
-    elif ltr3_flag_found and ltr3_alt_flag_found:        
-        segment_match = find_ttr(
+    elif ltr3_flag_found and ltr3_alt_flag_found:     
+        ltr3_match = find_ttr(
             patterns = patterns,
             pattern_type = 'ltr3',
             seq = seq,
             no_error = no_error
             )
-        if not segment_match:
-            segment_match = find_ttr(
-                patterns = patterns,
-                pattern_type = 'ltr3_alt',
-                seq = seq,
-                no_error = no_error
-                )
+
+        ltr3_alt_match = find_ttr(
+            patterns = patterns,
+            pattern_type = 'ltr3_alt',
+            seq = seq,
+            no_error = no_error
+            )
+        
+        if ltr3_match and ltr3_alt_match:
+            if len(ltr3_match.group()) >= len(ltr3_alt_match.group()):
+                segment_match = ltr3_match
+            else:
+                segment_match = ltr3_alt_match
+        elif ltr3_match:
+            segment_match = ltr3_match
+        elif ltr3_alt_match:
+            segment_match = ltr3_alt_match
+        else:
+            segment_match = None
     
     return segment_match
 

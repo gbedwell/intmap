@@ -25,7 +25,10 @@ setup(
 		'numpy',
 		'faiss-cpu',
 		'datasketch',
-		'pybloom-live'
+		'pybloom-live',
+		'pandas',
+		'statsmodels',
+		'scipy'
 	],
  	setup_requires=[
         "pytest-runner",

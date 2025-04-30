@@ -34,6 +34,13 @@ intmap_multi \
     -s inspiired_setup.txt \
     -n inspiired_params > inspiired_out.txt
 
+intmap_multi \
+    -s inspiired_mle_setup.txt \
+    -n inspiired_mle_params > inspiired_mle_out.txt
+
 # If inspiired_params.json already exists, run:
 intmap-multi \
-    -s inspiired_params.json > inspiired_out.txt
+    -a inspiired_params.json > inspiired_out.txt
+
+intmap-multi \
+    -a inspiired_mle_params.json > inspiired_mle_out.txt

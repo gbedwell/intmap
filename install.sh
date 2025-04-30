@@ -45,7 +45,7 @@ else
             exit 1
         fi
 
-        if [ -z $(brew list --formula | grep 'llvm') || -z $(brew list --formula | grep 'libomp') ]; then
+        if [ -z "$(brew list --formula | grep 'llvm')" ] || [ -z "$(brew list --formula | grep 'libomp')" ]; then            
             echo
             echo "Homebrew is installed, but LLVM an/or the OpenMP library libomp are not."
             echo "Run 'brew install llvm libomp' to install these packages.'"
