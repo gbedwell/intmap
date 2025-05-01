@@ -621,7 +621,7 @@ def generate_consensus(r1_file, r2_file, consensus_length=50, sample_size=5000, 
                     f"Consider increasing consensus_length beyond {consensus_length} bp.")
     
     return result
-
+  
 def pad_tab(tab, start_at=None, end_at=None):
     tab_keys = [int(k) for k in tab.keys()]
     
@@ -653,17 +653,15 @@ def mstep(x, theta, phi):
     phi = np.asarray(phi)
     theta = np.asarray(theta)
     
-    exptp = np.exp(-np.outer(phi, theta))
+    log_exptp = -np.outer(phi, theta)
     
-    denom = 1 - exptp
+    log_denom = np.log1p(-np.exp(log_exptp))
     
-    # Calculate gradient
-    grad = np.sum(-(1-x) * phi[:, np.newaxis] + x * phi[:, np.newaxis] * exptp / denom, axis = 0)
+    grad = np.sum(-(1-x) * phi[:, np.newaxis] + 
+                  x * phi[:, np.newaxis] * np.exp(log_exptp - log_denom), axis=0)
     
-    # Calculate curvature (second derivative)
-    curv = -np.sum(phi[:, np.newaxis]**2 * exptp / denom, axis=0)
+    curv = -np.sum(phi[:, np.newaxis]**2 * np.exp(log_exptp - log_denom), axis=0)
     
-    # Update theta using Newton-Raphson step
     theta = theta - grad / curv
     
     return {"theta": theta, "grad": grad, "info": curv}
@@ -673,34 +671,41 @@ def estep(x, theta, phi):
     phi = np.asarray(phi)
     theta = np.asarray(theta)
     
-    # Compute lambda as outer product of phi and theta
     lambda_mat = np.outer(phi, theta)
     
-    # Compute exp(-lambda)
-    expnl = np.exp(-lambda_mat)
+    log_expnl = -lambda_mat
+    expnl = np.exp(np.clip(log_expnl, -500, 500))
+    expnl[log_expnl < -500] = 0.0
     
-    # Compute denominator
     denom = 1 - expnl
     
-    # Compute result
-    res = np.zeros_like(lambda_mat, dtype=float)
-    non_zero_denom = (denom != 0)
-    res[non_zero_denom] = x[non_zero_denom] * lambda_mat[non_zero_denom] / denom[non_zero_denom]
-    
-    zero_denom = ~non_zero_denom
-    if np.any(zero_denom):
-        res[zero_denom] = x[zero_denom]
-    
-    # Handle case where denominator is zero
-    wd = np.where(denom == 0)
-    if len(wd[0]) > 0:
-        res[wd] = x[wd]
+    safe_denom = np.maximum(denom, np.finfo(float).eps)
+    res = x * lambda_mat / safe_denom
     
     # Compute log-likelihood
-    loglik = np.sum(-lambda_mat[x == 0]) + np.sum(np.log1p(-expnl[x == 1]))
+    first_term = np.sum(-lambda_mat[x == 0])
+    # Account for cases expnl is close to 1
+    safe_expnl = np.minimum(expnl, 1.0 - np.finfo(float).eps)
+    second_term = np.sum(np.log1p(-safe_expnl[x == 1]))
+        
+    loglik = first_term + second_term
 
     return res, loglik
 
+def safer_normalization(preds, mask):
+    indices = np.where(mask)[0]
+    selected_preds = preds[indices]
+    
+    if np.any(selected_preds <= np.finfo(float).eps):
+        if np.sum(selected_preds) == 0:
+            return np.zeros_like(selected_preds)
+        return selected_preds / np.sum(selected_preds)
+    
+    log_preds = np.log(selected_preds)
+    max_log = np.max(log_preds)
+    exp_shifted = np.exp(log_preds - max_log)
+    return exp_shifted / np.sum(exp_shifted)
+  
 def phi_update_default(obj):
     class SuppressSpecificWarnings:
         def __enter__(self):
@@ -722,6 +727,10 @@ def phi_update_default(obj):
             warnings.filters = self.original_filters
             
     row_sums = np.sum(obj, axis = 1)
+    
+    # Evaluate sparsity of the matrix
+    sparsity = 1.0 - (np.count_nonzero(row_sums) / len(row_sums))
+    
     row_dict = {str(i): row_sums[i] for i in range(len(row_sums))}
     tmp_frame = pad_tab(row_dict)
     
@@ -730,67 +739,75 @@ def phi_update_default(obj):
         'x': tmp_frame['x']
     })
     
-    df['y'] = df['y'] + 1e-5
+    df['y'] = df['y'] + 1e-10
     
-    significant_indices = df[df['y'] > 1e-5]['x'].values
-    significant_values = df[df['y'] > 1e-5]['y'].values
+    non_zero_indices = df[df['y'] > 1e-5]['x'].values
     
     knot_configs = []
     
-    if len(significant_indices) < 4:
+    if len(non_zero_indices) <= 3:
         knot_configs.append({
-        'knots': list(np.percentile(significant_indices, [50]).astype(int)),
-        'degree': max(1, len(significant_indices) - 1)
+            'knots': [],
+            'degree': min(max(1, len(non_zero_indices) - 1), 2)
         })
-
+    elif len(non_zero_indices) <= 10:
+        median_idx = int(np.median(non_zero_indices))
+        knot_configs.append({
+            'knots': [median_idx],
+            'degree': 2
+        })
+    else:
+        quantiles = [25, 75] if len(non_zero_indices) < 20 else [20, 50, 80]
+        knots = list(np.percentile(non_zero_indices, quantiles).astype(int))
+        knot_configs.append({
+            'knots': knots,
+            'degree': 3
+        })
+    
     knot_configs.append({
         'knots': [50, 100],
         'degree': 3
     })
     
-    knot_configs.append({
-        'knots': list(np.percentile(significant_indices, [25, 75]).astype(int)),
-        'degree': 3
-    })
-    
     x_range = df['x'].max() - df['x'].min()
-    knot_configs.append({
-        'knots': [x_range // 3, 2 * x_range // 3],
-        'degree': 3
-    })
+    if x_range > 10:
+        knot_configs.append({
+            'knots': [df['x'].min() + x_range // 3, df['x'].min() + 2 * x_range // 3],
+            'degree': 3
+        })
     
     with SuppressSpecificWarnings():
-        for config in knot_configs:
-            try:
-                knot_formula = f"bs(x, knots={config['knots']}, degree={config['degree']}, include_intercept=True)"
-                X = patsy.dmatrix(knot_formula, df)
-                
-                # Fit initial Poisson GLM
-                family = sm.families.Poisson()
-                model = sm.GLM(df['y'], X, family=family)
-                initial_fit = model.fit(tol=1e-8)
-                
-                # Calculate dispersion parameter (scale) using Pearson chi-square
-                mu = np.maximum(initial_fit.mu, 1e-5)
-                pearson_chi2 = ((df['y'] - mu) ** 2 / mu).sum()
-                scale = max(1.0, pearson_chi2 / initial_fit.df_resid)
-                
-                # Refit the model with the estimated scale parameter
-                fit = model.fit(scale=scale, tol=1e-8)
-                preds = np.maximum(np.exp(fit.predict()), 1e-5)
+      for config in knot_configs:
+          try:
+              knot_formula = f"bs(x, knots={config['knots']}, degree={config['degree']}, include_intercept=True)"
+              X = patsy.dmatrix(knot_formula, df)
+              
+              # Fit initial Poisson GLM
+              family = sm.families.Poisson()
+              model = sm.GLM(df['y'], X, family=family)
+              initial_fit = model.fit(tol=1e-8, max_iter=250)
+              
+              # Calculate dispersion parameter (scale) using Pearson chi-square
+              mu = np.maximum(initial_fit.mu, 1e-5)
+              pearson_chi2 = ((df['y'] - mu) ** 2 / mu).sum()
+              scale = max(1.0, pearson_chi2 / initial_fit.df_resid)
+              
+              # Refit the model with the estimated scale parameter
+              fit = model.fit(scale=scale, tol=1e-8, max_iter=250)
+              predicted_values = fit.predict()
+              clipped_predictions = np.clip(predicted_values, -50, 50)
+              preds = np.maximum(np.exp(clipped_predictions), 1e-5)
 
-                break
-                
-            except Exception as e:
-                if config == knot_configs[-1]:
-                    # print(f"All GLM fitting attempts failed. Last error: {str(e)}")
-                    preds = df['y'].values  # Just use the input values as a last resort
-                else:
-                    continue
-                    
-    orig_indices = np.where(tmp_frame['orig'])[0]
-    orig_preds = preds[orig_indices]
-    return orig_preds / np.sum(orig_preds)
+              break
+              
+          except Exception as e:
+              # Just use the input values as a last resort
+              if config == knot_configs[-1]:
+                  preds = df['y'].values 
+              else:
+                  continue
+
+    return safer_normalization(preds, tmp_frame['orig'])
 
 def maxEM(slmat):
     # Initialize phi and theta
