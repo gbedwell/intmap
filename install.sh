@@ -57,7 +57,7 @@ else
         echo "Setting up LLVM environment variables for OpenMP..."
         echo
 
-        conda create -n intmap "python>=3.10" "pip>=23.0"
+        conda create -n intmap "python=3.11" "pip>=23.0"
         conda activate intmap
         conda env config vars set \
             PATH="$(brew --prefix llvm)/bin:$PATH" \
