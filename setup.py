@@ -6,7 +6,7 @@ setup(
 	author='Greg Bedwell',
 	author_email='gregoryjbedwell@gmail.com',
 	packages=find_packages(),
-	python_requires='>=3.10',
+	python_requires='>=3.11,<3.12',
 	scripts=[
     	'intmap/intmap',
      	'intmap_demux/intmap_demux',

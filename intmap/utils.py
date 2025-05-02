@@ -811,12 +811,14 @@ def phi_update_default(obj):
 
 def maxEM(slmat):
     # Initialize phi and theta
-    phi_old = np.sum(slmat + 1/slmat.size, axis = 1)
+    phi_old = np.sum(slmat, axis = 1)
+    phi_old = np.maximum(phi_old, np.finfo(float).eps)
     phi_old = phi_old / np.sum(phi_old)
-    theta_old = np.sum(slmat, axis = 0)
     
+    theta_old = np.sum(slmat, axis = 0)
+    theta_old = np.maximum(theta_old, np.finfo(float).eps)
+
     # Do one EM step to start
-    # phi_update assures that constraints on phi are met
     Y, _ = estep(slmat, theta_old, phi_old)
     theta_old = np.sum(Y, axis = 0)
     
@@ -824,7 +826,7 @@ def maxEM(slmat):
     phi_old = phi_update_default(Y)
     
     phi_min = np.finfo(float).eps
-    phi_old = phi_old + phi_min
+    phi_old = np.maximum(phi_old, phi_min)
     phi_old = phi_old / np.sum(phi_old)
     
     llk_old = float('-inf')
@@ -839,58 +841,71 @@ def maxEM(slmat):
     phi_new = phi_old.copy()
     theta_new = theta_old.copy()
     
+    converged = True
     while not_done:
         # M-step
         mres = mstep(slmat, theta_new, phi_new)
-        theta_new = mres["theta"]
+        theta_new = np.maximum(mres["theta"], np.finfo(float).eps)
         
         # E-step
-        Y, llk = estep(slmat, theta_new, phi_new)
-        
-        # Check increase in loglik - use one full EM step if llk doesn't increase
-        fail = 0
-        if llk > llk_old:
-            llk_old = llk
-            theta_old = theta_new.copy()
-        else:
-            fail += 1
+        try:
+            Y, llk = estep(slmat, theta_new, phi_new)
+            
+            if not np.isfinite(llk):
+                fail = 1
+                theta_new = theta_old.copy()
+                Y, llk = estep(slmat, theta_new, phi_new)
+            else:
+                # Check increase in loglik - use one full EM step if llk doesn't increase
+                fail = 0
+                if llk > llk_old:
+                    llk_old = llk
+                    theta_old = theta_new.copy()
+                else:
+                    fail += 1
+                    theta_new = theta_old.copy()
+                    Y, _ = estep(slmat, theta_new, phi_new)
+        except Exception:
+            fail = 1
             theta_new = theta_old.copy()
-            Y, _ = estep(slmat, theta_new, phi_new)
+            Y, llk = estep(slmat, theta_new, phi_new)
         
         # Update phi
-        phi_new = phi_update_default(Y) + phi_min
+        phi_new = phi_update_default(Y)
+        phi_new = np.maximum(phi_new, phi_min)
         phi_new = phi_new / np.sum(phi_new)
-        
-        # Add small value to avoid numerical issues
-        phi_new = phi_new + phi_min
-        phi_new = phi_new / np.sum(phi_new)
-        
-        # Check if phi update improved likelihood
-        Y, llk = estep(slmat, theta_new, phi_new)
-        if llk > llk_old:
-            llk_old = llk
-            phi_old = phi_new.copy()
-        else:
+
+        try:
+            Y, llk = estep(slmat, theta_new, phi_new)
+            if np.isfinite(llk) and llk > llk_old:
+                llk_old = llk
+                phi_old = phi_new.copy()
+            else:
+                phi_new = phi_old.copy()
+                fail += 1
+        except Exception:
             phi_new = phi_old.copy()
             fail += 1
         
         # Check convergence criteria
         adjs = mres["grad"]
         max_abs = np.max(np.abs(adjs))
-        max_rel = np.max(np.abs(adjs / (theta_old + 1e-10)))
+        denominator = np.maximum(np.abs(theta_old), 1e-10)
+        max_rel = np.max(np.abs(adjs / denominator))
         
         i += 1
         not_done = (fail < 2) and ((i < min_reps) or (max_abs > max_abs_le) or (max_rel > max_rel_le))
         
         if i >= max_reps:
-            print("Warning: iteration limit reached")
+            converged = False
             break
     
     return {
-        "theta": theta_new,
-        "phi": phi_new,
-        "iter": i
-    }
+        'theta': theta_new,
+        'phi': phi_new,
+        'iter': i,
+        'converged': converged
+        }
     
 def estimate_abundance(location_indices, lengths, min_length=25):
     location_indices = np.array(location_indices)
@@ -920,6 +935,11 @@ def estimate_abundance(location_indices, lengths, min_length=25):
     
     # Call maxEM with the matrix
     result = maxEM(slmat)
+    
+    if result['converged']:
+        print(f"Model converged after {result['iter']} iterations")
+    else:
+        print(f'Model failed to converge; abundance estimates could be unreliable')
     
     # Add additional fields to match R implementation
     result['obs'] = np.bincount(location_indices.astype(int), minlength=n_locations)
@@ -959,11 +979,6 @@ def sonic_abundance(frag_dict, U3, shift, min_frag_len):
         try:
             # Convert locations to numeric indices
             unique_locations = np.unique(locations)
-
-            # Check if each location has exactly one fragment
-            # if len(unique_locations) == len(locations):
-            #     print('Each integration site has exactly one fragment. Skipping MLE.', flush = True)
-            #     return []
             
             location_indices = np.array([np.where(unique_locations == loc)[0][0] for loc in locations])
             

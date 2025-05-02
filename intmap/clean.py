@@ -1025,7 +1025,7 @@ def verify_mm_positions(mm_kept_dict, um_kept_dict, seq_sim, nthr, len_diff,
     if remaining_groups:
         reassigned_results = Parallel(n_jobs=nthr)(
             delayed(assign_mm_group)(group, mm_group_threshold) for group in remaining_groups
-        )
+            )
 
         for group, n_single in reassigned_results:
             if n_single == 1 or n_single == 2:

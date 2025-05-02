@@ -470,7 +470,8 @@ if __name__ == "__main__":
         
     
     start_time = time.time()
-
+    if (args.linker_umi_len or args.ltr_umi_len) and args.mle:
+        parser.error(f'mle cannot be set while ltr_umi_len and/or linker_umi_len > 0')
     if not args.bt2_idx_dir:
         parser.error('bt2_idx_dir must be defined')
     if not args.bt2_idx_name:
@@ -911,7 +912,7 @@ if __name__ == "__main__":
                 delayed(clean.unique_exact_matches)(
                     input_dict = unique_all_split_list[entry]) 
                 for entry in range(len(sorted_unique_all_split_list)))
-        
+    
         del unique_all_split_list
         del sorted_unique_all_split_list
         
@@ -1010,6 +1011,7 @@ if __name__ == "__main__":
                     flush = True)
 
             print('Hashing multimapping sequences for fuzzy matching...', flush = True)
+
             multi_exact_hashed = Parallel(n_jobs = args.nthr)(
                 delayed(apply_minhash)(
                     key = key, 
@@ -1026,10 +1028,12 @@ if __name__ == "__main__":
 
             del multi_exact_hashed
 
-            hash_distances, hash_indices = get_nn(input_dict = multi_exact_kept, 
-                                                    num_perm = args.num_perm,
-                                                    nthr = args.nthr,
-                                                    len_diff = args.len_diff)
+            hash_distances, hash_indices = get_nn(
+              input_dict = multi_exact_kept, 
+              num_perm = args.num_perm,
+              nthr = args.nthr,
+              len_diff = args.len_diff
+              )
 
             print('Grouping similar hashes...', flush = True)
             mm_solo, mm_groups = group_similar_hashes(
@@ -1045,7 +1049,7 @@ if __name__ == "__main__":
             del hash_indices
 
             mm_grouped_entries = extract_grouped_entries(groups = mm_groups,
-                                                        input_dict = multi_exact_kept)
+                                                         input_dict = multi_exact_kept)
             
             # Add ungrouped multimapping reads to mm_kept_dict
             items = list(multi_exact_kept.items())
@@ -1386,7 +1390,7 @@ if __name__ == "__main__":
         for pattern, target_dir in file_mapping.items():
             for filepath in glob.glob(os.path.join(processed_dir, pattern)):
                 shutil.move(filepath, target_dir)
-
+    
     end_time = time.time()
     elapsed_time = round((end_time - start_time) / 60, 3)
     print('\n', flush = True)
