@@ -89,7 +89,9 @@ def make_arg_sets(arg_names, arg_values):
     for values in zip(*arg_values):
         arg_set = []
         for arg_name, value in zip(arg_names, values):
-            if value.lower() == 'true':
+            if value.lower() == 'none':
+                continue
+            elif value.lower() == 'true':
                 arg_set.append(arg_name)
             elif value.lower() != 'false':
                 arg_set.append(arg_name)

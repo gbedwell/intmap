@@ -518,7 +518,7 @@ if __name__ == "__main__":
         parser.error('len_diff must be <= 10.')
     if args.k > (args.min_frag_len - args.len_diff) or args.k < 10:
         parser.error('k must be <= min_frag_len - len_diff and >= 10.')
-    if args.ltr3_alt is not None and len(args.ltr3_alt) != len(args.ltr3):
+    if args.ttr and args.ltr3_alt is not None and len(args.ltr3_alt) != len(args.ltr3):
         parser.error('ltr3 and ltr3_alt must be the same length.')
     if args.crop_chunk_size % 4 != 0:
         parser.error('crop_chunk_size must be divisible by 4.')
