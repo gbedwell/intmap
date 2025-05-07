@@ -566,108 +566,108 @@ if __name__ == "__main__":
         align.check_executable(path = args.sam_path, ex_name = 'samtools')
     
     print('\n')
-    print(f'Sample name: {args.nm}')
-    print(f'Parsing files {args.r1} and {args.r2}')
-    print(f'Number of threads: {args.nthr}')
-    print(f'Base LTR-end search sequence: {args.ltr5 + args.ltr3}')
+    print(f'Sample name: {args.nm}', flush = True)
+    print(f'Parsing files {args.r1} and {args.r2}', flush = True)
+    print(f'Number of threads: {args.nthr}', flush = True)
+    print(f'Base LTR-end search sequence: {args.ltr5 + args.ltr3}', flush = True)
     if args.ltr3_alt is not None:
-      print(f'Alternative LTR-end search sequence: {args.ltr5 + args.ltr3_alt}')
-    print(f'Base linker-end search sequence: {args.linker5 + args.linker3}')
-    print(f'5\' LTR match error rate {args.ltr5_error_rate}')
-    print(f'3\' LTR match error rate: {args.ltr3_error_rate}')
-    print(f'5\' linker match error rate: {args.linker5_error_rate}')
-    print(f'3\' linker match error rate: {args.linker3_error_rate}')
-    print(f'FASTQ processing chunk size: {args.crop_chunk_size} reads')
+      print(f'Alternative LTR-end search sequence: {args.ltr5 + args.ltr3_alt}', flush = True)
+    print(f'Base linker-end search sequence: {args.linker5 + args.linker3}', flush = True)
+    print(f'5\' LTR match error rate {args.ltr5_error_rate}', flush = True)
+    print(f'3\' LTR match error rate: {args.ltr3_error_rate}', flush = True)
+    print(f'5\' linker match error rate: {args.linker5_error_rate}', flush = True)
+    print(f'3\' linker match error rate: {args.linker3_error_rate}', flush = True)
+    print(f'FASTQ processing chunk size: {args.crop_chunk_size} reads', flush = True)
     
     if args.ttr:
-        print(f'Truncated terminal repeats: True')
-        print(f'Minimum TTR length: {args.min_ttr_len} bp')
+        print(f'Truncated terminal repeats: True', flush = True)
+        print(f'Minimum TTR length: {args.min_ttr_len} bp', flush = True)
     else:
-        print(f'Truncated terminal repeats: False')
+        print(f'Truncated terminal repeats: False', flush = True)
 
     if args.c is not None:
-        print(f"Declared contamination: {', '.join(args.c)}")
+        print(f"Declared contamination: {', '.join(args.c)}", flush = True)
         
     if args.ltr_umi_len > 0:
-        print(f'LTR UMI length: {args.ltr_umi_len} bp')
-        print(f'LTR UMI offset: {args.ltr_umi_offset} bp')
+        print(f'LTR UMI length: {args.ltr_umi_len} bp', flush = True)
+        print(f'LTR UMI offset: {args.ltr_umi_offset} bp', flush = True)
         
     if args.ltr_umi_pattern:
-        print(f'LTR UMI pattern: {args.ltr_umi_pattern}')
+        print(f'LTR UMI pattern: {args.ltr_umi_pattern}', flush = True)
         
     if args.linker_umi_len > 0:
-        print(f'Linker UMI length: {args.linker_umi_len} bp')
-        print(f'Linker UMI offset: {args.linker_umi_offset} bp')
+        print(f'Linker UMI length: {args.linker_umi_len} bp', flush = True)
+        print(f'Linker UMI offset: {args.linker_umi_offset} bp', flush = True)
         
     if args.linker_umi_pattern:
-        print(f'Linker UMI pattern: {args.linker_umi_pattern}')
+        print(f'Linker UMI pattern: {args.linker_umi_pattern}', flush = True)
         
-    print(f'Minimum fragment length: {args.min_frag_len} bp')
-    print(f'Maximum fragment length: {args.max_frag_len} bp')
-    print(f'Alignment seed length: {args.aln_seed_len} bp')
+    print(f'Minimum fragment length: {args.min_frag_len} bp', flush = True)
+    print(f'Maximum fragment length: {args.max_frag_len} bp', flush = True)
+    print(f'Alignment seed length: {args.aln_seed_len} bp', flush = True)
     
     if args.aln_seed_mismatch != 0:
-        print(f'Alignment seed mismatches: {args.aln_seed_mismatch}')
+        print(f'Alignment seed mismatches: {args.aln_seed_mismatch}', flush = True)
 
-    print(f'Allowed read 1 5\'-end alignment mismatches: {args.match_after} bp')
-    print(f'Allowed alignment mismatch rate: {args.aln_mismatch_rate}')
-    print(f'Allowed alignment indel rate: {args.aln_indel_rate}')
+    print(f'Allowed read 1 5\'-end alignment mismatches: {args.match_after} bp', flush = True)
+    print(f'Allowed alignment mismatch rate: {args.aln_mismatch_rate}', flush = True)
+    print(f'Allowed alignment indel rate: {args.aln_indel_rate}', flush = True)
     print(f'Minimum alignment MAPQ score: {args.min_mapq}')
-    print(f'Minimum average base quality score: {args.min_qual}')
+    print(f'Minimum average base quality score: {args.min_qual}', flush = True)
 
     if args.no_dedup:
-        print(f'Stop after alignment and QC: True')
+        print(f'Stop after alignment and QC: True', flush = True)
     else:
         if args.U3 is False:
-            print('Mapping end: U5')
+            print('Mapping end: U5', flush = True)
         else:
-            print('Mapping end: U3')
+            print('Mapping end: U3', flush = True)
             
-        print(f'TSD width: {args.tsd} bp')
+        print(f'TSD width: {args.tsd} bp', flush = True)
         
-        print(f'Fuzzy length difference: {args.len_diff} bp')
-        print(f'Fuzzy low resolution UMI mismatches: {args.umi_diff} bp')
-        print(f'Duplicate count ratio: {args.frag_ratio}')
+        print(f'Fuzzy length difference: {args.len_diff} bp', flush = True)
+        print(f'Fuzzy low resolution UMI mismatches: {args.umi_diff} bp', flush = True)
+        print(f'Duplicate count ratio: {args.frag_ratio}', flush = True)
 
         if args.no_mm is False:
-            print('Keep multimapping reads: True')
-            print(f'Multimapping hash fingerprint length: {args.num_perm} hashes')
-            print(f'Multimapping token size: {args.token_size} bp')
-            print(f'Multimapping hash similarity threshold: {args.mm_hash_similarity}')
-            print(f'Multimapping sequence similarity threshold: {args.seq_sim}')
+            print('Keep multimapping reads: True', flush = True)
+            print(f'Multimapping hash fingerprint length: {args.num_perm} hashes', flush = True)
+            print(f'Multimapping token size: {args.token_size} bp', flush = True)
+            print(f'Multimapping hash similarity threshold: {args.mm_hash_similarity}', flush = True)
+            print(f'Multimapping sequence similarity threshold: {args.seq_sim}', flush = True)
             if args.reassign_mm:
-                print(f'Multimapping read reassignment: True')
-                print(f'Multimapping k-mer size: {args.k} bp')
-                print(f'Multimapping group size fractional threshold: {args.mm_group_threshold}')
+                print(f'Multimapping read reassignment: True', flush = True)
+                print(f'Multimapping k-mer size: {args.k} bp', flush = True)
+                print(f'Multimapping group size fractional threshold: {args.mm_group_threshold}', flush = True)
             else:
-                print(f'Multimapping read reassignment: False')
+                print(f'Multimapping read reassignment: False', flush = True)
         else:
-            print('Keep multimapping reads: False')
+            print(f'Keep multimapping reads: False', flush = True)
         
         if args.misprime_mismatch >= 0:
-            print('Look for mispriming: True')
-            print('Round 1 LTR primer sequence:', args.ltr1_primer)
-            print(f'Allowed mispriming mismatches: {args.misprime_mismatch} bp')
+            print(f'Look for mispriming: True', flush = True)
+            print(f'Round 1 LTR primer sequence: {args.ltr1_primer}', flush = True)
+            print(f'Allowed mispriming mismatches: {args.misprime_mismatch} bp', flush = True)
         else:
-            print('Look for mispriming: False')
+            print('Look for mispriming: False', flush = True)
         
-        print(f'Minimum site count threshold: {args.min_count} sites')
-        print(f'Count fold-change: {args.count_fc}')
+        print(f'Minimum site count threshold: {args.min_count} sites', flush = True)
+        print(f'Count fold-change: {args.count_fc}', flush = True)
         
         if args.ltr_umi_len > 0:
             if args.check_ltr_umis_final_pass:
-                print(f'Remove conflicting LTR UMIs during final pass: True')
+                print(f'Remove conflicting LTR UMIs during final pass: True', flush = True)
             else:
-                print(f'Remove conflicting LTR UMIs during final pass: False')
+                print(f'Remove conflicting LTR UMIs during final pass: False', flush = True)
         if args.linker_umi_len > 0:
             if args.check_linker_umis_final_pass:
-                print(f'Remove conflicting linker UMIs during final pass: True')
+                print(f'Remove conflicting linker UMIs during final pass: True', flush = True)
             else:
-                print(f'Remove conflicting linker UMIs during final pass: False')
+                print(f'Remove conflicting linker UMIs during final pass: False', flush = True)
         if args.mle:
-            print(f'Estimate site abundance with MLE: True')
+            print(f'Estimate site abundance with MLE: True', flush = True)
         else:
-            print(f'Estimate site abundance with MLE: False')
+            print(f'Estimate site abundance with MLE: False', flush = True)
     
     print('\n')
     
