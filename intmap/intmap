@@ -367,8 +367,11 @@ parser.add_argument('-flag_search_limit',
                     sequences. Defaults to 0.5.''',
                     default=0.5)
 parser.add_argument('--mle', '-mle',
-                    help='''Boolean. Whether or not to additionally estimate site abundance using the SonicAbundance method.''',
+                    help='''Boolean. Whether or not to estimate site abundance using the SonicAbundance method. 
+                    This cannot be set when either linker_umi_len or ltr_umi_len > 0. 
+                    This method also requires random genome fragmentation.''',
                     action='store_true')
+
 
 args = parser.parse_args()
 

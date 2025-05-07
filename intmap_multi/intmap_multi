@@ -73,12 +73,12 @@ def parse_input_file(setup_file):
         else arg for arg in arg_names]
     
     arg_values = []
-    for line in lines[2:]:
+    for i, line in enumerate(lines[2:]):
         values = line.strip().replace(' ', '').split(',')
         if len(values) == 1:
             values = values * n_samp
         elif len(values) < n_samp:
-            raise ValueError('The number of entered values must be 1 or equal to the number of samples.')
+            raise ValueError(f'Error in line {i + 3}. The number of entered values must be 1 or equal to the number of samples.')
         arg_values.append(values)
     
     return n_samp, arg_names, arg_values

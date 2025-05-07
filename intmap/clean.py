@@ -922,7 +922,7 @@ def assign_mm_group(mm_group, mm_group_threshold):
         
         random.seed(seed)
         chosen_pos = random.choices(valid_positions, k=1)[0]
-        
+        random.seed()
         # Assign all reads to chosen position
         assigned_group = []
         for read in mm_group:

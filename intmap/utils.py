@@ -20,6 +20,7 @@ import statsmodels.api as sm
 import patsy
 import sys
 import warnings
+import hashlib
 
 __all__ = [
     'zipped',
@@ -622,7 +623,7 @@ def generate_consensus(r1_file, r2_file, consensus_length=50, sample_size=5000, 
     
     return result
   
-def pad_tab(tab, start_at=None, end_at=None):
+def pad_tab(tab, start_at = None, end_at = None):
     tab_keys = [int(k) for k in tab.keys()]
     
     if start_at is None:
@@ -657,10 +658,10 @@ def mstep(x, theta, phi):
     
     log_denom = np.log1p(-np.exp(log_exptp))
     
-    grad = np.sum(-(1-x) * phi[:, np.newaxis] + 
-                  x * phi[:, np.newaxis] * np.exp(log_exptp - log_denom), axis=0)
+    grad = np.sum(-(1 - x) * phi[:, np.newaxis] + 
+                  x * phi[:, np.newaxis] * np.exp(log_exptp - log_denom), axis = 0)
     
-    curv = -np.sum(phi[:, np.newaxis]**2 * np.exp(log_exptp - log_denom), axis=0)
+    curv = -np.sum(phi[:, np.newaxis]**2 * np.exp(log_exptp - log_denom), axis = 0)
     
     theta = theta - grad / curv
     
@@ -707,30 +708,7 @@ def safer_normalization(preds, mask):
     return exp_shifted / np.sum(exp_shifted)
   
 def phi_update_default(obj):
-    class SuppressSpecificWarnings:
-        def __enter__(self):
-            # Store the original filters
-            self.original_filters = warnings.filters.copy()
-            
-            warnings.filterwarnings("ignore", category=RuntimeWarning, 
-                                    message="overflow encountered in exp")
-            warnings.filterwarnings("ignore", category=RuntimeWarning, 
-                                    message="divide by zero encountered in divide")
-            warnings.filterwarnings("ignore", category=RuntimeWarning, 
-                                        message="invalid value encountered in multiply")
-            warnings.filterwarnings("ignore", category=RuntimeWarning, 
-                                        message="overflow encountered in divide")
-            
-            return self
-            
-        def __exit__(self, exc_type, exc_val, exc_tb):
-            warnings.filters = self.original_filters
-            
     row_sums = np.sum(obj, axis = 1)
-    
-    # Evaluate sparsity of the matrix
-    sparsity = 1.0 - (np.count_nonzero(row_sums) / len(row_sums))
-    
     row_dict = {str(i): row_sums[i] for i in range(len(row_sums))}
     tmp_frame = pad_tab(row_dict)
     
@@ -745,6 +723,7 @@ def phi_update_default(obj):
     
     knot_configs = []
     
+    # Dynamically allocate spline parameters based on data
     if len(non_zero_indices) <= 3:
         knot_configs.append({
             'knots': [],
@@ -764,11 +743,7 @@ def phi_update_default(obj):
             'degree': 3
         })
     
-    knot_configs.append({
-        'knots': [50, 100],
-        'degree': 3
-    })
-    
+    # Final attempt: just use evenly-spaced knot positions.
     x_range = df['x'].max() - df['x'].min()
     if x_range > 10:
         knot_configs.append({
@@ -776,38 +751,37 @@ def phi_update_default(obj):
             'degree': 3
         })
     
-    with SuppressSpecificWarnings():
-      for config in knot_configs:
-          try:
-              knot_formula = f"bs(x, knots={config['knots']}, degree={config['degree']}, include_intercept=True)"
-              X = patsy.dmatrix(knot_formula, df)
-              
-              # Fit initial Poisson GLM
-              family = sm.families.Poisson()
-              model = sm.GLM(df['y'], X, family=family)
-              initial_fit = model.fit(tol=1e-8, max_iter=250)
-              
-              # Calculate dispersion parameter (scale) using Pearson chi-square
-              mu = np.maximum(initial_fit.mu, 1e-5)
-              pearson_chi2 = ((df['y'] - mu) ** 2 / mu).sum()
-              scale = max(1.0, pearson_chi2 / initial_fit.df_resid)
-              
-              # Refit the model with the estimated scale parameter
-              fit = model.fit(scale=scale, tol=1e-8, max_iter=250)
-              predicted_values = fit.predict()
-              clipped_predictions = np.clip(predicted_values, -50, 50)
-              preds = np.maximum(np.exp(clipped_predictions), 1e-5)
+    unsuccessful_update = False
+    for config in knot_configs:
+        try:
+            knot_formula = f"bs(x, knots={config['knots']}, degree={config['degree']}, include_intercept=True)"
+            X = patsy.dmatrix(knot_formula, df)
+            
+            # Fit initial Poisson GLM
+            family = sm.families.Poisson()
+            model = sm.GLM(df['y'], X, family = family)
+            initial_fit = model.fit(tol = 1e-12, max_iter = 1000)
+            
+            # Calculate dispersion parameter (scale) using Pearson residuals and residual DF
+            mu = np.maximum(initial_fit.mu, 1e-5)
+            pearson_resid = initial_fit.resid_pearson
+            df_resid = initial_fit.df_resid
+            scale = sum(pearson_resid**2) / df_resid
+            
+            fit = model.fit(scale = scale, tol = 1e-12, max_iter = 1000)
+            predicted_values = fit.predict()
+            preds = np.maximum(predicted_values, 1e-5)
+            break
+            
+        except Exception as e:
+            # Just use the input values as a last resort
+            if config == knot_configs[-1]:
+                preds = df['y'].values
+                unsuccessful_update = True 
+            else:
+                continue
 
-              break
-              
-          except Exception as e:
-              # Just use the input values as a last resort
-              if config == knot_configs[-1]:
-                  preds = df['y'].values 
-              else:
-                  continue
-
-    return safer_normalization(preds, tmp_frame['orig'])
+    return safer_normalization(preds, tmp_frame['orig']), unsuccessful_update
 
 def maxEM(slmat):
     # Initialize phi and theta
@@ -823,7 +797,7 @@ def maxEM(slmat):
     theta_old = np.sum(Y, axis = 0)
     
     row_sums = np.sum(Y, axis = 1)
-    phi_old = phi_update_default(Y)
+    phi_old, _ = phi_update_default(Y)
     
     phi_min = np.finfo(float).eps
     phi_old = np.maximum(phi_old, phi_min)
@@ -835,13 +809,14 @@ def maxEM(slmat):
     
     min_reps = 3
     max_reps = 2000
-    max_abs_le = 0.1
-    max_rel_le = 1e-5
+    max_abs_le = 0.01
+    max_rel_le = 1e-6
     
     phi_new = phi_old.copy()
     theta_new = theta_old.copy()
     
     converged = True
+    fallback = False
     while not_done:
         # M-step
         mres = mstep(slmat, theta_new, phi_new)
@@ -871,7 +846,7 @@ def maxEM(slmat):
             Y, llk = estep(slmat, theta_new, phi_new)
         
         # Update phi
-        phi_new = phi_update_default(Y)
+        phi_new, fallback = phi_update_default(Y)
         phi_new = np.maximum(phi_new, phi_min)
         phi_new = phi_new / np.sum(phi_new)
 
@@ -899,15 +874,21 @@ def maxEM(slmat):
         if i >= max_reps:
             converged = False
             break
-    
+          
+        if fail >= 2:
+            converged = False
+
+    if fallback:
+        converged = False  
+        
     return {
         'theta': theta_new,
         'phi': phi_new,
         'iter': i,
         'converged': converged
         }
-    
-def estimate_abundance(location_indices, lengths, min_length=25):
+
+def estimate_abundance(location_indices, lengths, min_length):
     location_indices = np.array(location_indices)
     lengths = np.array(lengths)
     
@@ -926,14 +907,17 @@ def estimate_abundance(location_indices, lengths, min_length=25):
     length_range = np.arange(min_length_actual, max_length_actual + 1)
     
     # Initialize the matrix
-    slmat = np.zeros((len(length_range), n_locations), dtype=int)
+    slmat = np.zeros((len(length_range), n_locations), dtype = int)
+    # Fill the matrix with counts
+    length_indices = (lengths - min_length_actual).astype(int)
+    loc_indices = location_indices.astype(int)
+    np.add.at(slmat, (length_indices, loc_indices), 1)
     
-    # Fill the matrix with counts (not just binary indicators)
-    for loc_idx, length in zip(location_indices, lengths):
-        length_idx = int(length) - min_length_actual
-        slmat[length_idx, int(loc_idx)] += 1
-    
-    # Call maxEM with the matrix
+    row_sums = slmat.sum(axis=1)
+    keep_rows = row_sums > 0
+
+    slmat = slmat[keep_rows, :]
+
     result = maxEM(slmat)
     
     if result['converged']:
@@ -941,13 +925,11 @@ def estimate_abundance(location_indices, lengths, min_length=25):
     else:
         print(f'Model failed to converge; abundance estimates could be unreliable')
     
-    # Add additional fields to match R implementation
-    result['obs'] = np.bincount(location_indices.astype(int), minlength=n_locations)
+    result['obs'] = np.bincount(location_indices.astype(int), minlength = n_locations)
     
-    # Store the original data
     result['data'] = {
-        'locations': location_indices,
-        'lengths': lengths
+          'locations': location_indices,
+          'lengths': lengths
     }
     
     return result
@@ -970,6 +952,7 @@ def sonic_abundance(frag_dict, U3, shift, min_frag_len):
         frag_length = value['end'] - value['start']
         
         site_location = f"{value['chrom']}:{site_start if site_strand == '+' else site_end}:{site_strand}"
+        site_count = value['count']
         
         locations.append(site_location)
         lengths.append(frag_length)
@@ -979,7 +962,6 @@ def sonic_abundance(frag_dict, U3, shift, min_frag_len):
         try:
             # Convert locations to numeric indices
             unique_locations = np.unique(locations)
-            
             location_indices = np.array([np.where(unique_locations == loc)[0][0] for loc in locations])
             
             # Estimate abundance
@@ -1007,7 +989,7 @@ def sonic_abundance(frag_dict, U3, shift, min_frag_len):
                     'strand': strand
                 })
             
-                abundance_estimates.sort(key=lambda item: (natural_key(item['chrom']), item['start'], item['end']))
+            abundance_estimates.sort(key=lambda item: (natural_key(item['chrom']), item['start'], item['end']))
 
             return abundance_estimates
             
