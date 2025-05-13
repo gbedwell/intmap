@@ -55,3 +55,15 @@ This project uses the following third-party packages, each of which is governed 
 ### pybloom-live==4.0.0
 - License: MIT License
 - URL: https://pypi.org/project/pybloom-live/
+
+### scipy==1.15.2
+- License: BSD-3 License
+- URL: https://scipy.org/
+ 
+### pandas==2.2.3
+- License: BSD-3 License
+- URL: https://pandas.pydata.org/
+
+### statsmodels==0.14.4
+- License: BSD-3 License
+- URL: https://www.statsmodels.org/
