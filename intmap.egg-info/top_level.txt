@@ -1,3 +1,0 @@
-intmap
-intmap-demux
-intmap-multi
