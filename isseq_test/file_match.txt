@@ -1,6 +1,0 @@
-SRR19243489_1_clean   serial_dil_250_500_set1_R1
-SRR19243489_2_clean   serial_dil_250_500_set1_R2
-SRR19243488_1_clean   single_cell_clones_R1
-SRR19243488_2_clean   single_cell_clones_R2
-SRR19243487_1_clean   serial_dil_250_set2_R1
-SRR19243487_2_clean   serial_dil_250_set2_R2
