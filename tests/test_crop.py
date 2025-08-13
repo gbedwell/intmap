@@ -56,6 +56,7 @@ def test_crop_perfect_and_mismatch():
         r2 = f'{TEST_DATA_DIR}/test_R2.fq.gz'
         min_qual = 20
         ltr3 = "TGTGTG"
+        ltr3_alt = "AGAGAG"
         linker3 = "ACACTC"
         ltr5 = "GCGCGC"
         linker5 = "ATATAT"
@@ -74,6 +75,12 @@ def test_crop_perfect_and_mismatch():
         c = None
         nthr = 1
         crop_chunk_size = 10
+        ttr = False
+        min_ttr_len = 15
+        flag_window_size = 12
+        flag_min_diff = 4
+        flag_search_limit = 0.5
+        
 
     create_test_fastq()
     
@@ -89,7 +96,7 @@ def test_crop_perfect_and_mismatch():
         chunk2 = [line.decode() for line in f2.readlines()]
         process_reads_parallel(
             chunk1, chunk2, patterns, params, is_zipped, out_nm, 
-            processed_directory = f'{TEST_DATA_DIR}', chunk_num = 1
+            processed_directory = f'{TEST_DATA_DIR}', chunk_num = 1, ttr = False
             )
         
     r1_tmp = glob.glob(f'{TEST_DATA_DIR}/out_nm_*_R1_tmp.fq.gz')[0]

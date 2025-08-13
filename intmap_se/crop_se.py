@@ -114,9 +114,9 @@ def compile_patterns(ltr3, linker3, ltr5, linker5,
             'indel': regex.compile(f'({ltr5}){{e<={ltr5_errors}}}({ltr3}){{e<={ltr3_errors}}}')
         },
         'linker': {
-            'perfect': regex.compile(linker5 + linker3),
-            'mismatch': regex.compile(f'({linker5}){{s<={linker5_errors}}}({linker3}){{s<={linker3_errors}}}'),
-            'indel': regex.compile(f'({linker5}){{e<={linker5_errors}}}({linker3}){{e<={linker3_errors}}}')
+            'perfect': regex.compile(revcomp(linker3) + revcomp(linker5)),
+            'mismatch': regex.compile(f'({revcomp(linker3)}){{s<={linker3_errors}}}({revcomp(linker5)}){{s<={linker5_errors}}}'),
+            'indel': regex.compile(f'({revcomp(linker3)}){{e<={linker3_errors}}}({revcomp(linker5)}){{e<={linker5_errors}}}')
         },
         'ltr_rc': {
             'perfect': regex.compile(ltr_rc),
@@ -174,9 +174,9 @@ def compile_patterns_ttr(ltr3, ltr3_alt, ltr5, min_ttr_len, ltr3_error_rate,
             'indel': regex.compile(f'({ltr5}){{e<={ltr5_errors}}}')
             },
         'linker': {
-            'perfect': regex.compile(linker5 + linker3),
-            'mismatch': regex.compile(f'({linker5}){{s<={linker5_errors}}}({linker3}){{s<={linker3_errors}}}'),
-            'indel': regex.compile(f'({linker5}){{e<={linker5_errors}}}({linker3}){{e<={linker3_errors}}}')
+            'perfect': regex.compile(revcomp(linker3) + revcomp(linker5)),
+            'mismatch': regex.compile(f'({revcomp(linker3)}){{s<={linker3_errors}}}({revcomp(linker5)}){{s<={linker5_errors}}}'),
+            'indel': regex.compile(f'({revcomp(linker3)}){{e<={linker3_errors}}}({revcomp(linker5)}){{e<={linker5_errors}}}')
             },
         'linker_rc': {
             'perfect': regex.compile(linker_rc),
@@ -484,6 +484,9 @@ def init_params(args):
         'ltr_umi_len': args.ltr_umi_len,
         'ltr_umi_offset': args.ltr_umi_offset,
         'ltr_umi_pattern': args.ltr_umi_pattern,
+        'linker_umi_len': args.linker_umi_len,
+        'linker_umi_offset': args.linker_umi_offset,
+        'linker_umi_pattern': args.linker_umi_pattern,
         'contam_patterns': contam_patterns,
         'ltr5': args.ltr5,
         'ltr3': args.ltr3,
@@ -499,13 +502,18 @@ def init_params(args):
         'flag_search_limit': args.flag_search_limit
     }
     
-def extract_umis(seq, pattern_match, umi_len, umi_offset, 
-                    umi_pattern = None):
+def extract_umis(seq, pattern_match, umi_len, umi_offset,
+                 umi_pattern = None, linker_end = False):
+
     if umi_len > 0:
-        start = pattern_match.start() - umi_offset - umi_len
-        end = pattern_match.start() - umi_offset
-        
-        umi = seq[start:end]
+        if not linker_end:
+            start = pattern_match.start() - umi_offset - umi_len
+            end = pattern_match.start() - umi_offset
+        else:
+            start = pattern_match.end() + umi_offset
+            end = pattern_match.end() + umi_offset + umi_len
+
+        umi = seq[start:end] if not linker_end else revcomp(seq[start:end])
         
         if umi_pattern:
             umi_regex_pattern = regex.sub(r'N+', lambda m: f"[ATGC]{{{len(m.group())}}}", umi_pattern)
@@ -553,14 +561,11 @@ def fastq_writer(file, reads):
             for read in reads:
                 f.write(f"{read['name']}\n{read['seq']}\n+\n{read['qual']}\n")
             
-def process_reads_parallel(chunk1, patterns, params, is_zipped, 
-                            out_nm, processed_directory, chunk_num, ttr):
+def process_reads_parallel(chunk1, patterns, params, is_zipped,
+                           out_nm, processed_directory, chunk_num, ttr, long_read):
     sequences1, qualities1, headers1 = process_fastq_chunk(chunk1, params, is_zipped)
     
     cropped_reads1 = []
-    
-    ltr_pattern = params['ltr5'] + params['ltr3']
-    linker_pattern = params['linker5'] + params['linker3']
     
     no_error = False
     if (params['ltr5_error'] == 0 and params['linker5_error'] == 0 and
@@ -570,9 +575,6 @@ def process_reads_parallel(chunk1, patterns, params, is_zipped,
     for i, (seq1, qual1, head1) in enumerate(zip(sequences1, qualities1, headers1)):
         seq1_str = seq1
         
-        # if not patterns['ltr_suffix']['perfect'] in seq1_str:
-        #     continue
-        
         if ttr:
             ltr_pattern_match = find_pattern_match_ttr(
                 seq = seq1_str, 
@@ -580,8 +582,8 @@ def process_reads_parallel(chunk1, patterns, params, is_zipped,
                 no_error = no_error, 
                 search_limit = params['flag_search_limit']
                 )
-            if ltr_pattern_match:
-                ttr_ltr_rc_pattern = compile_rc_ttr(ltr_pattern_match.group())
+            # if ltr_pattern_match:
+            #     ttr_ltr_rc_pattern = compile_rc_ttr(ltr_pattern_match.group())
         else:
             ltr_pattern_match = find_pattern_match(
                 seq = seq1_str, 
@@ -589,33 +591,60 @@ def process_reads_parallel(chunk1, patterns, params, is_zipped,
                 pattern_type = 'ltr', 
                 no_error = no_error
                 )
+            
+        if long_read:
+            linker_pattern_match = find_pattern_match(
+                    seq = seq1_str, 
+                    patterns = patterns, 
+                    pattern_type = 'linker', 
+                    no_error = no_error
+                    )
         
-        if ltr_pattern_match:
+        if ltr_pattern_match and ((long_read and linker_pattern_match) or not long_read):
             start1 = ltr_pattern_match.end()
-            linker_in_ltr = find_pattern_match(
-                seq = seq1_str, 
-                patterns = patterns, 
-                pattern_type = 'linker_rc', 
-                no_error = False
-                )
+            
+            if not long_read:
+                linker_in_ltr = find_pattern_match(
+                    seq = seq1_str, 
+                    patterns = patterns, 
+                    pattern_type = 'linker_rc', 
+                    no_error = False
+                    )
 
-            if linker_in_ltr:
-                end1 = linker_in_ltr.start()
+                if linker_in_ltr:
+                    end1 = linker_in_ltr.start()
+                    cropped_seq1 = seq1_str[start1:end1]
+                    cropped_qual1 = qual1[start1:end1]
+                else:
+                    cropped_seq1 = seq1_str[start1:]
+                    cropped_qual1 = qual1[start1:]
+            else:
+                end1 = linker_pattern_match.start()
                 cropped_seq1 = seq1_str[start1:end1]
                 cropped_qual1 = qual1[start1:end1]
-            else:
-                cropped_seq1 = seq1_str[start1:]
-                cropped_qual1 = qual1[start1:]
-            
+                    
             ltr_umi = extract_umis(
                 seq = seq1_str, 
                 pattern_match = ltr_pattern_match, 
                 umi_len = params['ltr_umi_len'], 
                 umi_offset = params['ltr_umi_offset'],
-                umi_pattern = params['ltr_umi_pattern']
+                umi_pattern = params['ltr_umi_pattern'],
+                linker_end = False
                 )
             
-            if not ltr_umi:
+            if long_read:
+                linker_umi = extract_umis(
+                    seq = seq1_str, 
+                    pattern_match = linker_pattern_match, 
+                    umi_len = params['linker_umi_len'], 
+                    umi_offset = params['linker_umi_offset'],
+                    umi_pattern = params['linker_umi_pattern'],
+                    linker_end = True
+                    )
+            else:
+                linker_umi = 'N'
+            
+            if not ltr_umi or (long_read and not linker_umi):
                 continue
             
             toss = False
@@ -627,10 +656,11 @@ def process_reads_parallel(chunk1, patterns, params, is_zipped,
 
             if not toss and len(cropped_seq1) >= params['min_len']:
                 ltr_found = ltr_pattern_match.group()
+                linker_found = revcomp(linker_pattern_match.group()) if long_read else (revcomp(linker_in_ltr.group()) if linker_in_ltr else 'N')
                     
                 new_header1 = (f'{head1}\tCO:Z:1:{out_nm}\t'
-                                    f'RX:Z:{ltr_umi}\t'
-                                    f'OX:Z:{ltr_found}')
+                              f'RX:Z:{ltr_umi}-{linker_umi}\t'
+                              f'OX:Z:{ltr_found}-{linker_found}')
                 
                 cropped_reads1.append({
                     'name': new_header1,
@@ -658,7 +688,7 @@ def concatenate_unix(outfile, pattern):
     with open(outfile, 'wb') as out:
         subprocess.run(cmd, stdout=out)
                 
-def crop(file1, args, processed_directory, out_nm):
+def crop(args, processed_directory, out_nm, long_read):
     out_file1 = os.path.join(processed_directory,
                             f'{out_nm}_R1_cropped.fq.gz')
     
@@ -708,7 +738,8 @@ def crop(file1, args, processed_directory, out_nm):
             out_nm = out_nm,
             processed_directory = processed_directory, 
             chunk_num = chunk_num, 
-            ttr = params['ttr']
+            ttr = params['ttr'],
+            long_read = long_read
         ) for chunk_num, chunk1 in enumerate(chunks1)
     )
 

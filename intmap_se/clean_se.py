@@ -33,7 +33,7 @@ def unique_exact_matches(input_dict):
     tmp_exact_kept = defaultdict(list)
     tmp_exact_dup = set()
     
-    sort_key = itemgetter('start', 'end', 'ltr_umi')
+    sort_key = itemgetter('start', 'end', 'ltr_umi', 'linker_umi')
     qual_key = itemgetter('mean_qual')
     
     for key, entries in input_dict.items():
@@ -160,22 +160,23 @@ class OptimizedBKTree:
 
 def cluster_entries_by_umis(entries, threshold, frag_ratio):
     # Check if UMIs are present
-    all_n_umis = all(entry.get('ltr_umi') == 'N' for entry in entries)
+    all_n_umis = all(entry.get('ltr_umi') == 'N' and entry.get('linker_umi') == 'N' 
+                     for entry in entries)
     
     if all_n_umis:
         return [entries]
 
     # Pre-compute combined UMIs to avoid repeated concatenation
-    # for entry in entries:
-    #     if 'combined_umi' not in entry:
-    #         entry['combined_umi'] = entry['ltr_umi']
+    for entry in entries:
+        if 'combined_umi' not in entry:
+            entry['combined_umi'] = entry['ltr_umi'] + entry['linker_umi']
     
     # Adaptive thresholding based on cluster size
     if len(entries) > 100: 
         entries.sort(key=itemgetter('count', 'mean_qual'), reverse=True)
         
         # Use first entry as reference
-        first_umi = entries[0]['ltr_umi']
+        first_umi = entries[0]['combined_umi']
         tree = OptimizedBKTree(cached_hamming_distance, first_umi)
         
         clusters = defaultdict(list)
@@ -188,7 +189,7 @@ def cluster_entries_by_umis(entries, threshold, frag_ratio):
                 clusters[cluster_id].append(entry)
                 continue
                 
-            umi = entry['ltr_umi']
+            umi = entry['combined_umi']
             if umi not in processed:
                 matches = tree.find(umi, threshold)
                 if matches:
@@ -240,7 +241,7 @@ def build_umi_networks(umi_clusters, frag_ratio, mem_aware = False):
             umi_variants = {}
             
             for entry in sorted_entries:
-                umi = entry['ltr_umi']
+                umi = entry['combined_umi']
                 umi_len = len(umi)
                 umi_array = np.array(list(umi))
                 
@@ -265,7 +266,7 @@ def build_umi_networks(umi_clusters, frag_ratio, mem_aware = False):
                 
             processed_set.add(entry['read_name'])
             current_count = entry['count']
-            current_umi = entry['ltr_umi']
+            current_umi = entry['combined_umi']
             
             # Find candidate entries that could potentially form a network
             candidates = []
@@ -277,7 +278,7 @@ def build_umi_networks(umi_clusters, frag_ratio, mem_aware = False):
                     continue
                 
                 next_count = next_entry['count']
-                next_umi = next_entry['ltr_umi']
+                next_umi = next_entry['combined_umi']
                 
                 # Skip if count relationship requirements cannot be satisfied
                 if current_count < (frag_ratio * next_count) - 1:
@@ -294,7 +295,7 @@ def build_umi_networks(umi_clusters, frag_ratio, mem_aware = False):
             
             if mem_aware:  
                 if candidates:
-                    candidate_umis = [c['ltr_umi'] for c in candidates]
+                    candidate_umis = [c['combined_umi'] for c in candidates]
                     distances = vectorized_batch_hamming(current_umi, candidate_umis)
                     
                     for idx, dist in enumerate(distances):
@@ -398,7 +399,7 @@ def multi_exact_matches(input_dict):
     multi_values = list(input_dict.values())
     
     seq_array = np.array([
-        value['ltr_umi'] + value['seq1']
+        value['ltr_umi'] + value['linker_umi'] + value['seq1']
         for value in multi_values
     ])
     
@@ -783,6 +784,7 @@ def build_position_based_index(um_kept_dict, k, nthr):
         chrom, strand = stratum_key
         local_um_index = {}
         local_prefix_set = set()
+        position_fragment_count = defaultdict(int)
         
         pos_groups = defaultdict(list)
         for read in reads:
@@ -802,8 +804,9 @@ def build_position_based_index(um_kept_dict, k, nthr):
                     read_id = read['read_name']
                     local_um_index[prefix] = (position_info, read_id)
                     local_prefix_set.add(prefix)
+                position_fragment_count[(chrom, pos, strand)] += 1
     
-        return local_um_index, local_prefix_set
+        return local_um_index, local_prefix_set, position_fragment_count
     
     results = Parallel(n_jobs=nthr)(
         delayed(process_stratum)(key, reads)
@@ -811,23 +814,25 @@ def build_position_based_index(um_kept_dict, k, nthr):
         )
     
     um_index = defaultdict(list)
-    for local_index, prefix_set in results:
+    fragment_counts = defaultdict(int)
+    for local_index, prefix_set, position_fragment_count in results:
         for prefix, (position_info, read_id) in local_index.items():
             um_index[prefix].append((position_info, read_id))
         for prefix in prefix_set:
             bloom.add(prefix)
+        for position, count in position_fragment_count.items():
+            fragment_counts[position] += count
     
-    return um_index, bloom
+    return um_index, bloom, fragment_counts
 
-def compare_to_um(mm_group, k, um_index, bloom_filter, um_kept_dict, seq_sim):
-    
+def compare_to_um(mm_group, k, um_index, bloom_filter, um_kept_dict, seq_sim, fragment_counts):
     sorted_mm_reads = sorted(mm_group, key = lambda x: (len(x['seq1']), x['seq1']), reverse = True)
-    
     relocation_info = {}
     
     for mm_read in sorted_mm_reads:
         mm_seq = mm_read['seq1']        
         prefix = mm_seq[:k]
+        
         # Check if prefix is in the bloom filter
         if prefix not in bloom_filter:
             continue
@@ -837,23 +842,28 @@ def compare_to_um(mm_group, k, um_index, bloom_filter, um_kept_dict, seq_sim):
             positions = um_index[prefix]
             best_similarity = 0
             best_position_info = None
-            best_read_id = None
+            best_fragment_count = 0
             
             for position_info, um_read_id in positions:
                 chrom, pos, strand = position_info
                 um_rep_read = um_kept_dict[um_read_id]
                 um_seq = um_rep_read['seq1']
             
-                if len(um_seq) <= (len(mm_seq) * 1.2):
+                if len(um_seq) < len(mm_seq):
                     continue
 
                 common_length = min(len(mm_seq), len(um_seq))
                 similarity = seq_similarity(mm_seq[:common_length], um_seq[:common_length])
                 
-                if similarity > best_similarity:
+                fragment_count = fragment_counts.get(position_info, 0)
+                
+                if similarity > best_similarity or (similarity == best_similarity and fragment_count > best_fragment_count):
                     best_similarity = similarity
                     best_position_info = position_info
-                    best_read_id = um_read_id
+                    best_fragment_count = fragment_count
+                    
+                # if best_similarity == 1:
+                #     break
                 
             if best_similarity >= seq_sim:
                 relocation_info[mm_read['read_name']] = best_position_info
@@ -930,7 +940,7 @@ def assign_mm_group(mm_group, mm_group_threshold):
     
     return (mm_group, 0)
 
-def batch_compare_to_um(chunk, k, um_index, bloom_filter, um_kept_dict, seq_sim):
+def batch_compare_to_um(chunk, k, um_index, bloom_filter, um_kept_dict, seq_sim, fragment_counts):
     relocated_reads = {}
     remaining_groups = []
     
@@ -941,7 +951,8 @@ def batch_compare_to_um(chunk, k, um_index, bloom_filter, um_kept_dict, seq_sim)
             um_index = um_index,
             bloom_filter = bloom_filter,
             um_kept_dict = um_kept_dict,
-            seq_sim = seq_sim
+            seq_sim = seq_sim,
+            fragment_counts = fragment_counts
             )
         
         if isinstance(result, tuple) and len(result) == 2:
@@ -960,7 +971,7 @@ def verify_mm_positions(mm_kept_dict, um_kept_dict, seq_sim, nthr, len_diff,
     
     n_mm_kept = len(mm_kept_dict)
     
-    um_index, bloom_filter = build_position_based_index(um_kept_dict, k, nthr)
+    um_index, bloom_filter, fragment_counts = build_position_based_index(um_kept_dict, k, nthr)
     
     subgroups = group_mm_sequences(
         mm_reads=mm_kept_dict, 
@@ -994,7 +1005,8 @@ def verify_mm_positions(mm_kept_dict, um_kept_dict, seq_sim, nthr, len_diff,
             um_index=um_index,
             bloom_filter=bloom_filter,
             um_kept_dict=um_kept_dict,
-            seq_sim=seq_sim
+            seq_sim=seq_sim,
+            fragment_counts = fragment_counts
         ) for chunk in subgroup_chunks
     )
 

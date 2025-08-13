@@ -213,24 +213,44 @@ def extract_grouped_entries(groups, input_dict):
 
 def collapse_group(chrom_strand_tuple, pos_counts, len_diff, min_count, 
                     count_fc, read_mapping):
-    positions = np.array([p for p, _ in pos_counts])
-    counts = np.array([c for _, c in pos_counts])
+    positions = np.array([p for p, _, _ in pos_counts])
+    counts = np.array([c for _, c, _ in pos_counts])
+    dup_counts = np.array([dc for _, _, dc in pos_counts])
     
     abundant_mask = counts >= min_count
     abundant_positions = positions[abundant_mask]
     abundant_counts = counts[abundant_mask]
+    abundant_dup_counts = dup_counts[abundant_mask]
     
     sort_idx = np.argsort(abundant_counts)[::-1]
     abundant_positions = abundant_positions[sort_idx]
     abundant_counts = abundant_counts[sort_idx]
-    
+    abundant_dup_counts = abundant_dup_counts[sort_idx]
+
     keep_abundant = np.ones(len(abundant_positions), dtype=bool)
+    collapsed = set()
     for i in range(1, len(abundant_positions)):
-        nearby_mask = np.abs(abundant_positions[:i] - abundant_positions[i]) <= len_diff
-        if any(nearby_mask):
-            max_nearby_count = np.max(abundant_counts[:i][nearby_mask])
-            if max_nearby_count > abundant_counts[i] * count_fc:
-                keep_abundant[i] = False
+        if i in collapsed:
+            continue
+            
+        valid_positions_mask = np.array([j not in collapsed for j in range(i)])
+        valid_positions = abundant_positions[:i][valid_positions_mask]
+        
+        if len(valid_positions) > 0:
+            nearby_mask = np.abs(valid_positions - abundant_positions[i]) <= len_diff
+            if any(nearby_mask):
+                valid_counts = abundant_counts[:i][valid_positions_mask]
+                valid_dup_counts = abundant_dup_counts[:i][valid_positions_mask]
+                
+                max_nearby_count = np.max(valid_counts[nearby_mask])
+                max_nearby_dup_count = np.max(valid_dup_counts[nearby_mask])
+                
+                if max_nearby_count > abundant_counts[i] * count_fc:
+                    keep_abundant[i] = False
+                    collapsed.add(i)
+                elif max_nearby_dup_count > abundant_dup_counts[i] * count_fc:
+                    keep_abundant[i] = False
+                    collapsed.add(i)
     
     final_abundant_positions = abundant_positions[keep_abundant]
     
@@ -243,22 +263,62 @@ def collapse_group(chrom_strand_tuple, pos_counts, len_diff, min_count,
     
     return read_updates
 
-def final_pass_collapse(kept_frags, len_diff, nthr, min_count, count_fc, ltr_cufp, linker_cufp):
+def consolidate_new_dups(kept_dict):
+      fragment_data = []
+      read_names = []
+
+      for read_name, frag in kept_dict.items():
+          fragment_data.append((frag['chrom'], frag['start'], frag['end'], frag['strand']))
+          read_names.append(read_name)
+
+      fragment_data = np.array(fragment_data, dtype=[('chrom', 'U25'), ('start', 'i8'), ('end', 'i8'), ('strand', 'U1')])
+      read_names = np.array(read_names)
+
+      unique_frags, inverse_indices, counts = np.unique(fragment_data, return_inverse = True, return_counts = True)
+
+      duplicate_mask = counts > 1
+      duplicate_indices = np.where(duplicate_mask)[0]
+
+      reads_to_remove = set()
+
+      for group_idx in duplicate_indices:
+          group_mask = inverse_indices == group_idx
+          group_reads = read_names[group_mask]
+          
+          best_read = max(group_reads, 
+                        key=lambda x: (kept_dict[x].get('count', 0), 
+                                      kept_dict[x].get('mean_qual', 0)))
+          
+          total_count = sum(kept_dict[read].get('count', 0) for read in group_reads)
+          kept_dict[best_read]['count'] = total_count
+          
+          for read in group_reads:
+              if read != best_read:
+                  reads_to_remove.add(read)
+                  
+      return reads_to_remove
+  
+def final_pass_collapse(kept_frags, len_diff, nthr, min_count, count_fc, ltr_cufp, linker_cufp,
+                        ltr_umi_len, linker_umi_len):
     positions = np.array([(frag['chrom'], 
                             frag['end'] if frag['strand'] == '-' else frag['start'],
                             frag['strand'])
                             for frag in kept_frags.values()],
                             dtype=[('chrom', 'U25'), ('pos', 'i8'), ('strand', 'U1')])
-    unique_pos, counts = np.unique(positions, return_counts=True)
+    
+    frag_counts = np.array([frag['count'] for frag in kept_frags.values()])
+    unique_pos, inverse_indices, counts = np.unique(positions, return_counts = True, return_inverse = True)
+
+    dup_counts = np.bincount(inverse_indices, weights = frag_counts)
     
     read_mapping = defaultdict(list)
     for read_name, frag in kept_frags.items():
         pos = frag['end'] if frag['strand'] == '-' else frag['start']
-        read_mapping[(frag['chrom'], pos, frag['strand'])].append(read_name)
+        read_mapping[(frag['chrom'], pos, frag['strand'])].append(read_name) 
     
     grouped_data = defaultdict(list)
-    for pos, count in zip(unique_pos, counts):
-        grouped_data[(pos['chrom'], pos['strand'])].append((pos['pos'], count))
+    for pos, count, dup_count in zip(unique_pos, counts, dup_counts):
+        grouped_data[(pos['chrom'], pos['strand'])].append((pos['pos'], count, dup_count))
                     
     results = Parallel(n_jobs=1)(
         delayed(collapse_group)(
@@ -278,7 +338,10 @@ def final_pass_collapse(kept_frags, len_diff, nthr, min_count, count_fc, ltr_cuf
             else:
                 kept_frags[read_name]['start'] = pos
     
-    reads_to_remove = set()
+    if ltr_umi_len == 0 and linker_umi_len == 0:
+        reads_to_remove = consolidate_new_dups(kept_frags)
+    else:
+        reads_to_remove = set()
     
     if ltr_cufp:
         ltr_umi_groups = defaultdict(list)
@@ -540,7 +603,7 @@ def generate_consensus(r1_file, r2_file, consensus_length=50, sample_size=5000, 
     r2_sequences = sample_reads(r2_file, sample_size)
     
     # Process R1 file
-    print('Calculating R1 consensus sequence...')
+    print('Calculating LTR consensus sequence...')
     trimmed_r1_sequences = []
     for seq in r1_sequences:
         trimmed_seq = seq[:consensus_length]
@@ -581,7 +644,7 @@ def generate_consensus(r1_file, r2_file, consensus_length=50, sample_size=5000, 
                     f"Consider increasing consensus_length beyond {consensus_length} bp.")
     
     # Process R2 file if provided
-    print('Calculating R2 consensus sequence...')
+    print('Calculating linker consensus sequence...')
     trimmed_r2_sequences = []
     for seq in r2_sequences:
         trimmed_seq = seq[:consensus_length]
@@ -950,7 +1013,6 @@ def sonic_abundance(frag_dict, U3, shift, min_frag_len):
             site_strand = '+' if not U3 else '-'
 
         frag_length = value['end'] - value['start']
-        
         site_location = f"{value['chrom']}:{site_start if site_strand == '+' else site_end}:{site_strand}"
         site_count = value['count']
         

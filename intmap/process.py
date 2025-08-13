@@ -51,7 +51,7 @@ def process_bam(out_bam):
 # Return None if read does not pass QC.
 # Also defines multimapping vs. unique reads, fragment UMIs, sequenced portion of fragments, etc.
 def process_read(read, aln_mismatch_rate, aln_indel_rate, max_frag_len,
-                min_frag_len, min_mapq, U3, no_mm, min_qual, match_after):
+                min_frag_len, min_mapq, no_mm, min_qual, match_after):
     
     # Ensure that each read starts on a match/mismatch (M)
     cigar = read.cigarstring
@@ -63,14 +63,18 @@ def process_read(read, aln_mismatch_rate, aln_indel_rate, max_frag_len,
         
     # Get MD tag. Used in a couple of places downstream.
     md = read.get_tag('MD')
+    read_seq = read.seq
+    # Count the number of N's in the read
+    ns = read_seq.count('N')
     
     # Check that the 5' end of read 1 matches the reference after
     # match_after aligned positions.
     if read.is_read1:
-        first_match = regex.match(r'^([ACGT]+)?(\d+)', md)
+        first_match = regex.match(r'^([ACGT]+)?(\d+)', md) or 'N' in read_seq[:match_after]
         if first_match:
             start_mm = len(first_match.group(1) or '')
-            if start_mm > match_after:
+            start_n = read_seq[:match_after].count('N')
+            if (start_mm + start_n) > match_after:
                 return None
     
     # Make sure AS and XS tags make sense
@@ -118,9 +122,13 @@ def process_read(read, aln_mismatch_rate, aln_indel_rate, max_frag_len,
     
     if edit_dist <= (n_mm + n_indel):
         if read.has_tag('XM'):
+            # N's are counted in the XM tag
             mismatch = read.get_tag('XM')
         else:
+            # N's are not counted in the MD tag
+            # Count N's explicitly as mismatches
             mismatch = len(regex.findall('[ATCG]', md))
+            mismatch += ns
         
         if mismatch <= n_mm:
             indel = edit_dist - mismatch
@@ -174,14 +182,13 @@ def process_read(read, aln_mismatch_rate, aln_indel_rate, max_frag_len,
 
 # Perform QC on each read pair
 def process_read_pair(read1, read2, aln_mismatch_rate, aln_indel_rate, max_frag_len, 
-                        min_frag_len, min_mapq, U3, no_mm, min_qual, match_after):
+                        min_frag_len, min_mapq, no_mm, min_qual, match_after):
     read1_info = process_read(read = read1, 
                             aln_mismatch_rate = aln_mismatch_rate, 
                             aln_indel_rate = aln_indel_rate,
                             min_frag_len = min_frag_len,
                             max_frag_len = max_frag_len,
                             min_mapq = min_mapq,
-                            U3 = U3,
                             no_mm = no_mm,
                             min_qual = min_qual,
                             match_after = match_after)
@@ -192,7 +199,6 @@ def process_read_pair(read1, read2, aln_mismatch_rate, aln_indel_rate, max_frag_
                             min_frag_len = min_frag_len,
                             max_frag_len = max_frag_len,
                             min_mapq = min_mapq,
-                            U3 = U3,
                             no_mm = no_mm,
                             min_qual = min_qual,
                             match_after = match_after)

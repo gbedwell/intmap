@@ -89,12 +89,12 @@ def test_group_similar_hashes():
 def test_collapse_group():
     # Create test data matching the new function signature
     pos_counts = [
-        (100, 80),  # (position, count) - Abundant
-        (102, 5),   # Will collapse to 100
-        (105, 3),   # Will collapse to 100
-        (150, 75),  # Abundant
-        (153, 4),   # Will collapse to 150
-        (200, 2),   # Below min_count threshold
+        (100, 80, 0),  # (position, count) - Abundant
+        (102, 5, 0),   # Will collapse to 100
+        (105, 3, 0),   # Will collapse to 100
+        (150, 75, 0),  # Abundant
+        (153, 4, 0),   # Will collapse to 150
+        (200, 2, 0),   # Below min_count threshold
     ]
     
     # Create read mapping dictionary

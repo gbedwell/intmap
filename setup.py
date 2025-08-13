@@ -10,8 +10,8 @@ setup(
 	scripts=[
     	'intmap/intmap',
      	'intmap_demux/intmap_demux',
-      	'intmap_multi/intmap_multi', 
-       	'intmap_se/intmap_se'
+      'intmap_multi/intmap_multi', 
+      'intmap_se/intmap_se'
     ],
 	url='',
 	license='LICENSE.txt',
@@ -23,7 +23,6 @@ setup(
 		'pysam',
 		'RapidFuzz',
 		'numpy',
-		'faiss-cpu',
 		'datasketch',
 		'pybloom-live',
 		'pandas',

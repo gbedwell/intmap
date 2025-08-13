@@ -73,8 +73,8 @@ parser.add_argument('-min_ttr_len',
 parser.add_argument('-min_frag_len',
                     type=int, 
                     help='''The minimum allowed fragment length. 
-                    Defaults to 25.''',
-                    default=25)
+                    Defaults to 30.''',
+                    default=30)
 parser.add_argument('-max_frag_len',
                     type=int, 
                     help='''The maximum allowed fragment length. 
@@ -156,8 +156,8 @@ parser.add_argument('-match_after',
 parser.add_argument('-tsd',
                     type=int, 
                     help='''The size of the target site duplication. 
-                    Defaults to 5.''',
-                    default=5)
+                    Defaults to 1.''',
+                    default=1)
 parser.add_argument('--disorg', '-disorg',
                     help='''Boolean.
                     Whether or not move all output files to type-specific subdirectories.''',
@@ -277,8 +277,8 @@ parser.add_argument('-min_count',
 parser.add_argument('-count_fc',
                     type=int, 
                     help='''The fold-change between abundant sites required to consider them the same.     
-                    Defaults to 2.''',
-                    default=2)
+                    Defaults to 3.''',
+                    default=3)
 parser.add_argument('--reassign_mm', '-reassign_mm',
                     help='''Boolean.
                     Whether or not to try to reassign multimapping reads based on 
@@ -307,8 +307,8 @@ parser.add_argument('--check_consensus', '-check_consensus',
 parser.add_argument('-consensus_sample_size',
                     type=int,
                     help='''The number of reads to sample for consensus checking.
-                    Defaults to 5000.''',
-                    default=5000)
+                    Defaults to 10000.''',
+                    default=10000)
 parser.add_argument('-consensus_threshold',
                     type=float,
                     help='''The fractional threshold for sequence significance. 
@@ -767,7 +767,6 @@ if __name__ == "__main__":
                                             max_frag_len = args.max_frag_len, 
                                             min_frag_len = args.min_frag_len,
                                             min_mapq = args.min_mapq, 
-                                            U3 = args.U3, 
                                             no_mm = args.no_mm, 
                                             min_qual = min_qual,
                                             match_after = args.match_after)
@@ -1169,7 +1168,9 @@ if __name__ == "__main__":
             min_count = args.min_count,
             count_fc = args.count_fc,
             ltr_cufp = args.check_ltr_umis_final_pass,
-            linker_cufp = args.check_linker_umis_final_pass
+            linker_cufp = args.check_linker_umis_final_pass,
+            ltr_umi_len = args.ltr_umi_len,
+            linker_umi_len = args.linker_umi_len
             )
         
         n_mapped_final = len(kept_dict)
@@ -1218,7 +1219,7 @@ if __name__ == "__main__":
             mle_time = round((mle_end - mle_start), 3)
             print(f'{mle_time} seconds elapsed', flush = True)
 
-        with (gzip.open(frags_out, 'wt') as frags, gzip.open(sites_out, 'wt') as sites, 
+        with (gzip.open(frags_out, 'wt') as frags, gzip.open(sites_out, 'wt') as sites,
                 gzip.open(bc_out, 'wt') as bc, gzip.open(removed_frags_out, 'wt') as removed_fp):
             
             bc_cols = ['read_name', 'chrom', 'frag_start', 'frag_end',

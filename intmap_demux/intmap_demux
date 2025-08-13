@@ -1,9 +1,8 @@
 #!/usr/local/bin/python
 
 import argparse
-parser = argparse.ArgumentParser(prog = 'intmap-demux',
-                                description='''Demultiplexes integration site sequencing reads
-                                                based on paired LTR- and linker-end sequences.''')
+parser = argparse.ArgumentParser(prog = 'intmap_demux',
+                                description='''Demultiplexes integration site sequencing reads.''')
 parser.add_argument('-r1',
                     type=str, 
                     help='Forward/R1 read file.', 
@@ -11,7 +10,7 @@ parser.add_argument('-r1',
                     required=True)
 parser.add_argument('-r2',
                     type=str, 
-                    help='Reverse/R2 read file.', 
+                    help='Reverse/R2 read file when demultiplexing. The index file when appending barcodes from an index file.', 
                     default=None)
 parser.add_argument('-bc_r1',
                     type=str, 
@@ -64,6 +63,9 @@ parser.add_argument('-chunk_size',
                     help='''The chunk sized used for appending barcode reads to non-index FASTQ files. 
                     Defaults to 5000.''',
                     default=5000)
+parser.add_argument('--three_prime', '-three_prime',
+                    help='Boolean. When set, cutadapt looks for barcodes on the 3-prime end read 1. Only used with r1_only.',
+                    action='store_true')
 
 args = parser.parse_args()
 
@@ -229,15 +231,70 @@ def append_index(file1, file2, chunk_size, nthr):
     op_sys = platform.system()
     if op_sys != 'Darwin' and op_sys != 'Linux':
         concatenate_files(input_files = inputs,
-                            output_file = output)
+                          output_file = output)
     else:
         concatenate_unix(input_files = inputs,
-                        output_file = output)
+                          output_file = output)
         
     for f in inputs:
         os.remove(f)
         
     shutil.rmtree(tmp_dir)
+    
+def validate_file(file, description):
+    if not file:
+        raise Exception(f'{description} must be defined.')
+    if not os.path.isfile(file):
+        raise Exception(f'{description} is not a valid file.')
+    return fasta_headers(file=file)
+  
+def generate_dmx_command(adapter_option, d1, r1, d2 = None, r2 = None):
+    base_cmd = (f'{args.cutadapt_path} -e {args.e} --no-indels --discard-untrimmed --action=none -j {args.nthr} '
+                f'{adapter_option} -o {d1}')
+    if d2:
+        base_cmd += f' -p {d2}'
+    if args.no_index:
+        base_cmd += ' --no-index'
+    if r2:
+        base_cmd += f' {r1} {r2}'
+    else:
+        base_cmd += f' {r1}'
+    return base_cmd
+
+def process_file_match(file_match_path, out_dir, dmx_dir, tmp_dir, nm1):
+    keep_nm, new_nm = [], []
+    with open(file_match_path, 'r') as file:
+        delim = ',' if ',' in file.readline() else '\t'
+        file.seek(0)
+        for line in file:
+            names = line.strip().split(delim)
+            if len(names) != 2:
+                raise Exception('file_match line had more than two entries.')
+            keep_nm.append(names[0].replace(' ', ''))
+            new_nm.append(names[1].replace(' ', ''))
+
+    all_nm = [f'{i}_*' if args.r1_only or args.r2_only else f'{i}-{i}_*' for i in nm1]
+    keep = [file for i in keep_nm for file in glob.glob(f'{out_dir}/{i}')]
+
+    for i, file in enumerate(keep):
+        shutil.move(file, os.path.join(dmx_dir, new_nm[i]))
+
+    for other_nm in all_nm:
+        for tmp_file in glob.glob(f'{tmp_dir}/{other_nm}'):
+            os.remove(tmp_file)
+
+def rename_and_cleanup_files(out_dir, dmx_dir, tmp_dir, nm1):
+    keep_nm = [f'{i}_*' if args.r1_only or args.r2_only else f'{i}-{i}_*' for i in nm1]
+    keep = [file for i in keep_nm for file in glob.glob(f'{out_dir}/{i}')]
+
+    for file in keep:
+        pattern = r'^(.+?)_([R][12])\.(fq|fq\.gz)$' if args.r1_only or args.r2_only else r'^(.+?)-(.+?)_([R][12])\.(fq|fq\.gz)$'
+        pmatch = regex.match(pattern, os.path.basename(file))
+        new_name = f"{pmatch.group(1)}_{pmatch.group(2)}.{pmatch.group(3)}" if args.r1_only or args.r2_only else f"{pmatch.group(1)}_{pmatch.group(3)}.{pmatch.group(4)}"
+        shutil.move(file, os.path.join(dmx_dir, new_name))
+
+    if tmp_dir == os.path.join(dmx_dir, 'tmp'):
+        shutil.rmtree(tmp_dir)
 
 if __name__ == "__main__":
     
@@ -259,45 +316,34 @@ if __name__ == "__main__":
         print('\nIndices appended. Exiting.\n')
         sys.exit()
     
-    if not args.r2:
-        raise Exception('For demultiplexing, r2 must be defined.')
+    # if not args.r2:
+    #     raise Exception('For demultiplexing, r2 must be defined.')
     
     if args.r1_only and args.r2_only:
-        raise Exception('-LTR_only and -args.r2_only cannot both be True.')
+        raise Exception('r1_only and r2_only cannot both be True.')
+      
+    if args.r1 and not args.r2 and not args.r1_only:
+        args.r1_only = True
 
-    if not args.r2_only:
-        if not args.bc_r1:
-            raise Exception('bc_r1 must be defined with --r2_only is not set.')
-        if not os.path.isfile(args.bc_r1):
-            raise Exception('args.bc_r1 is not a file.')
-        nm1 = fasta_headers(file = args.bc_r1)
-    else:
-        if not args.bc_r2:
-            raise Exception('bc_r2 must be defined when --r1_only is not set.')
-        if not os.path.isfile(args.bc_r2):
-            raise Exception('bc_r2 is not a file.')
-        nm1 = fasta_headers(file = args.bc_r2)
-    
     if not args.r1_only and not args.r2_only:
-        if not args.bc_r1 and not args.bc_r2:
-            raise Exception('bc_r1 and bc_r2 must both be defined when neither --r1_only nor --r2_only are given.')
-        if not os.path.isfile(args.bc_r1) or not os.path.isfile(args.bc_r2):
-            raise Exception('Both args.bc_r1 and args.bc_r2 must be fasta files for combinatorial demultiplexing.')
-        nm2 = fasta_headers(file = args.bc_r2)
-        
+        nm1 = validate_file(args.bc_r1, 'bc_r1')
+        nm2 = validate_file(args.bc_r2, 'bc_r2')
         if nm1 != nm2:
-            raise ValueError('The fasta headers in args.bc_r1 and args.bc_r2 must match.')
+            raise ValueError('The fasta headers in bc_r1 and bc_r2 must match.')
+    elif args.r1_only:
+        nm1 = validate_file(args.bc_r1, 'bc_r1')
+    else:
+        nm1 = validate_file(args.bc_r2, 'bc_r2')
         
     if args.cutadapt_path != 'cutadapt':
         args.cutadapt_path = check_executable(path = args.cutadapt_path, ex_name = 'cutadapt')
-    else:
-        args.cutadapt_path = args.cutadapt_path
         
-    if len(nm1) > 5 and args.nthr > 1:
-        print('Warning: The number of barcodes is > 5 and the number of threads is > 1.\n'
-            'If demultiplexing hangs (i.e., no progress after some time), try reducing the number of threads.\n'
-            'This is an issue internal to cutadapt.\n'
-            'See: https://github.com/marcelm/cutadapt/issues/613\n')
+    if len(nm1) > 3 and args.nthr > 1:
+        print('Warning: The number of barcodes is > 3 and the number of threads is > 1.\n'
+              'If demultiplexing hangs, try reducing the number of threads.\n'
+              'Or setting the flag --no_index.\n'
+              'This is an issue internal to cutadapt.\n'
+              'See: https://github.com/marcelm/cutadapt/issues/613\n')
 
     curr_dir = os.getcwd()
 
@@ -317,119 +363,35 @@ if __name__ == "__main__":
     else:
         out_ext = ".fq"
     
-    if args.r1_only is True:
-        d1 = os.path.join(dmx_dir, f'{{name}}_R1{out_ext}')
-        d2 = os.path.join(dmx_dir, f'{{name}}_R2{out_ext}')
-        
-        if args.no_index:
-            dmx_cmd = (f'{args.cutadapt_path} -e {args.e} --no-indels --discard-untrimmed --action=none -j {args.nthr} '
-                        f'-g ^file:{args.bc_r1} -o {d1} -p {d2} --no-index '
-                        f'{args.r1} {args.r2}')            
-        else:
-            dmx_cmd = (f'{args.cutadapt_path} -e {args.e} --no-indels --discard-untrimmed --action=none -j {args.nthr} '
-                        f'-g ^file:{args.bc_r1} -o {d1} -p {d2} '
-                        f'{args.r1} {args.r2}')
-                    
-        out_dir = dmx_dir
-    elif args.r2_only is True:
-        d1 = os.path.join(dmx_dir, f'{{name}}_R1{out_ext}')
-        d2 = os.path.join(dmx_dir, f'{{name}}_R2{out_ext}')
-        
-        if args.no_index:
-            dmx_cmd = (f'{args.cutadapt_path} -e {args.e} --no-indels --discard-untrimmed --action=none -j {args.nthr} '
-                        f'-g ^file:{args.bc_r2} -o {d2} -p {d1} --no-index '
-                        f'{args.r2} {args.r1}')            
-        else:
-            dmx_cmd = (f'{args.cutadapt_path} -e {args.e} --no-indels --discard-untrimmed --action=none -j {args.nthr} '
-                        f'-g ^file:{args.bc_r2} -o {d2} -p {d1} '
-                        f'{args.r2} {args.r1}')
-                    
-        out_dir = dmx_dir
-    else:
+    if args.r1 and args.r2:
+        swap = False
         d1 = os.path.join(tmp_dir, f'{{name1}}-{{name2}}_R1{out_ext}')
         d2 = os.path.join(tmp_dir, f'{{name1}}-{{name2}}_R2{out_ext}')
-    
-        if args.no_index:
-            dmx_cmd = (f'{args.cutadapt_path} -e {args.e} --no-indels --discard-untrimmed --action=none -j {args.nthr} '
-                        f'-g ^file:{args.bc_r1} -G ^file:{args.bc_r2} -o {d1} -p {d2} --no-index '
-                        f'{args.r1} {args.r2}')
-        else:
-            dmx_cmd = (f'{args.cutadapt_path} -e {args.e} --no-indels --discard-untrimmed --action=none -j {args.nthr} '
-                        f'-g ^file:{args.bc_r1} -G ^file:{args.bc_r2} -o {d1} -p {d2} '
-                        f'{args.r1} {args.r2}')
-            
-            out_dir = tmp_dir
+        if not args.r1_only and not args.r2_only:
+            adapter_option = f'-g ^file:{args.bc_r1} -G ^file:{args.bc_r2}'
+        elif args.r1_only:
+            adapter_option = f'-g ^file:{args.bc_r1}'
+        elif args.r2_only:
+            adapter_option = f'-g ^file:{args.bc_r2}'
+            swap = True
+        dmx_cmd = generate_dmx_command(adapter_option = adapter_option, 
+                                      d1 = d1 if not swap else d2, 
+                                      r1 = args.r1 if not swap else args.r2,
+                                      d2 = d2 if not swap else d1, 
+                                      r2 = args.r2 if not swap else args.r1)
+    elif args.r1 and not args.r2:
+        d1 = os.path.join(dmx_dir, f'{{name}}_R1{out_ext}')
+        adapter_option = f'-a file$:{args.bc_r1}' if args.three_prime else f'-g ^file:{args.bc_r1}'
+        dmx_cmd = generate_dmx_command(adapter_option = adapter_option, 
+                                      d1 = d1, 
+                                      r1 = args.r1)
 
-    subprocess.call(dmx_cmd, shell=True)
+    subprocess.call(dmx_cmd, shell = True)
         
-    if args.keep_all is False:
+    if not args.keep_all:
         if args.file_match:
-            keep_nm = []
-            new_nm = []
-            with open(args.file_match, 'r') as file:
-                l1 = file.readline()
-                if ',' in l1:
-                    delim = ','
-                elif '\t' in l1:
-                    delim = '\t'
-                else:
-                    raise Exception('file_match delimiter must be a comma or tab')
-                file.seek(0)
-
-                for line in file:
-                    names = line.strip().split(delim)
-                    if len(names) == 2:
-                        keep_nm.append(names[0].replace(' ', ''))
-                        new_nm.append(names[1].replace(' ', ''))
-                    else:
-                        raise Exception('file_match line had more than two entries.')
-            
-            all_nm = []
-            if not args.r1_only and not args.r2_only:
-                for i in nm1:
-                    tmp_nm = f'{i}-{i}_*'
-                    all_nm.append(tmp_nm)
-            else:
-                for i in nm1:
-                    tmp_nm = f'{i}_*'
-                    all_nm.append(tmp_nm)
-                    
-            keep = [file for i in keep_nm for file in glob.glob(f'{out_dir}/{i}')]
-            
-            for i in range(len(keep)):
-                dest = os.path.join(dmx_dir, new_nm[i])
-                shutil.move(keep[i], dest)
-                
-            for other_nm in all_nm:
-                tmp_pairs = glob.glob(f'{tmp_dir}/{other_nm}')
-                for i in tmp_pairs:
-                    os.remove(i)
+            process_file_match(args.file_match, out_dir, dmx_dir, tmp_dir, nm1)
         else:
-            keep_nm = []
-            if not args.r1_only and not args.r2_only:
-                for i in nm1:
-                    tmp_nm = f'{i}-{i}_*'
-                    keep_nm.append(tmp_nm)
-            else:
-                for i in nm1:
-                    tmp_nm = f'{i}_*'
-                    keep_nm.append(tmp_nm)
-        
-            keep = [file for i in keep_nm for file in glob.glob(f'{out_dir}/{i}')]
-
-            for file in keep:
-                if not args.r1_only and not args.r2_only:
-                    pattern = r'^(.+?)-(.+?)_([R][12])\.(fq|fq\.gz)$'
-                    pmatch = regex.match(pattern, os.path.basename(file))
-                    new_name = pmatch.group(1) + '_' + pmatch.group(3) + '.' + pmatch.group(4)
-                else:
-                    pattern = r'^(.+?)_([R][12])\.(fq|fq\.gz)$'
-                    pmatch = regex.match(pattern, os.path.basename(file))
-                    new_name = pmatch.group(1) + '_' + pmatch.group(2) + '.' + pmatch.group(3)
-                dest = os.path.join(dmx_dir, new_name)
-                shutil.move(file, dest)
-        
-        if tmp_dir == os.path.join(dmx_dir, r'{}'.format('tmp')):
-            shutil.rmtree(tmp_dir)
+            rename_and_cleanup_files(out_dir, dmx_dir, tmp_dir, nm1)
 
 

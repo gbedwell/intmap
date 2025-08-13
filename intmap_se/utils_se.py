@@ -204,24 +204,55 @@ def extract_grouped_entries(groups, input_dict):
 
 def collapse_group(chrom_strand_tuple, pos_counts, len_diff, min_count, 
                     count_fc, read_mapping):
-    positions = np.array([p for p, _ in pos_counts])
-    counts = np.array([c for _, c in pos_counts])
+    positions = np.array([p for p, _, _ in pos_counts])
+    counts = np.array([c for _, c, _ in pos_counts])
+    dup_counts = np.array([dc for _, _, dc in pos_counts])
     
     abundant_mask = counts >= min_count
     abundant_positions = positions[abundant_mask]
     abundant_counts = counts[abundant_mask]
+    abundant_dup_counts = dup_counts[abundant_mask]
     
     sort_idx = np.argsort(abundant_counts)[::-1]
     abundant_positions = abundant_positions[sort_idx]
     abundant_counts = abundant_counts[sort_idx]
-    
+    abundant_dup_counts = abundant_dup_counts[sort_idx]
+
     keep_abundant = np.ones(len(abundant_positions), dtype=bool)
+    collapsed = set()
     for i in range(1, len(abundant_positions)):
-        nearby_mask = np.abs(abundant_positions[:i] - abundant_positions[i]) <= len_diff
-        if any(nearby_mask):
-            max_nearby_count = np.max(abundant_counts[:i][nearby_mask])
-            if max_nearby_count > abundant_counts[i] * count_fc:
-                keep_abundant[i] = False
+        if i in collapsed:
+            continue
+            
+        valid_positions_mask = np.array([j not in collapsed for j in range(i)])
+        valid_positions = abundant_positions[:i][valid_positions_mask]
+        
+        if len(valid_positions) > 0:
+            nearby_mask = np.abs(valid_positions - abundant_positions[i]) <= len_diff
+            if any(nearby_mask):
+                valid_counts = abundant_counts[:i][valid_positions_mask]
+                valid_dup_counts = abundant_dup_counts[:i][valid_positions_mask]
+                
+                max_nearby_count = np.max(valid_counts[nearby_mask])
+                max_nearby_dup_count = np.max(valid_dup_counts[nearby_mask])
+                
+                if max_nearby_count > abundant_counts[i] * count_fc:
+                    keep_abundant[i] = False
+                    collapsed.add(i)
+                elif max_nearby_dup_count > abundant_dup_counts[i] * count_fc:
+                    keep_abundant[i] = False
+                    collapsed.add(i)
+    
+    final_abundant_positions = abundant_positions[keep_abundant]
+    
+    read_updates = {}
+    for abundant_pos in final_abundant_positions:
+        collapse_mask = np.abs(positions - abundant_pos) <= len_diff
+        for pos in positions[collapse_mask]:
+            for read_name in read_mapping[(chrom_strand_tuple[0], pos, chrom_strand_tuple[1])]:
+                read_updates[read_name] = abundant_pos
+    
+    return read_updates
     
     final_abundant_positions = abundant_positions[keep_abundant]
     
@@ -234,23 +265,62 @@ def collapse_group(chrom_strand_tuple, pos_counts, len_diff, min_count,
     
     return read_updates
 
-def final_pass_collapse(kept_frags, len_diff, nthr, min_count, count_fc, ltr_cufp):
+def consolidate_new_dups(kept_dict):
+      fragment_data = []
+      read_names = []
+
+      for read_name, frag in kept_dict.items():
+          fragment_data.append((frag['chrom'], frag['start'], frag['end'], frag['strand']))
+          read_names.append(read_name)
+
+      fragment_data = np.array(fragment_data, dtype=[('chrom', 'U25'), ('start', 'i8'), ('end', 'i8'), ('strand', 'U1')])
+      read_names = np.array(read_names)
+
+      unique_frags, inverse_indices, counts = np.unique(fragment_data, return_inverse = True, return_counts = True)
+
+      duplicate_mask = counts > 1
+      duplicate_indices = np.where(duplicate_mask)[0]
+
+      reads_to_remove = set()
+
+      for group_idx in duplicate_indices:
+          group_mask = inverse_indices == group_idx
+          group_reads = read_names[group_mask]
+          
+          best_read = max(group_reads, 
+                        key=lambda x: (kept_dict[x].get('count', 0), 
+                                      kept_dict[x].get('mean_qual', 0)))
+          
+          total_count = sum(kept_dict[read].get('count', 0) for read in group_reads)
+          kept_dict[best_read]['count'] = total_count
+          
+          for read in group_reads:
+              if read != best_read:
+                  reads_to_remove.add(read)
+                  
+      return reads_to_remove
+def final_pass_collapse(kept_frags, len_diff, nthr, min_count, count_fc, ltr_cufp, linker_cufp,
+                        ltr_umi_len, linker_umi_len):
     positions = np.array([(frag['chrom'], 
                             frag['end'] if frag['strand'] == '-' else frag['start'],
                             frag['strand'])
                             for frag in kept_frags.values()],
                             dtype=[('chrom', 'U25'), ('pos', 'i8'), ('strand', 'U1')])
-    unique_pos, counts = np.unique(positions, return_counts=True)
+    
+    frag_counts = np.array([frag['count'] for frag in kept_frags.values()])
+    unique_pos, inverse_indices, counts = np.unique(positions, return_counts = True, return_inverse = True)
+
+    dup_counts = np.bincount(inverse_indices, weights = frag_counts)
     
     read_mapping = defaultdict(list)
     for read_name, frag in kept_frags.items():
         pos = frag['end'] if frag['strand'] == '-' else frag['start']
-        read_mapping[(frag['chrom'], pos, frag['strand'])].append(read_name)
+        read_mapping[(frag['chrom'], pos, frag['strand'])].append(read_name) 
     
     grouped_data = defaultdict(list)
-    for pos, count in zip(unique_pos, counts):
-        grouped_data[(pos['chrom'], pos['strand'])].append((pos['pos'], count))
-    
+    for pos, count, dup_count in zip(unique_pos, counts, dup_counts):
+        grouped_data[(pos['chrom'], pos['strand'])].append((pos['pos'], count, dup_count))
+                    
     results = Parallel(n_jobs=1)(
         delayed(collapse_group)(
             chrom_strand_tuple = key, 
@@ -269,7 +339,10 @@ def final_pass_collapse(kept_frags, len_diff, nthr, min_count, count_fc, ltr_cuf
             else:
                 kept_frags[read_name]['start'] = pos
     
-    reads_to_remove = set()
+    if ltr_umi_len == 0 and linker_umi_len == 0:
+        reads_to_remove = consolidate_new_dups(kept_frags)
+    else:
+        reads_to_remove = set()
     
     if ltr_cufp:
         ltr_umi_groups = defaultdict(list)
@@ -286,6 +359,32 @@ def final_pass_collapse(kept_frags, len_diff, nthr, min_count, count_fc, ltr_cuf
             
             # Process each LTR UMI group
             for ltr_umi, read_names in ltr_umi_groups.items():
+                if len(read_names) > 1:
+                    sorted_reads = sorted(
+                        read_names,
+                        key=lambda x: (kept_frags[x].get('count', 0), kept_frags[x].get('mean_qual', 0)),
+                        reverse=True
+                    )
+                    
+                    reads_to_remove.update(sorted_reads[1:])
+    
+    if linker_cufp:
+        linker_umi_groups = defaultdict(list)
+        all_n_linker_umis = True
+        
+        for read_name, frag in kept_frags.items():
+            if frag['linker_umi'] != 'N':
+                all_n_linker_umis = False
+                break
+        
+        if not all_n_linker_umis:
+            remaining_reads = {read for read in kept_frags if read not in reads_to_remove}
+            
+            for read_name in remaining_reads:
+                frag = kept_frags[read_name]
+                linker_umi_groups[frag['linker_umi']].append(read_name)
+            
+            for linker_umi, read_names in linker_umi_groups.items():
                 if len(read_names) > 1:
                     sorted_reads = sorted(
                         read_names,
@@ -325,18 +424,24 @@ def sample_reads(filename, n_reads=5000):
     
     return sequences
 
-def check_consensus(r1_file, ltr_seq, sample_size=5000, threshold=0.02, error_rate=0.3):
+def check_consensus(r1_file, ltr_seq, linker_seq=None, sample_size=5000, threshold=0.02, error_rate=0.3):
     print(f"Sampling {sample_size} reads from input file...", flush=True)
     r1_sequences = sample_reads(r1_file, sample_size)
     
     # Compile patterns using the hierarchical approach from crop.py
     ltr_errors = math.floor(len(ltr_seq) * error_rate)
+    linker_errors = math.floor(len(linker_seq) * error_rate)
     
     patterns = {
         'ltr': {
             'perfect': regex.compile(ltr_seq),
             'mismatch': regex.compile(f'({ltr_seq}){{s<={ltr_errors}}}'),
             'indel': regex.compile(f'({ltr_seq}){{e<={ltr_errors}}}')
+        },
+        'linker': {
+            'perfect': regex.compile(linker_seq),
+            'mismatch': regex.compile(f'({linker_seq}){{s<={linker_errors}}}'),
+            'indel': regex.compile(f'({linker_seq}){{e<={linker_errors}}}')
         }
     }
     
@@ -358,11 +463,11 @@ def check_consensus(r1_file, ltr_seq, sample_size=5000, threshold=0.02, error_ra
     # Extract matching sequences
     r1_matches = []
     
-    print("Searching for LTR sequences in sampled reads...", flush=True)
+    print("Searching for LTR/linker sequences in sampled reads...", flush=True)
     
     # Process R1 sequences (expected to contain LTR)
     for seq in r1_sequences:
-        match, match_type = find_pattern_match(seq, 'ltr')
+        match, match_type = find_pattern_match(seq = seq, pattern_type = 'ltr')
         if match:
             r1_matches.append({
                 'sequence': seq,
@@ -372,11 +477,30 @@ def check_consensus(r1_file, ltr_seq, sample_size=5000, threshold=0.02, error_ra
                 'match_type': match_type
             })
     
-    print(f'Found {len(r1_matches)} R1 sequences', flush=True)
+    if linker_seq:
+        r2_matches = []
+        for seq in r1_sequences:
+            rc_seq = revcomp(seq)
+            match, match_type = find_pattern_match(seq = rc_seq, pattern_type = 'linker')
+            if match:
+                r2_matches.append({
+                    'sequence': seq,
+                    'match_start': match.start(),
+                    'match_end': match.end(),
+                    'matched_text': match.group(),
+                    'match_type': match_type
+                })
     
+    if linker_seq:
+        print(f'Found {len(r1_matches)} LTR sequences and {len(r2_matches)} linker sequences', flush=True)
+    else:
+        print(f'Found {len(r1_matches)} LTR sequences', flush=True)
+  
     if not r1_matches:
-        if not r1_matches:
-            print(f'No matching LTR sequences found in the sampled reads. Check the given input.')
+        print(f'No matching LTR sequences found in the sampled reads. Check the given input.')
+        sys.exit()
+    if linker_seq and not r2_matches:
+        print(f'No matching linker sequences found in the sampled reads. Check the given input.')
         sys.exit()
     
     # Count sequence occurrences
@@ -389,15 +513,25 @@ def check_consensus(r1_file, ltr_seq, sample_size=5000, threshold=0.02, error_ra
     r1_total = len(r1_matches)
     r1_freqs = {seq: count/r1_total for seq, count in r1_counts.items()}
     
+    if linker_seq:
+        r2_counts = {}
+        for match in r2_matches:
+            seq = match['matched_text']
+            r2_counts[seq] = r2_counts.get(seq, 0) + 1
+        r2_total = len(r2_matches)
+        r2_freqs = {seq: count/r2_total for seq, count in r2_counts.items()}
+    
     # Format report
     report = []
     report.append("")
     
     report.append(f"Target LTR sequence: {ltr_seq}")
+    report.append(f"Target Linker sequence: {None if not linker_seq else linker_seq}")
     report.append(f"Sample size: {sample_size} reads")
     report.append(f"Allowed error rate: {error_rate}")
     report.append(f"Reporting threshold: {threshold}")
     report.append(f"Sequences with LTR match: {len(r1_matches)} ({(len(r1_matches) / sample_size) * 100:.2f}%)")
+    report.append(f"Sequences with linker match: {None if not linker_seq else len(r2_matches)} ({(len(r2_matches) / sample_size) * 100:.2f}%)")
     report.append("")
     
     # Report match type statistics
@@ -406,7 +540,7 @@ def check_consensus(r1_file, ltr_seq, sample_size=5000, threshold=0.02, error_ra
         match_type = match['match_type']
         r1_match_types[match_type] = r1_match_types.get(match_type, 0) + 1
     
-    report.append("R1 Match Types:")
+    report.append("LTR Match Types:")
     for match_type in ['perfect', 'mismatch', 'indel']:
         if match_type in r1_match_types:
             count = r1_match_types[match_type]
@@ -415,6 +549,17 @@ def check_consensus(r1_file, ltr_seq, sample_size=5000, threshold=0.02, error_ra
             report.append(f"  {match_type}: 0 (0.00%)")
     
     report.append("")
+    
+    if linker_seq:
+        report.append("Linker Match Types:")
+        for match_type in ['perfect', 'mismatch', 'indel']:
+            if match_type in r2_match_types:
+                count = r2_match_types[match_type]
+                report.append(f"  {match_type}: {count} ({count/r2_total:.2%})")
+            else:
+                report.append(f"  {match_type}: 0 (0.00%)")
+        
+        report.append("")
     
     # Report R1 sequence frequencies
     report.append("LTR Sequence Frequencies:")
@@ -432,9 +577,24 @@ def check_consensus(r1_file, ltr_seq, sample_size=5000, threshold=0.02, error_ra
     
     report.append("")
     
+    if linker_seq:
+        # Report R2 sequence frequencies
+        report.append("Linker Sequence Frequencies:")
+        r2_significant = {seq: freq for seq, freq in r2_freqs.items() if freq >= threshold}
+        r2_sorted = sorted(r2_significant.items(), key=lambda x: x[1], reverse=True)
+        
+        r2_significant_total = sum(r2_significant.values())
+        r2_other = 1 - r2_significant_total
+        
+        for seq, freq in r2_sorted:
+            report.append(f"{freq:.4f}\t{seq}")
+        
+        if r2_other > 0:
+            report.append(f"{r2_other:.4f}\tOther")
+    
     return "\n".join(report)
 
-def generate_consensus(r1_file, consensus_length=50, sample_size=5000, threshold=0.8):
+def generate_consensus(r1_file, include_linker, consensus_length=50, sample_size=5000, threshold=0.8):
     result = {}
     
     print(f'Sampling {sample_size} reads from input files...')
@@ -480,5 +640,47 @@ def generate_consensus(r1_file, consensus_length=50, sample_size=5000, threshold
         if r1_consensus[-4:] != 'NNNN':
             print(f"Warning: The R1 consensus sequence does not end on 'NNNN' (-{r1_consensus[-4:]}). "
                     f"Consider increasing consensus_length beyond {consensus_length} bp.")
+    
+    if include_linker:
+        print('Calculating linker consensus sequence...')
+        trimmed_r2_sequences = []
+        for seq in r1_sequences:
+            rc_seq = revcomp(seq)
+            trimmed_seq = rc_seq[:consensus_length]
+            if len(trimmed_seq) == consensus_length:
+                trimmed_r2_sequences.append(trimmed_seq)
+        
+        if trimmed_r2_sequences:
+            r2_consensus = ''
+            
+            for i in range(consensus_length):
+                bases = [seq[i] for seq in trimmed_r2_sequences if i < len(seq)]
+                base_counts = Counter(bases)
+                total = len(bases)
+                
+                if total == 0:
+                    r2_consensus += 'N'
+                    continue
+                
+                frequencies = {
+                    'A': base_counts.get('A', 0) / total,
+                    'C': base_counts.get('C', 0) / total,
+                    'G': base_counts.get('G', 0) / total,
+                    'T': base_counts.get('T', 0) / total
+                }
+                
+                most_common = max(frequencies.items(), key=lambda x: x[1])
+                base, freq = most_common
+                
+                if freq >= threshold:
+                    r2_consensus += base
+                else:
+                    r2_consensus += 'N'
+            
+            result['R2'] = r2_consensus
+            
+            if r2_consensus[-4:] != 'NNNN':
+                print(f"Warning: The R2 consensus sequence does not end on 'NNNN' (-{r2_consensus[-4:]}). "
+                        f"Consider increasing consensus_length beyond {consensus_length} bp.")
     
     return result

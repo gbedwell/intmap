@@ -148,7 +148,7 @@ from tests.data.clean.build_position_based_index.test_data import get_expected_d
 def test_build_position_based_index():
     input_data, _ = load_test_data('clean', 'build_position_based_index')
     
-    um_index, bloom_filter = build_position_based_index(
+    um_index, bloom_filter, fragment_counts = build_position_based_index(
         um_kept_dict=input_data,
         k=3,
         nthr=1
@@ -209,6 +209,33 @@ def test_compare_to_um():
             "end": 1013,
             "chrom": "chr3",
             "multi": "False"
+        },
+        "um_read5": {
+            "read_name": "um_read5",
+            "seq1": "GCGTAGCGTGGCAA",
+            "strand": "-",
+            "start": 286,
+            "end": 300,
+            "chrom": "chr3",
+            "multi": "False"
+        },
+        "um_read6": {
+            "read_name": "um_read6",
+            "seq1": "GCGTAGCGTGGCAA",
+            "strand": "-",
+            "start": 286,
+            "end": 300,
+            "chrom": "chr3",
+            "multi": "False"
+        },
+        "um_read7": {
+            "read_name": "um_read7",
+            "seq1": "GCGTAGCGTGGCAA",
+            "strand": "-",
+            "start": 286,
+            "end": 300,
+            "chrom": "chr3",
+            "multi": "False"
         }
     }
     
@@ -248,8 +275,7 @@ def test_compare_to_um():
         }
     ]
     
-    # Build the index with the new implementation
-    um_index, bloom_filter = build_position_based_index(
+    um_index, bloom_filter, fragment_counts = build_position_based_index(
         um_kept_dict=um_kept_dict, 
         k=5, 
         nthr=1
@@ -262,18 +288,18 @@ def test_compare_to_um():
         um_index=um_index,
         bloom_filter=bloom_filter,
         um_kept_dict=um_kept_dict,
-        seq_sim=0.8
+        seq_sim=0.8,
+        fragment_counts = fragment_counts
     )
     
-    # The new function can return either a tuple of (relocated, unrelocated) or just the original group
     if isinstance(result1, tuple) and len(result1) == 2:
         relocated_group, unrelocated_group = result1
         assert len(relocated_group) > 0  # Some reads should be relocated
         # Check that relocated reads have the correct format
         for read in relocated_group:
             assert read['multi'] == 'True - relocated'
-            assert read['chrom'] == 'chr2'  # Should match um_read1
-            assert read['strand'] == '-'    # Should match um_read1
+            assert read['chrom'] == 'chr3'  # Should match um_read5
+            assert read['strand'] == '-'    # Should match um_read5
     else:
         # If no relocation happened, the result should be the original group
         assert result1 == group1
@@ -285,7 +311,8 @@ def test_compare_to_um():
         um_index=um_index,
         bloom_filter=bloom_filter,
         um_kept_dict=um_kept_dict,
-        seq_sim=0.8
+        seq_sim=0.8,
+        fragment_counts = fragment_counts
     )
     
     # For group2, we expect no relocation

@@ -67,3 +67,11 @@ This project uses the following third-party packages, each of which is governed 
 ### statsmodels==0.14.4
 - License: BSD-3 License
 - URL: https://www.statsmodels.org/
+
+### k8==1.2
+- License: MIT License
+- URL: https://github.com/attractivechaos/k8
+
+### minimap2==2.29
+- License: MIT License
+- URL: https://github.com/lh3/minimap2
