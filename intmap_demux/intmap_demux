@@ -261,7 +261,7 @@ def generate_dmx_command(adapter_option, d1, r1, d2 = None, r2 = None):
         base_cmd += f' {r1}'
     return base_cmd
 
-def process_file_match(file_match_path, out_dir, dmx_dir, tmp_dir, nm1):
+def process_file_match(file_match_path, dmx_dir, tmp_dir, nm1):
     keep_nm, new_nm = [], []
     with open(file_match_path, 'r') as file:
         delim = ',' if ',' in file.readline() else '\t'
@@ -274,7 +274,7 @@ def process_file_match(file_match_path, out_dir, dmx_dir, tmp_dir, nm1):
             new_nm.append(names[1].replace(' ', ''))
 
     all_nm = [f'{i}_*' if args.r1_only or args.r2_only else f'{i}-{i}_*' for i in nm1]
-    keep = [file for i in keep_nm for file in glob.glob(f'{out_dir}/{i}')]
+    keep = [file for i in keep_nm for file in glob.glob(f'{tmp_dir}/{i}')]
 
     for i, file in enumerate(keep):
         shutil.move(file, os.path.join(dmx_dir, new_nm[i]))
@@ -283,9 +283,9 @@ def process_file_match(file_match_path, out_dir, dmx_dir, tmp_dir, nm1):
         for tmp_file in glob.glob(f'{tmp_dir}/{other_nm}'):
             os.remove(tmp_file)
 
-def rename_and_cleanup_files(out_dir, dmx_dir, tmp_dir, nm1):
+def rename_and_cleanup_files(dmx_dir, tmp_dir, nm1):
     keep_nm = [f'{i}_*' if args.r1_only or args.r2_only else f'{i}-{i}_*' for i in nm1]
-    keep = [file for i in keep_nm for file in glob.glob(f'{out_dir}/{i}')]
+    keep = [file for i in keep_nm for file in glob.glob(f'{tmp_dir}/{i}')]
 
     for file in keep:
         pattern = r'^(.+?)_([R][12])\.(fq|fq\.gz)$' if args.r1_only or args.r2_only else r'^(.+?)-(.+?)_([R][12])\.(fq|fq\.gz)$'
@@ -390,8 +390,8 @@ if __name__ == "__main__":
         
     if not args.keep_all:
         if args.file_match:
-            process_file_match(args.file_match, out_dir, dmx_dir, tmp_dir, nm1)
+            process_file_match(args.file_match, dmx_dir, tmp_dir, nm1)
         else:
-            rename_and_cleanup_files(out_dir, dmx_dir, tmp_dir, nm1)
+            rename_and_cleanup_files(dmx_dir, tmp_dir, nm1)
 
 

@@ -415,7 +415,7 @@ if __name__ == "__main__":
     from scipy.interpolate import BSpline
     import statsmodels.api as sm
     import patsy
-
+    
     if args.check_consensus:
         print('\n')
         print(f'Checking {args.nm} input files for consensus sequences...', flush=True)
@@ -948,7 +948,7 @@ if __name__ == "__main__":
         uf_kept_list = Parallel(n_jobs = min(len(sorted_ue_kept_list), args.nthr))(
             delayed(clean.unique_fuzzy_matches)(
                 input_dict = sorted_ue_kept_list[entry], 
-                len_diff = args.len_diff, 
+                len_diff = args.len_diff if not args.mle else 0, 
                 umi_diff = args.umi_diff, 
                 frag_ratio = args.frag_ratio) 
             for entry in range(len(sorted_ue_kept_list)))
@@ -1034,7 +1034,7 @@ if __name__ == "__main__":
               input_dict = multi_exact_kept, 
               num_perm = args.num_perm,
               nthr = args.nthr,
-              len_diff = args.len_diff
+              len_diff = args.len_diff if not args.mle else 0
               )
 
             print('Grouping similar hashes...', flush = True)
@@ -1067,7 +1067,7 @@ if __name__ == "__main__":
                 frag_ratio = args.frag_ratio,
                 nthr = args.nthr,
                 seq_sim = args.seq_sim,
-                len_diff = args.len_diff,
+                len_diff = args.len_diff if not args.mle else 0,
                 min_parallel_size = 500
                 )
             
@@ -1094,7 +1094,7 @@ if __name__ == "__main__":
                     um_kept_dict = kept_dict, 
                     seq_sim = args.seq_sim, 
                     nthr = args.nthr, 
-                    len_diff = args.len_diff,
+                    len_diff = args.len_diff if not args.mle else 0,
                     k = args.k,
                     min_frag_len = args.min_frag_len,
                     num_perm = args.num_perm,

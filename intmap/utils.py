@@ -955,8 +955,8 @@ def estimate_abundance(location_indices, lengths, min_length):
     location_indices = np.array(location_indices)
     lengths = np.array(lengths)
     
-    if np.min(lengths) < min_length:
-        raise ValueError(f"Minimum length ({np.min(lengths)}) is less than required ({min_length})")
+    # if np.min(lengths) < min_length:
+    #     raise ValueError(f"Minimum length ({np.min(lengths)}) is less than required ({min_length})")
     
     if len(location_indices) != len(lengths):
         raise ValueError("Lengths of location_indices and lengths must be equal")
