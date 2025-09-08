@@ -136,13 +136,13 @@ parser.add_argument('-aln_seed_mismatch',
 parser.add_argument('-aln_mismatch_rate',
                     type=float, 
                     help='''The allowable mismatch rate in read alignment. 
-                    Defaults to 0.25.''',
-                    default=0.25)
+                    Defaults to 0.10.''',
+                    default=0.10)
 parser.add_argument('-aln_indel_rate',
                     type=float, 
                     help='''The allowable indel rate in read alignment. 
-                    Defaults to 0.05.''',
-                    default=0.05)
+                    Defaults to 0.02.''',
+                    default=0.02)
 parser.add_argument('-min_mapq',
                     type=int, 
                     help='''The minimum acceptable MAPQ score.
