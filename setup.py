@@ -18,17 +18,8 @@ setup(
 	description='A CLI app for mapping retroviral integration sites from NGS data.',
 	include_package_data = True,
 	install_requires=[
-		'biopython',
-		'joblib',
-		'pysam',
-		'RapidFuzz',
-		'numpy',
-		'datasketch',
-		'pybloom-live',
-		'pandas',
-		'statsmodels',
-		'scipy'
-	],
+        'pybloom-live==4.0.0'
+        ],
  	setup_requires=[
         "pytest-runner",
     ],
