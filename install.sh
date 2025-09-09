@@ -60,9 +60,15 @@ else
         echo "Installing k8 from pre-compiled binary..."
         echo
         wget -q -O- https://github.com/attractivechaos/k8/releases/download/v1.2/k8-1.2.tar.bz2 | tar -jx
-        mkdir -p "$CONDA_PREFIX/bin"
-        cp "k8-1.2/$k8type" "$CONDA_PREFIX/bin/k8"
-        chmod +x "$CONDA_PREFIX/bin/k8"
+        if [ $? -eq 0 ]; then
+            mkdir -p "$CONDA_PREFIX/bin"
+            cp "k8-1.2/$k8type" "$CONDA_PREFIX/bin/k8"
+            chmod +x "$CONDA_PREFIX/bin/k8"
+            k8_success=1
+        fi
+        # mkdir -p "$CONDA_PREFIX/bin"
+        # cp "k8-1.2/$k8type" "$CONDA_PREFIX/bin/k8"
+        # chmod +x "$CONDA_PREFIX/bin/k8"
         if [ -d "k8-1.2" ]; then
             chmod -R u+w k8-1.2
             rm -r k8-1.2
@@ -101,13 +107,19 @@ else
 
         echo "Cloning and building k8..."
         git clone -q https://github.com/attractivechaos/k8
-        cd k8
-        git checkout -q v1.2
-        make $mkopt > /dev/null
-        cd ..
-
-        cp "k8/k8" "$CONDA_PREFIX/bin/k8"
-        chmod +x "$CONDA_PREFIX/bin/k8"
+        if [ $? -eq 0 ]; then
+            cd k8
+            git checkout -q v1.2
+            make $mkopt > /dev/null
+            if [ $? -eq 0 ]; then
+                cd ..
+                cp "k8/k8" "$CONDA_PREFIX/bin/k8"
+                chmod +x "$CONDA_PREFIX/bin/k8"
+                k8_success=1
+            else
+                cd ..
+            fi
+        fi
 
         if [ -d "k8" ]; then
             chmod -R u+w k8
@@ -119,21 +131,26 @@ else
     echo "Installing minimap2..."
     echo
 
+    minimap2_success=0
     git clone -q https://github.com/lh3/minimap2.git
 
-    cd minimap2
-    git checkout -q v2.29
-    make $mkopt > /dev/null
-    cd ..
-
-    # Install minimap2 binaries
-    cp minimap2/minimap2 "$CONDA_PREFIX/bin/minimap2"
-
-    cp minimap2/misc/paftools.js "$CONDA_PREFIX/bin/paftools.js"
-
-    # Make binaries executable
-    chmod +x "$CONDA_PREFIX/bin/minimap2"
-    chmod +x "$CONDA_PREFIX/bin/paftools.js"
+    if [ $? -eq 0 ]; then
+        cd minimap2
+        git checkout -q v2.29
+        make $mkopt > /dev/null
+        if [ $? -eq 0 ]; then
+            cd ..
+            # Install minimap2 binaries
+            cp minimap2/minimap2 "$CONDA_PREFIX/bin/minimap2"
+            cp minimap2/misc/paftools.js "$CONDA_PREFIX/bin/paftools.js"
+            # Make binaries executable
+            chmod +x "$CONDA_PREFIX/bin/minimap2"
+            chmod +x "$CONDA_PREFIX/bin/paftools.js"
+            minimap2_success=1
+        else
+            cd ..
+        fi
+    fi
 
     # Clean up
     if [ -d "minimap2" ]; then
@@ -141,8 +158,14 @@ else
         rm -r minimap2
     fi
 
-    echo
-    echo "minimap2 and k8 installed successfully."
+    if [ $k8_success -eq 1 ] && [ $minimap2_success -eq 1 ]; then
+        echo
+        echo "minimap2 and k8 installed successfully."
+    else
+        echo
+        echo "Error: Failed to install minimap2 and/or k8."
+        exit 1
+    fi
 fi
 
 echo
@@ -150,7 +173,7 @@ echo 'Installing the intmap package...'
 echo
 
 # Check if intmap environment is already active
-if ! conda list | grep -q '^intmap\s'; then
+if [[ $(echo "${CONDA_DEFAULT_ENV}") != "intmap" ]]; then
     env_active=0
     conda activate intmap
 else
@@ -162,11 +185,21 @@ fi
 # See: https://github.com/pypa/pip/issues/11457
 pip install -e ".[test]" --use-pep517
 
-if [ $env_active -eq 0 ]; then
-    conda deactivate
-fi
+if [ $? -eq 0 ]; then
+    if [ $env_active -eq 0 ]; then
+        conda deactivate
+    fi
 
-echo
-echo 'The intmap package is now installed in the intmap virtual environment!'
-echo "Type 'conda activate intmap' into your terminal to use the intmap package."
-echo
+    echo
+    echo 'The intmap package is now installed in the intmap virtual environment!'
+    echo "Type 'conda activate intmap' into your terminal to use the intmap package."
+    echo
+else
+    echo
+    echo "Error: Failed to install intmap package."
+    echo
+    if [ $env_active -eq 0 ]; then
+        conda deactivate
+    fi
+    exit 1
+fi

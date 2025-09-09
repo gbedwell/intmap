@@ -10,7 +10,7 @@ parser.add_argument('-r1',
                     required=True)
 parser.add_argument('-ltr3',
                     type=str, 
-                    help='LTR sequence to match.', 
+                    help='''3' end of the LTR sequence to match.''', 
                     default=None)
 parser.add_argument('-ltr3_alt',
                     type=str, 
@@ -18,7 +18,7 @@ parser.add_argument('-ltr3_alt',
                     default=None)
 parser.add_argument('-linker3',
                     type=str, 
-                    help='Linker sequence to match.', 
+                    help='''The 3' end of the linker sequence to match.''', 
                     default='NNNNN')
 parser.add_argument('-c',
                     type=str, 
@@ -33,12 +33,12 @@ parser.add_argument('-ltr1_primer',
                     default=None)
 parser.add_argument('-ltr5',
                     type=str,  
-                    help='''The 3' end of the second round LTR primer. 
-                    Must be at least 10 bp.''',
+                    help='''The 5' end of the LTR sequence to match. 
+                    Must be at least 5 bp.''',
                     default=None)
 parser.add_argument('-linker5',
                     type=str,  
-                    help='''The 3' end of the linker primer. Must be at least 10 bp.''',
+                    help='''The 5' end of the linker sequence to match. Must be at least 5 bp.''',
                     default='NNNNN')
 parser.add_argument('--U3', '-U3',
                     help='''Whether or not the sequenced reads come from the U3 end of the provirus. 
