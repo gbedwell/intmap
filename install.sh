@@ -180,12 +180,26 @@ else
     env_active=1
 fi
 
+if [ ! -x "$CONDA_PREFIX/bin/k8" ] || [ ! -x "$CONDA_PREFIX/bin/minimap2" ]; then
+    echo
+    echo "Error: k8 and/or minimap2 not found in $CONDA_PREFIX/bin."
+    echo "Consider removing the intmap environment and re-installing."
+    echo
+    exit 1
+fi
+
 # --use-pep517 included per pip recommendation
 # regarding deprecation of setup.py develop
 # See: https://github.com/pypa/pip/issues/11457
 pip install -e ".[test]" --use-pep517
 
+# If pip is pointing to a system-wide pip installation instead of the intmap environment's 
+# pip, comment out the above pip command, uncomment the following line, and re-run install.sh:
+# $CONDA_PREFIX/bin/pip install -e ".[test]" --use-pep517
+
 if [ $? -eq 0 ]; then
+    cp wrapim.sh "$CONDA_PREFIX/bin/wrapim"
+    chmod +x "$CONDA_PREFIX/bin/wrapim"
     if [ $env_active -eq 0 ]; then
         conda deactivate
     fi

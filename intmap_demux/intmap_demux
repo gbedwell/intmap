@@ -381,7 +381,14 @@ if __name__ == "__main__":
                                       r2 = args.r2 if not swap else args.r1)
     elif args.r1 and not args.r2:
         d1 = os.path.join(dmx_dir, f'{{name}}_R1{out_ext}')
-        adapter_option = f'-a file$:{args.bc_r1}' if args.three_prime else f'-g ^file:{args.bc_r1}'
+        # adapter_option = f'-a file$:{args.bc_r1}' if args.three_prime else f'-g ^file:{args.bc_r1}'
+        if args.bc_r2:
+            adapter_option = f'-g ^file:{args.bc_r1} -a file$:{args.bc_r2}'
+        elif args.three_prime:
+            adapter_option = f'-a file$:{args.bc_r1}'
+        else:
+            adapter_option = f'-g ^file:{args.bc_r1}'
+
         dmx_cmd = generate_dmx_command(adapter_option = adapter_option, 
                                       d1 = d1, 
                                       r1 = args.r1)
