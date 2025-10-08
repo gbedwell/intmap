@@ -272,13 +272,13 @@ parser.add_argument('-misprime_mismatch',
 parser.add_argument('-min_count',
                     type=int, 
                     help='''The minimum number of sites required to define a particular integration site as abundant.    
-                    Defaults to 10.''',
-                    default=10)
+                    Defaults to 1.''',
+                    default=1)
 parser.add_argument('-count_fc',
-                    type=int, 
+                    type=float, 
                     help='''The fold-change between abundant sites required to consider them the same.     
-                    Defaults to 3.''',
-                    default=3)
+                    Defaults to 2.''',
+                    default=2)
 parser.add_argument('--reassign_mm', '-reassign_mm',
                     help='''Boolean.
                     Whether or not to try to reassign multimapping reads based on 

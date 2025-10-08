@@ -236,10 +236,10 @@ def collapse_group(chrom_strand_tuple, pos_counts, len_diff, min_count,
                 max_nearby_count = np.max(valid_counts[nearby_mask])
                 max_nearby_dup_count = np.max(valid_dup_counts[nearby_mask])
                 
-                if max_nearby_count > abundant_counts[i] * count_fc:
+                if max_nearby_count >= abundant_counts[i] * count_fc:
                     keep_abundant[i] = False
                     collapsed.add(i)
-                elif max_nearby_dup_count > abundant_dup_counts[i] * count_fc:
+                elif max_nearby_dup_count >= abundant_dup_counts[i] * count_fc:
                     keep_abundant[i] = False
                     collapsed.add(i)
     
