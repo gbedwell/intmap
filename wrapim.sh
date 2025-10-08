@@ -113,6 +113,31 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+if [[ $# -eq 0 ]]; then
+    echo "Usage: $0 [OPTIONS]"
+    echo "Required options:"
+    echo "  -r1, --read1               Multiplexed R1 FASTQ file"
+    echo "  -setup, --setup_file       Analysis setup file"
+    echo "  -json, --json_name         Anaysis JSON name"
+    echo "  -out, --out_file           Analysis output file"
+    echo "  -h, --help                 Show this help message"
+    echo "Optional arguments (possibly required in certain circumstances):"
+    echo "  -r2, --read2               Multiplexed R2 FASTQ file"
+    echo "  -bc_r1, --barcode_r1       R1 barcode file"
+    echo "  -bc_r2, --barcode_r2       R2 barcode file"
+    echo "  -nthr, --nthr              Number of threads for demultiplexing (default: 1)"
+    echo "  -e, --error_rate           Error rate for sequence matching (default: 0.1)"
+    echo "  --r1_only                  Use only R1 barcode for demultiplexing"
+    echo "  --r2_only                  Use only R2 barcode for demultiplexing"
+    echo "  --no_index                 Do not build a barcode index"
+    echo "  -file_match, --file_match  2-column csv/tsv for output file naming"
+    echo "  --three_prime              Look for barcodes on the 3' end of R1"
+    echo "  --single_end               Run mapping in single-end mode"
+    echo "  -h, --help                 Show this help message"
+    echo "Other mapping options should be defined in the setup file."
+    exit 0
+fi
+
 if [[ "$R1_ONLY" == true ]]; then
     if [[ -z "$R1_FILE" || -z "$BC_R1" || -z "$SETUP_FILE" || -z "$JSON_NAME" || -z "$OUT_FILE" ]]; then
         echo "Error: Some required parameters are missing."

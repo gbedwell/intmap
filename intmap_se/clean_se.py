@@ -707,20 +707,16 @@ def refine_coarse_clusters(coarse_clusters, seq_sim):
         
         for seq in sorted_seqs[1:]:
             seq_len = len(seq)
-            match_found = False
             best_similarity = 0
             best_key = None
             
-            # Check all keys to find the best match
             for key in sorted(subclusters.keys(), key=lambda k: (len(k), k)):
                 sim_check = seq_similarity(seq, key[:seq_len])
                 if sim_check > best_similarity:
                     best_similarity = sim_check
                     best_key = key
-                    match_found = sim_check >= seq_sim
             
-            # Now use the best match found
-            if match_found:
+            if best_similarity >= seq_sim:
                 subclusters[best_key].append(seq)
             else:
                 subclusters[seq].append(seq)
@@ -922,6 +918,7 @@ def assign_mm_group(mm_group, mm_group_threshold):
         
         random.seed(seed)
         chosen_pos = random.choices(valid_positions, k=1)[0]
+        random.seed()
         
         # Assign all reads to chosen position
         assigned_group = []
@@ -965,13 +962,16 @@ def batch_compare_to_um(chunk, k, um_index, bloom_filter, um_kept_dict, seq_sim,
             remaining_groups.append(result)
             
     return relocated_reads, remaining_groups
-        
+
 def verify_mm_positions(mm_kept_dict, um_kept_dict, seq_sim, nthr, len_diff, 
                         k, min_frag_len, num_perm, token_size, mm_group_threshold):
     
     n_mm_kept = len(mm_kept_dict)
     
-    um_index, bloom_filter, fragment_counts = build_position_based_index(um_kept_dict, k, nthr)
+    if not um_kept_dict:
+        um_index, bloom_filter, fragment_counts = {}, None, {}
+    else:
+        um_index, bloom_filter, fragment_counts = build_position_based_index(um_kept_dict, k, nthr)
     
     subgroups = group_mm_sequences(
         mm_reads=mm_kept_dict, 
@@ -993,29 +993,33 @@ def verify_mm_positions(mm_kept_dict, um_kept_dict, seq_sim, nthr, len_diff,
     sorted_subgroups = sorted(subgroups, 
                             key=lambda g: (len(g), min(e['read_name'] for e in g) if g else ''), 
                             reverse=True)
-    subgroup_chunk_size = max(1, len(sorted_subgroups) // nthr)
-    subgroup_chunks = [
-        sorted_subgroups[i:i + subgroup_chunk_size] for i in range(0, len(sorted_subgroups), subgroup_chunk_size)
-    ]
     
-    relocated_results = Parallel(n_jobs=nthr)(
-        delayed(batch_compare_to_um)(
-            chunk=chunk,
-            k=k,
-            um_index=um_index,
-            bloom_filter=bloom_filter,
-            um_kept_dict=um_kept_dict,
-            seq_sim=seq_sim,
-            fragment_counts = fragment_counts
-        ) for chunk in subgroup_chunks
-    )
-
     relocated_reads = {}
     remaining_groups = []
     
-    for chunk_relocated_reads, chunk_remaining_groups in relocated_results:
-        relocated_reads.update(chunk_relocated_reads)
-        remaining_groups.extend(chunk_remaining_groups)
+    if um_kept_dict:
+        subgroup_chunk_size = max(1, len(sorted_subgroups) // nthr)
+        subgroup_chunks = [
+            sorted_subgroups[i:i + subgroup_chunk_size] for i in range(0, len(sorted_subgroups), subgroup_chunk_size)
+        ]
+        
+        relocated_results = Parallel(n_jobs=nthr)(
+            delayed(batch_compare_to_um)(
+                chunk=chunk,
+                k=k,
+                um_index=um_index,
+                bloom_filter=bloom_filter,
+                um_kept_dict=um_kept_dict,
+                seq_sim=seq_sim,
+                fragment_counts = fragment_counts
+            ) for chunk in subgroup_chunks
+        )
+
+        for chunk_relocated_reads, chunk_remaining_groups in relocated_results:
+            relocated_reads.update(chunk_relocated_reads)
+            remaining_groups.extend(chunk_remaining_groups)
+    else:
+        remaining_groups = sorted_subgroups
 
     n_relocated = len(relocated_reads)
     n_relocated_perc = (n_relocated / n_mm_kept) * 100
@@ -1043,4 +1047,3 @@ def verify_mm_positions(mm_kept_dict, um_kept_dict, seq_sim, nthr, len_diff,
     print(f'Number of multimapping reads grouped and reassigned: {total_reassigned} ({reassigned_perc:.2f}%)')
 
     return relocated_reads
-

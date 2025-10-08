@@ -200,6 +200,8 @@ pip install -e ".[test]" --use-pep517
 if [ $? -eq 0 ]; then
     cp wrapim.sh "$CONDA_PREFIX/bin/wrapim"
     chmod +x "$CONDA_PREFIX/bin/wrapim"
+    cp prepim.sh "$CONDA_PREFIX/bin/prepim"
+    chmod +x "$CONDA_PREFIX/bin/prepim"
     if [ $env_active -eq 0 ]; then
         conda deactivate
     fi
