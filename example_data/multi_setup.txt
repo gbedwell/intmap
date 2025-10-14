@@ -1,0 +1,23 @@
+2
+r1, r2, ltr5, ltr3, linker5, linker3, nm, nthr, bt2_idx_dir, bt2_idx_name, v_idx_dir, v_idx_name, linker_umi_offset, linker_umi_len, seq_sim, len_diff, umi_diff, frag_ratio, min_count, count_fc, reassign_mm
+data/sample1_R1.fq.gz, data/sample2_R1.fq.gz
+data/sample1_R2.fq.gz, data/sample2_R1.fq.gz
+AGTCAGTGTGGA,AGTCAGTGTGGA
+AAATCTCTAGCA,AAATCTCTAGCA
+ATGAGCATTC,ATGAGCATTC
+TACACGATTAC,TACACGATTAC
+sample1_multi, sample2_multi
+4
+/Users/gbedwell/Documents/github/T2T_genome/indexes/bowtie2
+hs1
+/Users/gbedwell/Documents/github/virus_genomes/HIV-1
+hiv1
+0
+12
+1
+0
+0
+1000
+1000
+1000
+True,True

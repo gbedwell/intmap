@@ -393,6 +393,9 @@ def final_pass_collapse(kept_frags, len_diff, nthr, min_count, count_fc, ltr_cuf
                     
                     reads_to_remove.update(sorted_reads[1:])
     
+    if len(reads_to_remove) > 0:
+        print(f"Removing {len(reads_to_remove)} additional reads in the final pass.", flush=True)
+        
     removed_frags = {}
     for read_name in reads_to_remove:
         removed_frags[read_name] = kept_frags[read_name]
