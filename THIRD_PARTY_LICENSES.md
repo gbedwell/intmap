@@ -21,7 +21,7 @@ This project uses the following third-party packages, each of which is governed 
 - URL: https://pysam.readthedocs.io/
 
 ### bedtools==2.31.1
-- License: GPLv2 License
+- License: MIT License
 - URL: https://bedtools.readthedocs.io/
 
 ### biopython==1.84
@@ -75,3 +75,5 @@ This project uses the following third-party packages, each of which is governed 
 ### minimap2==2.29
 - License: MIT License
 - URL: https://github.com/lh3/minimap2
+
+This software includes code adapted from from the R package [sonicLength](https://rdrr.io/rforge/sonicLength/), authored by Charles Berry, and licensed under the GPL>=2 license.
