@@ -76,4 +76,5 @@ This project uses the following third-party packages, each of which is governed 
 - License: MIT License
 - URL: https://github.com/lh3/minimap2
 
-This software includes code adapted from from the R package [sonicLength](https://rdrr.io/rforge/sonicLength/), authored by Charles Berry, and licensed under the GPL>=2 license.
+### Other software
++ The MLE method adapts code from the R package [sonicLength](https://rdrr.io/rforge/sonicLength/). sonicLength was authored by Charles Berry and is licensed under the GPL>=2 license.
