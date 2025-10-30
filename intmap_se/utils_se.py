@@ -426,27 +426,92 @@ def sample_reads(filename, n_reads=5000):
             line_num += 1
     
     return sequences
+  
+def filter_contaminants(seqs, contams, contam_error_rate=0.3, min_seqs_threshold=0.1):
+    if not contams:
+        return seqs, {'original_count': len(seqs), 'filtered_count': 0, 'remaining_count': len(seqs)}
+    
+    original_count = len(seqs)
+    
+    contam_patterns = []
+    for contam in contams:
+        if len(contam) < 10:
+            raise ValueError('Contaminants must be >= 10 nucleotides long.')
+        
+        contam_check = contam.replace(' ', '')
+        contam_char = regex.sub('[ATGC]', '', contam_check.upper())
+        if contam_char != '':
+            raise ValueError('Contaminants may only contain A,T,G, and C nucleotides.')
+        
+        max_errors = math.floor(len(contam) * contam_error_rate)
+        pattern = regex.compile(f'({contam}){{e<={max_errors}}}', regex.IGNORECASE)
+        contam_patterns.append(pattern)
+    
+    kept_seqs = []
+    contam_count = 0
+    
+    for seq in seqs:
+        is_contaminated = False
+        for pattern in contam_patterns:
+            if pattern.search(seq):
+                is_contaminated = True
+                break
+        
+        if not is_contaminated:
+            kept_seqs.append(seq)
+        else:
+            contam_count += 1
+    
+    remaining_count = len(kept_seqs)
+    filtered_count = original_count - remaining_count
+    
+    remaining_frac = remaining_count / original_count
+    if remaining_frac < min_seqs_threshold:
+        print(f"WARNING: Contaminant filtering removed {filtered_count} seqs "
+              f"({(1-remaining_frac)*100:.1f}%). "
+              f"Consider adjusting contaminant seqs or error rates.", flush=True)
+    
+    filtering_stats = {
+        'original_count': original_count,
+        'filtered_count': filtered_count,
+        'remaining_count': remaining_count,
+        'remaining_fraction': remaining_frac
+    }
+    
+    return kept_seqs, filtering_stats
 
-def check_consensus(r1_file, ltr_seq, linker_seq=None, sample_size=5000, threshold=0.02, error_rate=0.3):
+def check_consensus(r1_file, ltr_seq, linker_seq=None, sample_size=5000, threshold=0.02, error_rate=0.3,
+                    contams=None, contam_error_rate=0.3, min_seqs_threshold=0.1):
     print(f"Sampling {sample_size} reads from input file...", flush=True)
     r1_sequences = sample_reads(r1_file, sample_size)
     
+    if contams:
+            r1_filter_stats = {'original_count': len(r1_sequences), 'filtered_count': 0, 'remaining_count': len(r1_sequences)}
+            
+            print(f"Filtering contaminants from sampled R1 reads...", flush=True)
+            
+            r1_sequences, r1_filter_stats = filter_contaminants(
+                r1_sequences, contams, contam_error_rate, min_seqs_threshold
+            )
     # Compile patterns using the hierarchical approach from crop.py
     ltr_errors = math.floor(len(ltr_seq) * error_rate)
-    linker_errors = math.floor(len(linker_seq) * error_rate)
+    if(linker_seq):
+        linker_errors = math.floor(len(linker_seq) * error_rate)
     
     patterns = {
         'ltr': {
             'perfect': regex.compile(ltr_seq),
             'mismatch': regex.compile(f'({ltr_seq}){{s<={ltr_errors}}}'),
             'indel': regex.compile(f'({ltr_seq}){{e<={ltr_errors}}}')
-        },
-        'linker': {
-            'perfect': regex.compile(linker_seq),
-            'mismatch': regex.compile(f'({linker_seq}){{s<={linker_errors}}}'),
-            'indel': regex.compile(f'({linker_seq}){{e<={linker_errors}}}')
         }
     }
+    
+    if linker_seq:
+      patterns['linker'] = {
+        'perfect': regex.compile(linker_seq),
+        'mismatch': regex.compile(f'({linker_seq}){{s<={linker_errors}}}'),
+        'indel': regex.compile(f'({linker_seq}){{e<={linker_errors}}}')
+        }
     
     def find_pattern_match(seq, pattern_type):
         match = patterns[pattern_type]['perfect'].search(seq)
@@ -480,8 +545,8 @@ def check_consensus(r1_file, ltr_seq, linker_seq=None, sample_size=5000, thresho
                 'match_type': match_type
             })
     
+    r2_matches = []
     if linker_seq:
-        r2_matches = []
         for seq in r1_sequences:
             rc_seq = revcomp(seq)
             match, match_type = find_pattern_match(seq = rc_seq, pattern_type = 'linker')
@@ -519,7 +584,7 @@ def check_consensus(r1_file, ltr_seq, linker_seq=None, sample_size=5000, thresho
     if linker_seq:
         r2_counts = {}
         for match in r2_matches:
-            seq = match['matched_text']
+            seq = revcomp(match['matched_text'])
             r2_counts[seq] = r2_counts.get(seq, 0) + 1
         r2_total = len(r2_matches)
         r2_freqs = {seq: count/r2_total for seq, count in r2_counts.items()}
@@ -533,8 +598,15 @@ def check_consensus(r1_file, ltr_seq, linker_seq=None, sample_size=5000, thresho
     report.append(f"Sample size: {sample_size} reads")
     report.append(f"Allowed error rate: {error_rate}")
     report.append(f"Reporting threshold: {threshold}")
-    report.append(f"Sequences with LTR match: {len(r1_matches)} ({(len(r1_matches) / sample_size) * 100:.2f}%)")
-    report.append(f"Sequences with linker match: {None if not linker_seq else len(r2_matches)} ({(len(r2_matches) / sample_size) * 100:.2f}%)")
+    
+    if contams:
+        report.append(f"R1 sequences remaining after contaminant filtering: {r1_filter_stats['remaining_count']} "
+                      f"({r1_filter_stats['remaining_fraction']*100:.1f}%)")
+        
+    effective_r1_sample = len(r1_sequences)
+
+    report.append(f"Sequences with LTR match: {len(r1_matches)} ({(len(r1_matches) / effective_r1_sample) * 100:.2f}%)")
+    report.append(f"Sequences with linker match: {None if not linker_seq else len(r2_matches)} ({(len(r2_matches) / effective_r1_sample) * 100:.2f}%)")
     report.append("")
     
     # Report match type statistics
@@ -597,11 +669,22 @@ def check_consensus(r1_file, ltr_seq, linker_seq=None, sample_size=5000, thresho
     
     return "\n".join(report)
 
-def generate_consensus(r1_file, include_linker, consensus_length=50, sample_size=5000, threshold=0.8):
+def generate_consensus(r1_file, include_linker, consensus_length=50, sample_size=5000, threshold=0.8,
+                       contams=None, contam_error_rate=0.3, min_seqs_threshold=0.1):
     result = {}
     
     print(f'Sampling {sample_size} reads from input files...')
     r1_sequences = sample_reads(r1_file, sample_size)
+    
+    if contams:
+        print(f"Filtering contaminants from sampled reads...", flush=True)
+        
+        r1_sequences, r1_filter_stats = filter_contaminants(
+            r1_sequences, contams, contam_error_rate, min_seqs_threshold
+        )
+        
+        print(f"Removed {r1_filter_stats['filtered_count']} R1 sequences, "
+              f"{r1_filter_stats['remaining_count']} sequences remaining ({r1_filter_stats['remaining_fraction']*100:.1f}%)", flush=True)
     
     # Process R1 file
     print('Calculating LTR consensus sequence...')

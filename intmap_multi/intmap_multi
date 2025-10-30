@@ -39,6 +39,8 @@ parser.add_argument('--single_end', '-single_end',
 
 args = parser.parse_args()
 
+MULTI_VALUE_ARGS = {'-c'}
+
 def get_user_input():
     print("Enter the number of samples:")
     n_samp = int(input())
@@ -51,7 +53,10 @@ def get_user_input():
     
     arg_values = []
     for arg_name in arg_names:
-        print(f"Enter values for {arg_name} (comma-separated):")
+        if arg_name in MULTI_VALUE_ARGS:
+            print(f"Enter values for {arg_name} (comma-separated for samples, semicolon-separated for multiple values per sample):")
+        else:
+            print(f"Enter values for {arg_name} (comma-separated):")
         values = input().replace(' ', '').split(',')
         
         if len(values) == 1:
@@ -83,7 +88,11 @@ def parse_input_file(setup_file):
     
     return n_samp, arg_names, arg_values
 
-def make_arg_sets(arg_names, arg_values):
+def make_arg_sets(arg_names, arg_values, multi_value_args=None):
+
+    if multi_value_args is None:
+        multi_value_args = set()
+
     argument_sets = []
     
     for values in zip(*arg_values):
@@ -95,7 +104,13 @@ def make_arg_sets(arg_names, arg_values):
                 arg_set.append(arg_name)
             elif value.lower() != 'false':
                 arg_set.append(arg_name)
-                arg_set.append(value)
+
+                if arg_name in multi_value_args:
+                    multi_values = value.split(';')
+                    arg_set.extend(multi_values)
+                else:
+                    arg_set.append(value)
+
         argument_sets.append(arg_set)
     
     return argument_sets
@@ -123,10 +138,10 @@ if __name__ == "__main__":
     if args.args_json is None:
         if args.setup_file is None:
             n_samp, arg_names, arg_values = get_user_input()
-            argument_sets = make_arg_sets(arg_names, arg_values)
+            argument_sets = make_arg_sets(arg_names, arg_values, MULTI_VALUE_ARGS)
         else:
             n_samp, arg_names, arg_values = parse_input_file(setup_file = args.setup_file)
-            argument_sets = make_arg_sets(arg_names, arg_values)
+            argument_sets = make_arg_sets(arg_names, arg_values, MULTI_VALUE_ARGS)
             
         if args.json_name is not None:
             filename = args.json_name + '.json'                

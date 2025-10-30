@@ -113,4 +113,4 @@ wrapim \
 ```
 
 ## Licensing
-This software is licensed under the BSD 3-Clause License (see LICENSE). It additionally relies on several third-party tools, which are governed by their own licenses. See <code>THIRD_PARTY_LICENSES.md</code> for details.
+This software is licensed under the GPL-3 License (see LICENSE). It additionally relies on several third-party tools, which are governed by their own licenses. See <code>THIRD_PARTY_LICENSES.md</code> for details.

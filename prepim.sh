@@ -77,14 +77,10 @@ while [[ $# -gt 0 ]]; do
             FILE_EXT="$2"
             shift 2
             ;;
-        --paired)
-                SE=true
+        --se)
+            SE=true
             shift
             ;;
-            --se)
-                SE=true
-                shift
-                ;;
         -multiplex_prefix|--multiplex_prefix)
             MPLEX="$2"
             shift 2
@@ -145,9 +141,22 @@ ltr_seqs=()
 linker_seqs=()
 
 while IFS=$'\t' read -r -a cols || [ -n "${cols[*]}" ]; do
-    names+=("${cols[$((NAME_COL-1))]}")
-    ltr_seqs+=("${cols[$((LTR_COL-1))]}")
-    linker_seqs+=("${cols[$((LINKER_COL-1))]}")
+    # Remove all whitespace from sequences using parameter expansion
+    name_clean="${cols[$((NAME_COL-1))]// /}"
+    ltr_clean="${cols[$((LTR_COL-1))]// /}"
+    linker_clean="${cols[$((LINKER_COL-1))]// /}"
+    
+    # Also trim leading/trailing whitespace
+    name_clean="${name_clean#"${name_clean%%[![:space:]]*}"}"
+    name_clean="${name_clean%"${name_clean##*[![:space:]]}"}"
+    ltr_clean="${ltr_clean#"${ltr_clean%%[![:space:]]*}"}"
+    ltr_clean="${ltr_clean%"${ltr_clean##*[![:space:]]}"}"
+    linker_clean="${linker_clean#"${linker_clean%%[![:space:]]*}"}"
+    linker_clean="${linker_clean%"${linker_clean##*[![:space:]]}"}"
+    
+    names+=("$name_clean")
+    ltr_seqs+=("$ltr_clean")
+    linker_seqs+=("$linker_clean")
 done < "$TSV_FILE"
 
 echo "Sample names:"

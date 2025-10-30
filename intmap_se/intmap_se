@@ -434,7 +434,10 @@ if __name__ == "__main__":
             linker_seq = linker_seq,
             sample_size = args.consensus_sample_size,
             threshold = args.consensus_threshold,
-            error_rate = args.consensus_error_rate
+            error_rate = args.consensus_error_rate,
+            contams = args.c, 
+            contam_error_rate = 0.3,
+            min_seqs_threshold = 0.1
             )
         
         # Print and save report
@@ -460,7 +463,10 @@ if __name__ == "__main__":
             include_linker = args.include_linker,
             consensus_length = args.consensus_length, 
             sample_size = args.consensus_sample_size, 
-            threshold = args.consensus_base_threshold
+            threshold = args.consensus_base_threshold,
+            contams = args.c, 
+            contam_error_rate = 0.3,
+            min_seqs_threshold = 0.1
         )
         
         print('\n')
