@@ -1,0 +1,20 @@
+{
+    "dummy": {
+        "AAATG": [
+            [
+                "chr1",
+                100,
+                "+"
+            ]
+        ]
+    },
+    "position_groups": {
+        "chr1_100_+": [
+            "read1",
+            "read2"
+        ],
+        "chr2_200_-": [
+            "read3"
+        ]
+    }
+}

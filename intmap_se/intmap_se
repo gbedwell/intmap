@@ -1,0 +1,1405 @@
+#!/usr/local/bin/python
+
+import argparse
+parser = argparse.ArgumentParser(prog = 'intmap_se',
+                                description='''Maps the locations of viral integration sites in a genome from NGS data.''')
+parser.add_argument('-r1',
+                    type=str, 
+                    help='Forward/R1 read file.', 
+                    default=None, 
+                    required=True)
+parser.add_argument('-ltr3',
+                    type=str, 
+                    help='''3' end of the LTR sequence to match.''', 
+                    default=None)
+parser.add_argument('-ltr3_alt',
+                    type=str, 
+                    help='''Alternative orientations of ltr3. Used for distinguishing between flip and flop orientations of AAV ITRs.''', 
+                    default=None)
+parser.add_argument('-linker3',
+                    type=str, 
+                    help='''The 3' end of the linker sequence to match.''', 
+                    default='NNNNN')
+parser.add_argument('-c',
+                    type=str, 
+                    nargs='*', 
+                    help='''Possible contaminating sequences downstream of the viral LTR.''', 
+                    default=None)
+parser.add_argument('-ltr1_primer',
+                    type=str,  
+                    help='''The 3' end of the first round LTR primer. 
+                    Used to control for mispriming during fragment amplification. 
+                    Must be at least 10 bp.''',
+                    default=None)
+parser.add_argument('-ltr5',
+                    type=str,  
+                    help='''The 5' end of the LTR sequence to match. 
+                    Must be at least 5 bp.''',
+                    default=None)
+parser.add_argument('-linker5',
+                    type=str,  
+                    help='''The 5' end of the linker sequence to match. Must be at least 5 bp.''',
+                    default='NNNNN')
+parser.add_argument('--U3', '-U3',
+                    help='''Whether or not the sequenced reads come from the U3 end of the provirus. 
+                    This is used for defining HIV-1 autointegration artifacts and 
+                    defining the 1 bp of the target site duplication.''',
+                    action='store_true')
+parser.add_argument('-nthr',
+                    type=int, 
+                    help='The number of threads to use for processing.',
+                    default=1)
+parser.add_argument('-nm',
+                    type=str, 
+                    help='''The desired name of the dataset. 
+                    This is used for naming output files.''',
+                    required=True)
+parser.add_argument('--ttr', '-ttr', '--truncated_terminal_repeat', '-truncated_terminal_repeat',
+                    help='''Boolean. Whether or not to look for truncation of the terminal repeat. When True, 
+                    ltr5 should be a known sequence (e.g., the 2nd-round TR primer binding site), and ltr3 should 
+                    be the rest of the TR sequence immediately following ltr5.''',
+                    action='store_true')
+parser.add_argument('-min_ttr_len',
+                    type=int,
+                    help='''The minimum allowed length of the truncated terminal repeat. 
+                    Only used with ttr is True. 
+                    Defaults to 10.''',
+                    default=10)
+parser.add_argument('-min_frag_len',
+                    type=int, 
+                    help='''The minimum allowed fragment length. 
+                    Defaults to 30.''',
+                    default=30)
+parser.add_argument('-max_frag_len',
+                    type=int, 
+                    help='''The maximum allowed fragment length. 
+                    Defaults to 1200.''',
+                    default=1200)
+parser.add_argument('-ltr3_error_rate',
+                    type=float, 
+                    help='''The acceptable error rate in the terminal LTR sequence. 
+                    Defaults to 0.''',
+                    default=0)
+parser.add_argument('-linker3_error_rate',
+                    type=float, 
+                    help='''The acceptable error rate in the terminal linker sequence.
+                    Defaults to 0.''',
+                    default=0)
+parser.add_argument('-ltr5_error_rate',
+                    type=float, 
+                    help='''The acceptable error rate in the LTR primer sequence. 
+                    Defaults to 0.''',
+                    default=0)
+parser.add_argument('-linker5_error_rate',
+                    type=float, 
+                    help='''The acceptable error rate in the linker primer sequence. 
+                    Defaults to 0.''',
+                    default=0)
+parser.add_argument('-crop_chunk_size',
+                    type=int, 
+                    help='''The chunk size for read cropping. Must be divisible by 4.
+                    Defaults to 100000.''',
+                    default=100000)
+parser.add_argument('-bt2_path',
+                    type=str, 
+                    help='The path to the Bowtie2 executable',
+                    default='bowtie2')
+parser.add_argument('-sam_path',
+                    type=str, 
+                    help='The path to the samtools executable',
+                    default='samtools')
+parser.add_argument('-mm_path',
+                    type=str, 
+                    help='The path to the minimap2 executable',
+                    default='minimap2')
+parser.add_argument('-bt2_idx_dir',
+                    type=str, 
+                    help='''The directory path holding the Bowtie2 genome index.
+                    Note that this should not contain the index prefix.''',
+                    default=None)
+parser.add_argument('-bt2_idx_name',
+                    type=str, 
+                    help='''The genome index prefix (e.g., hs1).''',
+                    default=None)
+parser.add_argument('-aln_seed_len',
+                    type=int, 
+                    help='''The size of the seed during alignment. 
+                    Defaults to 22.''',
+                    default=22)
+parser.add_argument('-aln_seed_mismatch',
+                    type=int, 
+                    help='''The number of mismatches allowed in the seed during multiseed alignment. 
+                    See Bowtie2 documentation for more information. Can be 0 or 1. 
+                    Defaults to 0.''',
+                    default=0)
+parser.add_argument('-aln_mismatch_rate',
+                    type=float, 
+                    help='''The allowable mismatch rate in read alignment. 
+                    Defaults to 0.10.''',
+                    default=0.10)
+parser.add_argument('-aln_indel_rate',
+                    type=float, 
+                    help='''The allowable indel rate in read alignment. 
+                    Defaults to 0.02.''',
+                    default=0.02)
+parser.add_argument('-min_mapq',
+                    type=int, 
+                    help='''The minimum acceptable MAPQ score.
+                    Does not apply to multimapping reads. 
+                    Defaults to 2.''',
+                    default=2)
+parser.add_argument('-match_after',
+                    type=int, 
+                    help='''The number of mismatched bases allowed at the start of read 1. Defaults to 2.''',
+                    default=2)
+parser.add_argument('-tsd',
+                    type=int, 
+                    help='''The size of the target site duplication. 
+                    Defaults to 1.''',
+                    default=1)
+parser.add_argument('--disorg', '-disorg',
+                    help='''Boolean.
+                    Whether or not move all output files to type-specific subdirectories.''',
+                    action='store_true')
+parser.add_argument('-ltr_umi_offset',
+                    type=int, 
+                    help='''The number of basepairs between the first basepair of the provided 
+                    LTR sequence to the last basepair of the UMI. Defaults to 0 
+                    (i.e., the UMI immediately precedes the given LTR sequence).''',
+                    default=0)
+parser.add_argument('-ltr_umi_len',
+                    type=int, 
+                    help='''The length of the LTR-end UMI.
+                    Defaults to 0 (no UMI present).''',
+                    default=0)
+parser.add_argument('-ltr_umi_pattern',
+                    type=str, 
+                    help='''Any pattern that defines the LTR UMI. For example, 4 random bases, followed 
+                    by 4 known bases, followed by 4 random bases should be given as NNNNGGCANNNN. 
+                    Reads whose UMI does not match the given pattern are removed.''',
+                    default=None)
+parser.add_argument('-linker_umi_offset',
+                    type=int, 
+                    help='''The number of basepairs between the first basepair of the provided 
+                    linker sequence to the last basepair of the UMI. Defaults to 0  
+                    (i.e., the UMI immediately precedes the given linker sequence). ''',
+                    default=0)
+parser.add_argument('-linker_umi_len',
+                    type=int, 
+                    help='''The length of the linker-end UMI.
+                    Defaults to 0 (no UMI present).''',
+                    default=0)
+parser.add_argument('-linker_umi_pattern',
+                    type=str, 
+                    help='''Any pattern that defines the linker UMI. For example, 4 random bases, followed 
+                    by 4 known bases, followed by 4 random bases should be given as NNNNGGCANNNN. 
+                    Reads whose UMI does not match the given pattern are removed.''',
+                    default=None)
+parser.add_argument('--no_mm', '-no_mm',
+                    help='''Boolean.
+                    Whether or not to keep multimapping reads in the final output.''',
+                    action='store_true')
+parser.add_argument('-min_qual',
+                    type=int, 
+                    help='''The minimum acceptable average base quality score. 
+                    Used to filter out reads with low-quality base calls. 
+                    Defaults to 10.''',
+                    default=10)
+parser.add_argument('-len_diff',
+                    type=int, 
+                    help='''The maximum allowed difference in fragment lengths for
+                    uniquely mapping reads or sequence lengths for multi-mapping reads. 
+                    Used in fuzzy duplicate identification. Defaults to 5.''',
+                    default=5)
+parser.add_argument('-umi_diff',
+                    type=int, 
+                    help='''The maximum difference between UMIs to group them for further examination as 
+                    as possible duplicates. Defaults to 8.''',
+                    default=8)
+parser.add_argument('-v_idx_dir',
+                    type=str, 
+                    help='''The directory path holding the Bowtie2 virus genome index. 
+                    Note that this should not contain the index prefix. 
+                    Required when random = False.''',
+                    default=None)
+parser.add_argument('-v_idx_name',
+                    type=str, 
+                    help='''The virus genome index prefix (e.g., HIV-1)''',
+                    default=None)
+parser.add_argument('-frag_ratio',
+                    type=float, 
+                    help='''The ratio of fragment counts used to define fuzzy matching reads. 
+                    A match is called if the higher number of counts >= (frag_ratio * lower_number).
+                    Defaults to 2.''',
+                    default=2)
+parser.add_argument('-genome_fasta',
+                    type=str, 
+                    help='''The file path to the genome fasta file. 
+                    The file must be either bgzip compressed or uncompressed.''',
+                    default=None)
+parser.add_argument('-genome_fasta_index',
+                    type=str, 
+                    help='''The file path to the genome fasta index file. 
+                    This is not strictly necessary if the genome fasta index file is named 
+                    <genome_fasta>.fai for an uncompressed genome_fasta file, or 
+                    <genome_fasta>.gzi for a bgzip compressed genome_fasta file.''',
+                    default=None)
+parser.add_argument('-num_perm',
+                    type=int, 
+                    help='''The number of permutations in the generated minhash fingerprint. Defaults to 128. Must be divisble by 8 and >= 32.''',
+                    default=128)
+parser.add_argument('-token_size',
+                    type=int, 
+                    help='''The token size for MinHash generation. Defaults to 4.''',
+                    default=4)
+parser.add_argument('-mm_hash_similarity',
+                    type=float,
+                    help='''Defines the Jaccard similarity threshold between MinHashes. Defaults to 0.85''',
+                    default=0.85)
+parser.add_argument('-seq_sim',
+                    type=float,
+                    help='''Sequence similarity threshold. Used for validating multimapping read groups and, 
+                    in certain instances, assigning multimapping read positions.  
+                    Defaults to 0.95.''',
+                    default=0.95)
+parser.add_argument('-misprime_mismatch',
+                    type=int, 
+                    help='''The number of mismatches allowed when searching for mispriming. 
+                    Set to -1 to omit this step. 
+                    Defaults to -1.''',
+                    default=-1)
+parser.add_argument('-min_count',
+                    type=int, 
+                    help='''The minimum number of sites required to define a particular integration site as abundant.    
+                    Defaults to 1.''',
+                    default=1)
+parser.add_argument('-count_fc',
+                    type=float, 
+                    help='''The fold-change between abundant sites required to consider them the same.     
+                    Defaults to 2.''',
+                    default=2)
+parser.add_argument('--reassign_mm', '-reassign_mm',
+                    help='''Boolean.
+                    Whether or not to try to reassign multimapping reads based on 
+                    concordance with uniquely mapping reads and similar multimapping reads.''',
+                    action='store_true')
+parser.add_argument('-k',
+                    type=int, 
+                    help='''The size of the k-mers used to reassign multimapping reads.     
+                    Defaults to 15. Must be <= min_frag_len - len_diff''',
+                    default=15)
+parser.add_argument('-mm_group_threshold',
+                    type=float, 
+                    help='''Defines the lower multimapping group size threshold for whole-group reassignment to a probable location. 
+                    Expressed as a fraction of the total number of multimapping reads.     
+                    Defaults to 0.002.''',
+                    default=0.002)
+parser.add_argument('--no_dedup', '-no_dedup',
+                    help='''Boolean.
+                    When True, the pipeline stops after alignment and QC.''',
+                    action='store_true')
+parser.add_argument('--check_consensus', '-check_consensus',
+                    help='''Boolean. When True, samples reads from input files to identify
+                    common variants of the given LTR and linker sequences. 
+                    Results are written to stdout and saved to <name>_consensus_report.txt''',
+                    action='store_true')
+parser.add_argument('-consensus_sample_size',
+                    type=int,
+                    help='''The number of reads to sample for consensus checking.
+                    Defaults to 10000.''',
+                    default=10000)
+parser.add_argument('-consensus_threshold',
+                    type=float,
+                    help='''The fractional threshold for sequence significance. 
+                    Used during consensus checking. If the frequency of any sequence 
+                    is >= this value, that sequence will be reported.
+                    Defaults to 0.02.''',
+                    default=0.02)
+parser.add_argument('-consensus_error_rate',
+                    type=float,
+                    help='''The error rate for consensus searching. Defaults to 0.3''',
+                    default=0.3)
+parser.add_argument('--extract_consensus', '-extract_consensus',
+                    help='''Boolean. When True, a consensus sequence of length 
+                    consensus_length is determined from provided FASTQ files.''',
+                    action='store_true')
+parser.add_argument('--include_linker', '-include_linker',
+                    help='''Boolean. Whether or not to extract the linker consensus from the 3' end of reads.''',
+                    action='store_true')
+parser.add_argument('-consensus_length',
+                    type=int,
+                    help='''The length of the consensus sequence to generate. Used with extract_consensus. 
+                    Defaults to 100.''',
+                    default=100)
+parser.add_argument('-consensus_base_threshold',
+                    type=float,
+                    help='''The threshold required to call a base the consensus. 
+                    Positions with base frequency values below this are returned as N. 
+                    Defaults to 0.8''',
+                    default=0.8)
+parser.add_argument('--consensus_write', '-consensus_write',
+                    help='''Boolean. When True, the results of either check_consensus or extract_consensus are written to individual files.''',
+                    action='store_true')
+parser.add_argument('--check_ltr_umis_final_pass', '-check_ltr_umis_final_pass', '--ltr_cufp', '-ltr_cufp',
+                    help='''Boolean. Whether or not to check for conflicting (identical) LTR UMIs during the final pass. 
+                    These would be identical UMIs on fragments mapping to different genomic positions. 
+                    Defaults to False.''',
+                    action='store_true')
+parser.add_argument('--check_linker_umis_final_pass', '-check_linker_umis_final_pass', '--linker_cufp', '-linker_cufp',
+                    help='''Boolean. Whether or not to check for conflicting (identical) linker UMIs during the final pass. 
+                    These would be identical UMIs on fragments mapping to different genomic positions. 
+                    Defaults to False.''',
+                    action='store_true')
+parser.add_argument('-flag_window_size',
+                    type=int,
+                    help='''The size of the window used to search ltr3 and ltr3_alt for identifying sequences. 
+                    Only used when both ltr3 and ltr3_alt are given and ttr is True. 
+                    Defaults to 12.''',
+                    default=12)
+parser.add_argument('-flag_min_diff',
+                    type=int,
+                    help='''The minimum number of differences between a given window in ltr3 and ltr3_alt for that window to be 
+                    considered a suitable flag. 
+                    Only used when both ltr3 and ltr3_alt are given and ttr is True. 
+                    Defaults to 4.''',
+                    default=4)
+parser.add_argument('-flag_search_limit',
+                    type=float,
+                    help='''A value between 0 and 1 defining the fraction of ltr3 and ltr3_alt to be searched for possible differentiating 
+                    sequences. Defaults to 0.5.''',
+                    default=0.5)
+parser.add_argument('-long_read', '--long_read', '-lr', '--lr',
+                    help='''Boolean. Whether or not to process reads as long reads (ONT/PB)''',
+                    action='store_true')
+parser.add_argument('-lr_type',
+                    type=str,
+                    choices=['map-ont', 'map-pb', 'map-hifi', 'lr:hq'],
+                    default='map-ont',
+                    help='''The type of long read sequencing. Fills in the -x value in minimap2.''')
+
+
+args = parser.parse_args()
+
+if __name__ == "__main__":
+    import os
+    import platform
+    import glob
+    import sys
+    import gzip
+    import math
+    import glob
+    import shutil
+    import subprocess
+    import regex
+    import platform
+    from intmap_se import crop_se
+    from intmap_se import align_se
+    from intmap_se import process_se
+    from intmap_se import clean_se
+    from intmap_se.utils_se import *
+    import pysam
+    import time
+    from rapidfuzz.distance import Levenshtein
+    from collections import defaultdict, deque
+    from Bio import SeqIO
+    import hashlib
+    import faiss
+    import numpy as np
+    from itertools import groupby
+    from operator import itemgetter
+    import json
+    import random
+    from scipy.sparse import csr_matrix
+    from scipy.sparse.csgraph import connected_components
+    import multiprocessing
+    from joblib import Parallel, delayed
+    from datasketch import MinHash, LeanMinHash, MinHashLSH
+    from functools import lru_cache
+    from pybloom_live import BloomFilter
+    import pandas as pd
+    from scipy import stats
+    from scipy.interpolate import BSpline
+    import statsmodels.api as sm
+
+    if args.check_consensus:
+        print('\n')
+        print(f'Checking {args.nm} input file for consensus sequences...', flush=True)
+        
+        ltr_seq = args.ltr5 + args.ltr3
+        linker_seq = None if (args.linker5 == 'NNNNN' or args.linker3 == 'NNNNN') else (args.linker5 + args.linker3)
+        
+        consensus_report = check_consensus(
+            r1_file = args.r1,
+            ltr_seq = ltr_seq,
+            linker_seq = linker_seq,
+            sample_size = args.consensus_sample_size,
+            threshold = args.consensus_threshold,
+            error_rate = args.consensus_error_rate,
+            contams = args.c, 
+            contam_error_rate = 0.3,
+            min_seqs_threshold = 0.1
+            )
+        
+        print('\n')
+        print(consensus_report)
+        print('\n')
+        
+        if args.consensus_write:
+            consensus_report_file = f'{args.nm}_consensus_report.txt'
+            with open(consensus_report_file, 'w') as f:
+                f.write(consensus_report)
+            
+        sys.exit()
+        
+    if args.extract_consensus:
+        print('\n')
+        print(f'Determining {args.nm} consensus sequence...')
+        print(f'Consensus sequence length: {args.consensus_length} bp')
+        print(f'Consensus base-calling threshold: {args.consensus_base_threshold}')
+        
+        consensus_seqs = generate_consensus(
+            r1_file = args.r1, 
+            include_linker = args.include_linker,
+            consensus_length = args.consensus_length, 
+            sample_size = args.consensus_sample_size, 
+            threshold = args.consensus_base_threshold,
+            contams = args.c, 
+            contam_error_rate = 0.3,
+            min_seqs_threshold = 0.1
+        )
+        
+        print('\n')
+        print(f"LTR consensus: {consensus_seqs['R1']}")
+        if args.include_linker:
+            print(f"linker consensus: {consensus_seqs['R2']}")
+            print(f"Reverse compliment of linker: {revcomp(consensus_seqs['R2'])}")
+        print('\n')
+        
+        if args.consensus_write:
+            consensus_seqs_file = f'{args.nm}_consensus_seqs.fa'
+            with open(consensus_seqs_file, 'w') as f:
+                f.write(f">LTR\n{consensus_seqs['R1']}")
+            
+        sys.exit()
+        
+    
+    start_time = time.time()
+
+    if not args.bt2_idx_dir:
+        parser.error('bt2_idx_dir must be defined')
+    if not args.bt2_idx_name:
+        parser.error('bt2_index_name must be defined')
+    if args.ltr3 is None:
+        parser.error('ltr3 must be defined.')
+    if args.ltr1_primer is None and args.misprime_mismatch > -1:
+        parser.error('ltr1_primer must be defined.')
+    if args.ltr5 is None:
+        parser.error('ltr5 must be defined.')
+    if args.misprime_mismatch < -1:
+        parser.error('misprime_mismatch must be an integer >= -1.')
+    if args.misprime_mismatch > -1 and args.genome_fasta is None:
+        parser.error('genome_fasta must be defined.')
+    if args.v_idx_dir is None:
+        parser.error('v_idx_dir must be defined.')
+    if args.v_idx_name is None:
+        parser.error('v_idx_name must be defined.')
+    if args.frag_ratio < 1:
+        parser.error('frag_ratio must be >= 1.')
+    if args.min_frag_len < 20:
+        parser.error('min_frag_len must be >= 20.')
+    if args.aln_seed_len < 20:
+        parser.error('aln_seed_len must be >= 20.')
+    # if args.aln_seed_len > args.min_frag_len:
+    #     parser.error('aln_seed_len must be <= min_frag_len.')
+    if args.aln_seed_mismatch != 0 and args.aln_seed_mismatch != 1:
+        parser.error('aln_seed_mismatch must be 0 or 1.')
+    if args.num_perm % 8 != 0:
+        parser.error('num_perm must be a multiple of 8.')
+    if args.num_perm < 32:
+        parser.error('num_perm must be >= 32.')
+    if args.token_size < 2:
+        parser.error('token_size must be >= 2.')
+    if args.mm_hash_similarity > round(args.seq_sim - (1 / (args.num_perm ** 0.5)), 3):
+        parser.error(f'mm_hash_similarity must be <= {round(args.seq_sim - (1 / (args.num_perm ** 0.5)), 3)}')
+    if args.match_after < 0:
+        parser.error('match_after must be >= 0.')
+    if args.len_diff > 10:
+        parser.error('len_diff must be <= 10.')
+    if args.k > (args.min_frag_len - args.len_diff) or args.k < 10:
+        parser.error('k must be <= min_frag_len - len_diff and >= 10.')
+    if args.ltr3_alt is not None and len(args.ltr3_alt) != len(args.ltr3):
+        parser.error('ltr3 and ltr3_alt must be the same length.')
+    if args.crop_chunk_size % 4 != 0:
+        parser.error('crop_chunk_size must be divisible by 4.')
+    if args.flag_search_limit < 0 or args.flag_search_limit > 1:
+        parser.error('flag_search_limit must be between 0 and 1.')
+    if args.long_read and (args.linker5 == 'NNNNN' or args.linker3 == 'NNNNN'):
+        parser.error('linker sequences must be defined for long reads.')
+    
+    if args.genome_fasta:
+        genome_compression = check_genome_compression(args.genome_fasta)
+        if genome_compression != 'bgzf' and genome_compression != 'uncompressed':
+            raise ValueError('The given genome fasta file must be uncompressed or bgzip compressed.')
+
+        if args.genome_fasta_index is None:
+            genome = pysam.FastaFile(filename = args.genome_fasta)
+        else:
+            if genome_compression == 'bgzf':
+                genome = pysam.FastaFile(filename = args.genome_fasta, 
+                                        filepath_index_compressed = args.genome_fasta_index)
+            elif genome_compression == 'uncompressed':
+                genome = pysam.FastaFile(filename = args.genome_fasta, 
+                                        filepath_index = args.genome_fasta_index)
+
+    crop_se.check_crop_input(
+      ltr3 = args.ltr3, 
+      linker3 = args.linker3, 
+      contamination = args.c,
+      ltr5_error_rate = args.ltr5_error_rate, 
+      linker5_error_rate = args.ltr5_error_rate,
+      ltr1_primer = args.ltr1_primer, 
+      ltr5 = args.ltr5, 
+      linker5 = args.linker5,
+      ltr3_error_rate = args.ltr3_error_rate, 
+      linker3_error_rate = args.linker3_error_rate
+      )
+    
+    align_se.check_genome_idx(
+      idx_dir = args.bt2_idx_dir, 
+      idx_name = args.bt2_idx_name, 
+      long_read = args.long_read
+      )
+    
+    align_se.check_genome_idx(
+      idx_dir = args.v_idx_dir, 
+      idx_name = args.v_idx_name,
+      long_read = args.long_read
+      )
+    
+    if args.bt2_path != 'bowtie2':
+        align_se.check_executable(path = args.bt2_path, ex_name = 'bowtie2')
+        
+    if args.sam_path != 'samtools':
+        align_se.check_executable(path = args.sam_path, ex_name = 'samtools')
+        
+    if args.mm_path != 'minimap2':
+        align_se.check_executable(path = args.sam_path, ex_name = 'minimap2')
+    
+    print('\n')
+    print(f'Sample name: {args.nm}')
+    print(f'Parsing file {args.r1}')
+    print(f'Number of threads: {args.nthr}')
+    print(f'Base LTR-end search sequence: {args.ltr5 + args.ltr3}')
+    if args.linker5 is not None and args.linker3 is not None:
+        print(f'Base linker-end search sequence: {args.linker5 + args.linker3}')
+    print(f'5\' LTR match error rate {args.ltr5_error_rate}')
+    print(f'3\' LTR match error rate: {args.ltr3_error_rate}')
+    if args.linker5 is not None and args.linker3 is not None:
+        print(f'5\' linker match error rate: {args.linker5_error_rate}')
+        print(f'3\' linker match error rate: {args.linker3_error_rate}')
+    print(f'FASTQ processing chunk size: {args.crop_chunk_size} reads')
+    
+    if args.ttr:
+        print(f'Truncated terminal repeats: True')
+        print(f'Minimum TTR length: {args.min_ttr_len} bp')
+    else:
+        print(f'Truncated terminal repeats: False')
+        
+    if args.c is not None:
+        print(f"Declared contamination: {', '.join(args.c)}")
+        
+    if args.ltr_umi_len > 0:
+        print(f'LTR UMI length: {args.ltr_umi_len} bp')
+        print(f'LTR UMI offset: {args.ltr_umi_offset} bp')
+        
+    if args.ltr_umi_pattern:
+        print(f'LTR UMI pattern: {args.ltr_umi_pattern}')
+        
+    if args.linker_umi_len > 0:
+        print(f'Linker UMI length: {args.linker_umi_len} bp', flush = True)
+        print(f'Linker UMI offset: {args.linker_umi_offset} bp', flush = True)
+        
+    if args.linker_umi_pattern:
+        print(f'Linker UMI pattern: {args.linker_umi_pattern}', flush = True)
+        
+    print(f'Minimum fragment length: {args.min_frag_len} bp')
+    print(f'Maximum fragment length: {args.max_frag_len} bp')
+    print(f'Alignment seed length: {args.aln_seed_len} bp')
+    
+    if args.aln_seed_mismatch != 0:
+        print(f'Alignment seed mismatches: {args.aln_seed_mismatch}')
+
+    print(f'Allowed read 1 5\'-end alignment mismatches: {args.match_after} bp')
+    print(f'Allowed alignment mismatch rate: {args.aln_mismatch_rate}')
+    print(f'Allowed alignment indel rate: {args.aln_indel_rate}')
+    print(f'Minimum alignment MAPQ score: {args.min_mapq}')
+    print(f'Minimum average base quality score: {args.min_qual}')
+
+    if args.no_dedup:
+        print(f'Stop after alignment and QC: True')
+    else:
+        if args.U3 is False:
+            print('Mapping end: U5')
+        else:
+            print('Mapping end: U3')
+            
+        print(f'TSD width: {args.tsd} bp')
+        
+        print(f'Fuzzy length difference: {args.len_diff} bp')
+        print(f'Fuzzy low resolution UMI mismatches: {args.umi_diff} bp')
+        print(f'Duplicate count ratio: {args.frag_ratio}')
+
+        if args.no_mm is False:
+            print('Keep multimapping reads: True')
+            print(f'Multimapping hash fingerprint length: {args.num_perm} hashes')
+            print(f'Multimapping token size: {args.token_size} bp')
+            print(f'Multimapping hash similarity threshold: {args.mm_hash_similarity}')
+            print(f'Multimapping sequence similarity threshold: {args.seq_sim}')
+            if args.reassign_mm:
+                print(f'Multimapping read reassignment: True')
+                print(f'Multimapping k-mer size: {args.k} bp')
+                print(f'Multimapping group size fractional threshold: {args.mm_group_threshold}')
+            else:
+                print(f'Multimapping read reassignment: False')
+        else:
+            print('Keep multimapping reads: False')
+        
+        if args.misprime_mismatch >= 0:
+            print('Look for mispriming: True')
+            print('Round 1 LTR primer sequence:', args.ltr1_primer)
+            print(f'Allowed mispriming mismatches: {args.misprime_mismatch} bp')
+        else:
+            print('Look for mispriming: False')
+        
+        print(f'Minimum site count threshold: {args.min_count} sites')
+        print(f'Count fold-change: {args.count_fc}')
+        
+        if args.ltr_umi_len > 0:
+            if args.check_ltr_umis_final_pass:
+                print(f'Remove conflicting LTR UMIs during final pass: True')
+            else:
+                print(f'Remove conflicting LTR UMIs during final pass: False')
+                
+        if args.linker_umi_len > 0:
+            if args.check_linker_umis_final_pass:
+                print(f'Remove conflicting linker UMIs during final pass: True', flush = True)
+            else:
+                print(f'Remove conflicting linker UMIs during final pass: False', flush = True)
+    
+    print('\n')
+    
+    crop_start = time.time()
+    
+    curr_dir = os.getcwd()
+    processed_dir = os.path.join(curr_dir, 'processed')
+    os.makedirs(processed_dir, exist_ok = True)
+
+    file = open_file(filename = args.r1, mode = 'rt')
+    n_lines = sum(1 for _ in file)
+    if n_lines % 4 != 0:
+        raise ValueError('Number of lines is not a multiple of 4.')
+    file.close()
+    n_reads = n_lines // 4
+        
+    print(f'Processing {n_reads} reads...', flush = True)
+    print('Cropping LTR and linker sequences...', flush = True)
+    
+    clean_nm = args.nm.rpartition('/')[-1] if '/' in args.nm else args.nm
+        
+    crop_se.crop(args = args, 
+                 processed_directory = processed_dir,
+                 out_nm = clean_nm,
+                 long_read = args.long_read)
+    
+    fq1 = os.path.join(processed_dir, f'{clean_nm}_R1_cropped.fq.gz')
+    
+    with gzip.open(fq1, 'r') as file:
+        n_cropped = sum(1 for _ in file) // 4
+    
+    crop_perc = (n_cropped / n_reads) * 100
+    print(f'Number of reads retained after cropping: {n_cropped} ({crop_perc:.2f}%)',
+            flush = True)
+    
+    crop_end = time.time()
+    crop_time = round((crop_end - crop_start), 3)
+    print(f'{crop_time} seconds elapsed', flush = True)
+    
+    if n_cropped == 0:
+        print('\n', flush = True)
+        print('No reads were retained after cropping. Exiting.', flush = True)
+        os.remove(fq1)
+        sys.exit()
+
+    align_start = time.time()
+    print('\n', flush = True)
+    print('Aligning cropped reads...', flush = True)
+    
+    if not args.long_read:
+        align_se.align_global(
+            bt2_path = args.bt2_path, 
+            sam_path = args.sam_path, 
+            bt2_idx_dir = args.bt2_idx_dir, 
+            bt2_idx_name = args.bt2_idx_name,
+            v_idx_dir = args.v_idx_dir,
+            v_idx_name = args.v_idx_name,
+            file1 = fq1, 
+            out_nm = os.path.join(processed_dir, clean_nm), 
+            nthr = args.nthr,
+            min_frag_len = args.min_frag_len,
+            max_frag_len = args.max_frag_len,
+            aln_seed_len = args.aln_seed_len,
+            aln_seed_mismatch = args.aln_seed_mismatch
+          )
+    else:
+        align_se.align_lr(
+            mm_path = args.mm_path, 
+            sam_path = args.sam_path, 
+            bt2_idx_dir = args.bt2_idx_dir, 
+            bt2_idx_name = args.bt2_idx_name, 
+            file1 = fq1,
+            out_nm = os.path.join(processed_dir, clean_nm),  
+            nthr = args.nthr,
+            v_idx_dir = args.v_idx_dir,
+            v_idx_name = args.v_idx_name,
+            lr_type = args.lr_type
+          )
+    
+    align_end = time.time()
+    align_time = round((align_end - align_start), 3)
+    print(f'{align_time} seconds elapsed', flush = True)
+    
+    process_start = time.time()
+    print('\n')
+    print('Performing QC on aligned reads...', flush = True)
+    
+    frags_out = os.path.join(processed_dir, f'{args.nm}_fragments.bed.gz')
+    sites_out = os.path.join(processed_dir, f'{args.nm}_sites.bed.gz')
+    bc_out = os.path.join(processed_dir, f'{args.nm}_summary.txt.gz')
+    counts_out = os.path.join(processed_dir, f'{args.nm}_sites_unique.bed.gz')
+    out_bam = os.path.join(processed_dir, f'{args.nm}_aln.bam')
+    out_dup = os.path.join(processed_dir, f'{args.nm}_duplicates.json.gz')
+    out_mp = os.path.join(processed_dir, f'{args.nm}_misprimed.fa.gz')
+    removed_frags_out = os.path.join(processed_dir, f'{args.nm}_final_pass_removed.txt.gz')
+    
+    print('Parsing bam file...', flush = True)
+    if not args.long_read:
+        reads = process_se.process_bam(out_bam)
+    else:
+        reads = process_se.process_bam_lr(out_bam)
+
+    print('Processing read pairs...', flush = True)
+    min_qual = 10 ** (args.min_qual / -10)
+    processed_reads = []
+    for read in reads:
+        if not args.long_read:
+            tmp_read = process_se.process_read(read, 
+                                              aln_mismatch_rate = args.aln_mismatch_rate, 
+                                              aln_indel_rate = args.aln_indel_rate, 
+                                              min_mapq = args.min_mapq, 
+                                              no_mm = args.no_mm, 
+                                              min_qual = min_qual,
+                                              match_after = args.match_after)
+        else:
+            tmp_read = process_se.process_read_lr(read, 
+                                                  aln_mismatch_rate = args.aln_mismatch_rate, 
+                                                  aln_indel_rate = args.aln_indel_rate, 
+                                                  max_frag_len = args.max_frag_len, 
+                                                  min_frag_len = args.min_frag_len,
+                                                  min_mapq = args.min_mapq, 
+                                                  no_mm = args.no_mm, 
+                                                  min_qual = min_qual,
+                                                  match_after = args.match_after)
+        processed_reads.append(tmp_read)
+
+    processed_reads = [pp for pp in processed_reads if pp is not None]
+    n_reads_qc = len(processed_reads)
+    reads_qc_perc = (n_reads_qc / len(reads)) * 100
+    print(f'Number of reads that pass QC: {n_reads_qc} ({reads_qc_perc:.2f}%)', 
+            flush = True)
+    
+    process_end = time.time()
+    process_time = round((process_end - process_start), 3)
+    print(f'{process_time} seconds elapsed', flush = True)
+
+    if args.no_dedup:
+        b2b_cmd1 = f'bedtools bamtobed -i {out_bam} | gzip > {frags_out}'
+        subprocess.call(b2b_cmd1, shell = True, stderr = subprocess.STDOUT)
+        
+        if not args.disorg:
+            data_types = ['alignments', 'cropped_reads', 'fragments']
+            subdirs = []
+            for i in data_types:
+                subdir = os.path.join(processed_dir, '{}'.format(i))
+                if not os.path.exists(subdir):
+                    os.makedirs(subdir)
+                subdirs.append(subdir)
+
+            file_mapping = {
+                '{}_aln.bai'.format(args.nm): subdirs[0],
+                '{}_aln.bam'.format(args.nm): subdirs[0],
+                '{}_fragments.bed.gz'.format(args.nm): subdirs[2],
+                '{}_*_cropped.fq.gz'.format(args.nm): subdirs[1]
+                }
+            
+            for pattern, target_dir in file_mapping.items():
+                for filepath in glob.glob(os.path.join(processed_dir, pattern)):
+                    shutil.move(filepath, target_dir)
+                    
+        end_time = time.time()
+        elapsed_time = round((end_time - start_time) / 60, 3)
+        print('\n', flush = True)
+        print('*** DONE with sample', args.nm, '***', flush = True)
+        print(f'Fragments mapped: {n_reads_qc}', flush = True)
+        print(f'Total elapsed time: {elapsed_time}', 'minutes', flush = True)
+        print('\n', flush = True)
+
+        sys.exit()
+    
+    if n_reads_qc == 0:
+        n_mapped = 0
+    else:
+        print('\n', flush = True)
+        print('Handling duplicate fragments...', flush = True)
+        frags_dict = {}
+        for read1_info in processed_reads:
+            if read1_info['strand'] == '-':
+                frag_start = read1_info['reference_start']
+                frag_end = read1_info['reference_end']
+            else:
+                frag_start = read1_info['reference_start']
+                frag_end = read1_info['reference_end']
+                
+            combined_qual = read1_info['mean_quality']
+
+            frags_dict[read1_info['query_name']] = {
+                'chrom': read1_info['reference_name'],
+                'start': frag_start,
+                'end': frag_end,
+                'count': read1_info['duplicate_count'],
+                'strand': read1_info['strand'],
+                'ltr_umi': read1_info['ltr_umi'],
+                'linker_umi': read1_info['linker_umi'],
+                'seq1': read1_info['sequence'], 
+                'multi': (True if read1_info['multimapping'] else False),
+                'mean_qual': -10 * math.log10(combined_qual),
+                'ltr_match': read1_info['ltr_match'],
+                'linker_match': read1_info['linker_match'],
+                'read_name': read1_info['query_name']
+                }
+            
+        del reads
+        del processed_reads
+            
+        unique_all = {}
+        multi_all = {}
+        for key, value in frags_dict.items():
+            if value['multi']:
+                multi_all[key] = value
+            else:
+                unique_all[key] = value
+                
+        del frags_dict
+        
+        n_unique = len(unique_all)
+        n_multi = len(multi_all)
+        
+        if n_unique > 0:
+            print(f'Starting number of uniquely mapping fragments: {n_unique}', flush = True)
+            uniq_dup_start = time.time()
+
+            unique_all_split = defaultdict(list)
+            for read_key, info in unique_all.items():
+                key = (info['chrom'], info['strand'])
+                value = {'chrom': info['chrom'],
+                        'start': info['start'], 
+                        'end': info['end'],
+                        'count': info['count'],
+                        'strand': info['strand'],
+                        'ltr_umi': info['ltr_umi'],
+                        'linker_umi': info['linker_umi'],
+                        'seq1': info['seq1'], 
+                        'multi': info['multi'],
+                        'mean_qual': info['mean_qual'],
+                        'ltr_match': info['ltr_match'],
+                        'linker_match': info['linker_match'],
+                        'read_name': read_key}
+                
+                if key not in unique_all_split:
+                    unique_all_split[key] = [value]
+                else:
+                    unique_all_split[key].append(value)
+                    
+            del unique_all
+                    
+            unique_all_split_list = []
+            for key, value in unique_all_split.items():
+                unique_all_split_list.append({key: value})
+                
+            del unique_all_split
+            
+            print('Collapsing unique exact matches...', flush = True)
+            sorted_unique_all_split_list = sorted(unique_all_split_list, key=lambda x: len(x), reverse=True)
+            
+            ue_kept_list = Parallel(n_jobs = min(len(unique_all_split_list), args.nthr))(
+                    delayed(clean_se.unique_exact_matches)(
+                        input_dict = unique_all_split_list[entry]) 
+                    for entry in range(len(sorted_unique_all_split_list)))
+            
+            del unique_all_split_list
+            del sorted_unique_all_split_list
+
+            unique_exact_kept = {}
+            for dd in ue_kept_list:
+                unique_exact_kept.update(dd)
+
+            ue_kept_list = []
+            for key, value in unique_exact_kept.items():
+                ue_kept_list.append({key: value})
+                
+            del unique_exact_kept
+            
+            n_exact_kept = 0
+            for entry in ue_kept_list:
+                for value in entry.values():
+                    n_exact_kept += len(value)
+            
+            uniq_rm1 = n_unique - n_exact_kept
+            uniq_rm1_perc = (uniq_rm1 / n_unique) * 100
+            print(f'Number of uniquely mapping reads removed: {uniq_rm1} ({uniq_rm1_perc:.2f}%)',
+                    flush = True)
+
+            print('Looking for unique fuzzy matches...', flush = True)
+            sorted_ue_kept_list = sorted(ue_kept_list, key=lambda x: len(x), reverse=True)
+            
+            uf_kept_list = Parallel(n_jobs = min(len(sorted_ue_kept_list), args.nthr))(
+                delayed(clean_se.unique_fuzzy_matches)(
+                    input_dict = sorted_ue_kept_list[entry], 
+                    len_diff = args.len_diff, 
+                    umi_diff = args.umi_diff, 
+                    frag_ratio = args.frag_ratio) 
+                for entry in range(len(sorted_ue_kept_list)))
+
+            unique_fuzzy_kept = {}
+            unique_fuzzy_dup = {}
+            for kept, dup in uf_kept_list:
+                unique_fuzzy_kept.update(kept)
+                for key, value in dup.items():
+                    if key not in unique_fuzzy_dup:
+                        unique_fuzzy_dup[key] = value
+                    else:
+                        unique_fuzzy_dup[key].extend(value)
+
+            del ue_kept_list
+            del sorted_ue_kept_list
+            del uf_kept_list
+
+            kept_dict = {
+                info['read_name']: {
+                    key: info[key] for key in [
+                        'chrom', 'start', 'end', 'count', 'strand',
+                        'ltr_umi', 'linker_umi', 'seq1', 'multi', 'mean_qual', 
+                        'ltr_match', 'linker_match', 'read_name'
+                    ]
+                }
+                for info_list in unique_fuzzy_kept.values()
+                for info in info_list
+            }
+            
+            uniq_rm2 = n_exact_kept - len(kept_dict)
+            uniq_rm2_perc = (uniq_rm2 / n_unique) * 100
+            print(f'Number of additional uniquely mapping reads removed: {uniq_rm2} ({uniq_rm2_perc:.2f}%)',
+                    flush = True)
+            unique_perc = (len(kept_dict) / n_unique) * 100
+            print(f'{len(kept_dict)} uniquely mapping fragments retained ({unique_perc:.2f}%)', 
+                    flush = True)
+            del unique_fuzzy_kept
+            
+            uniq_dup_end = time.time()
+            uniq_dup_time = round((uniq_dup_end - uniq_dup_start), 3)
+            print(f'{uniq_dup_time} seconds elapsed', flush = True)
+            
+            dup_dict = unique_fuzzy_dup
+            del unique_fuzzy_dup
+        else:
+            kept_dict = {}
+            dup_dict = {}
+        
+        if n_multi > 0 and not args.no_mm:
+            mm_dup_start = time.time()
+            print('\n')
+            print(f'Starting number of multimapping fragments: {n_multi}', flush = True)
+            print('Collapsing multimapping exact matches...', flush = True)
+            
+            multi_exact_kept = clean_se.multi_exact_matches(input_dict = multi_all)
+            del multi_all
+            
+            n_multi_exact = len(multi_exact_kept)
+            mm_rm1 = n_multi - n_multi_exact
+            mm_rm1_perc = (mm_rm1 / n_multi) * 100
+            print(f'Number of multimapping mapping reads removed: {mm_rm1} ({mm_rm1_perc:.2f}%)',
+                    flush = True)
+
+            print('Hashing multimapping sequences for fuzzy matching...', flush = True)
+            multi_exact_hashed = Parallel(n_jobs = args.nthr)(
+                delayed(apply_minhash)(
+                    key = key, 
+                    value = value, 
+                    string = value['seq1'], 
+                    num_perm = args.num_perm,
+                    token_size = args.token_size) 
+                for key, value in multi_exact_kept.items())
+
+            for key, updated_value in multi_exact_hashed:
+                multi_exact_kept[key] = updated_value
+
+            del multi_exact_hashed
+
+            hash_distances, hash_indices = get_nn(input_dict = multi_exact_kept, 
+                                                    num_perm = args.num_perm,
+                                                    nthr = args.nthr,
+                                                    len_diff = args.len_diff)
+
+            print('Grouping similar hashes...', flush = True)
+            mm_solo, mm_groups = group_similar_hashes(
+                hash_distances = hash_distances, 
+                hash_indices = hash_indices, 
+                nthr = args.nthr,
+                similarity = args.mm_hash_similarity,
+                num_perm = args.num_perm,
+                input_dict = multi_exact_kept
+                )
+                
+            del hash_distances
+            del hash_indices
+
+            mm_grouped_entries = extract_grouped_entries(groups = mm_groups,
+                                                        input_dict = multi_exact_kept)
+            
+            items = list(multi_exact_kept.items())
+            mm_kept_dict = {items[i][0]: items[i][1] for i in mm_solo}
+            
+            del mm_solo
+            del items
+
+            print('Looking for multimapping fuzzy matches...', flush = True)
+            multi_fuzzy_kept, multi_fuzzy_dup = clean_se.multi_fuzzy_matches(
+                groups = mm_grouped_entries,
+                umi_diff = args.umi_diff,
+                frag_ratio = args.frag_ratio,
+                nthr = args.nthr,
+                seq_sim = args.seq_sim,
+                len_diff = args.len_diff,
+                min_parallel_size = 500
+                )
+            
+            mm_kept_dict.update(multi_fuzzy_kept)
+            dup_dict.update(multi_fuzzy_dup)
+            
+            mm_rm2 = n_multi_exact - len(mm_kept_dict)
+            mm_rm2_perc = (mm_rm2 / n_multi) * 100
+            print(f'Number of additional multimapping mapping reads removed: {mm_rm2} ({mm_rm2_perc:.2f}%)',
+                    flush = True)
+            
+            n_mm_kept = len(mm_kept_dict)
+            multi_perc = (n_mm_kept / n_multi) * 100
+            print(f'{n_mm_kept} multimapping fragments retained ({multi_perc:.2f}%)', 
+                    flush = True)
+            
+            if args.reassign_mm:
+                print('Reassigning multimapping read positions...', flush = True)
+                mm_thresh = max(math.floor(n_mm_kept * args.mm_group_threshold), 1)
+                print(f'Multimapping group size threshold for reassignment: {mm_thresh}', flush = True)
+                
+                verified_kept_dict = clean_se.verify_mm_positions(
+                    mm_kept_dict = mm_kept_dict, 
+                    um_kept_dict = kept_dict, 
+                    seq_sim = args.seq_sim, 
+                    nthr = args.nthr, 
+                    len_diff = args.len_diff,
+                    k = args.k,
+                    min_frag_len = args.min_frag_len,
+                    num_perm = args.num_perm,
+                    token_size = args.token_size,
+                    mm_group_threshold = mm_thresh
+                    )
+                
+                if len(verified_kept_dict) != len(mm_kept_dict):
+                    raise Exception('Error in reassigning multimapping read positions.')
+            else:
+                verified_kept_dict = mm_kept_dict
+
+            del multi_exact_kept    
+            del multi_fuzzy_kept
+            del multi_fuzzy_dup
+            del mm_kept_dict
+            
+            kept_dict.update(verified_kept_dict)
+            
+            mm_dup_end = time.time()
+            mm_dup_time = round((mm_dup_end - mm_dup_start), 3)
+            print(f'{mm_dup_time} seconds elapsed', flush = True)
+            
+            del verified_kept_dict
+
+    if args.misprime_mismatch >= 0:
+        mismatch_start = time.time()
+        print('\n')
+        print('Looking for mispriming...', flush = True)
+        shift = args.tsd - 1 if args.U3 else 0
+        
+        ltr1_primer = args.ltr1_primer
+        ltr1_primer = ltr1_primer.replace(' ', '').upper()[-10:]
+        ltr1_primer_pattern = '({}){{s<={}}}'.format(ltr1_primer, args.misprime_mismatch)
+        ltr1_primer_regex = regex.compile(ltr1_primer_pattern)
+
+        n_prior = len(kept_dict)
+        n_misprime = 0
+        misprime_reads = []
+        for key, value in list(kept_dict.items()):
+            if not isinstance(value, dict):
+                print(f'key: {key} value: {value}')
+            seq = fetch_sequence(coordinates = value, genome = genome,
+                                U3 = args.U3, shift = shift)
+            
+            if regex.search(ltr1_primer_regex, seq):
+                del kept_dict[key]
+                misprime_reads.append((key, seq))
+                n_misprime += 1
+                
+        mp_perc = (n_misprime / n_prior) * 100
+        print(f'Removing {n_misprime} fragments due to potential mispriming ({mp_perc:.2f}%)', 
+                flush = True)
+        n_mapped = len(kept_dict)
+        mismatch_end = time.time()
+        mismatch_time = round((mismatch_end - mismatch_start), 3)
+        print(f'{mismatch_time} seconds elapsed', flush = True)
+    elif n_reads_qc > 0:
+        shift = args.tsd - 1 if args.U3 else 0
+        n_mapped = len(kept_dict)
+            
+    if n_mapped > 0:
+        final_start = time.time()
+        print('\n')
+        print(f'Performing final pass through kept fragments...', flush = True)
+        
+        kept_dict, removed_dict = final_pass_collapse(
+            kept_frags = kept_dict,
+            len_diff = args.len_diff,
+            nthr = args.nthr,
+            min_count = args.min_count,
+            count_fc = args.count_fc,
+            ltr_cufp = args.check_ltr_umis_final_pass,
+            linker_cufp = args.check_linker_umis_final_pass,
+            ltr_umi_len = args.ltr_umi_len,
+            linker_umi_len = args.linker_umi_len
+            )
+        
+        n_mapped_final = len(kept_dict)
+        if args.check_ltr_umis_final_pass or args.check_linker_umis_final_pass:
+            more_removed = n_mapped - n_mapped_final
+            if more_removed < 0:
+                raise ValueError('Error in final pass. Negative values present where they should not be.')
+            elif more_removed > 0:
+                print(f'{more_removed} additional reads removed due to conflicting UMIs', flush = True)
+        
+        final_end = time.time()
+        final_time = round((final_end - final_start), 3)
+        print(f'{final_time} seconds elapsed', flush = True)
+        
+        uniq_mapped = 0
+        for read_name, read in kept_dict.items():
+            if read['multi'] == False:
+                uniq_mapped += 1
+        
+        print('\n')
+        print(f'{n_mapped_final} reads retained:', flush = True)
+        print(f' {uniq_mapped} uniquely mapping reads ({((uniq_mapped / n_mapped_final) * 100):.2f}%)', flush = True)
+        print(f' {n_mapped_final - uniq_mapped} multimapping reads ({(((n_mapped_final - uniq_mapped) / n_mapped_final) * 100):.2f}%)', flush = True)
+        
+        kept_sorted = sorted(
+            kept_dict.items(),
+            key=lambda item: (natural_key(item[1]['chrom']), item[1]['start'], item[1]['end'])
+            )
+        
+        kept_frags = dict(kept_sorted)
+        
+        del kept_dict
+        del kept_sorted
+
+        with (gzip.open(frags_out, 'wt') as frags, gzip.open(sites_out, 'wt') as sites, 
+                gzip.open(bc_out, 'wt') as bc, gzip.open(removed_frags_out, 'wt') as removed_fp):
+            
+            bc_cols = ['read_name', 'chrom', 'frag_start', 'frag_end',
+                        'frag_strand', 'frag_count', 'multimapping', 'ltr_umi', 'linker_umi',
+                        'ltr_match', 'linker_match', 'site_pos', 'site_strand']
+            bc.write('\t'.join(bc_cols) + '\n')
+            removed_fp.write('\t'.join(bc_cols) + '\n')
+            
+            site_dict = {}
+            
+            for key, value in kept_frags.items():
+                frag_info = [
+                    value['chrom'],
+                    value['start'],
+                    value['end'],
+                    key,
+                    value['count'],
+                    value['strand']
+                    ]
+                
+                frags.write('\t'.join(map(str, frag_info)) + '\n')
+                
+                if value['strand'] == '-':
+                    site_start = (value['end'] - shift) - 1
+                    site_end = (value['end'] - shift)
+                    site_strand = '-' if not args.U3 else '+'
+                else:
+                    site_start = (value['start'] + shift)
+                    site_end = (value['start'] + shift) + 1
+                    site_strand = '+' if not args.U3 else '-'
+                
+                site_info = [
+                    value['chrom'],
+                    site_start,
+                    site_end,
+                    key,
+                    value['count'],
+                    site_strand
+                    ]
+
+                sites.write('\t'.join(map(str, site_info)) + '\n')
+                
+                site_dict[key] = {
+                    'chrom': site_info[0],
+                    'start': site_info[1],
+                    'end': site_info[2],
+                    'strand': site_info[5]
+                }
+                
+                bc_info = [
+                    key,
+                    value['chrom'],
+                    value['start'] + 1,
+                    value['end'],
+                    value['strand'],
+                    value['count'],
+                    value['multi'],
+                    value['ltr_umi'],
+                    value['linker_umi'],
+                    value['ltr_match'],
+                    value['linker_match'],
+                    (site_start + 1) if site_strand == '+' else site_end,
+                    site_strand
+                    ]
+
+                bc.write('\t'.join(map(str, bc_info)) + '\n')
+                
+            for key, value in removed_dict.items():
+                if value['strand'] == '-':
+                    rfp_site_start = (value['end'] - shift) - 1
+                    rfp_site_end = (value['end'] - shift)
+                    rfp_site_strand = '-' if not args.U3 else '+'
+                else:
+                    rfp_site_start = (value['start'] + shift)
+                    rfp_site_end = (value['start'] + shift) + 1
+                    rfp_site_strand = '+' if not args.U3 else '-'
+
+                rfp_info = [
+                    key,
+                    value['chrom'],
+                    value['start'] + 1,
+                    value['end'],
+                    value['strand'],
+                    value['count'],
+                    value['multi'],
+                    value['ltr_umi'],
+                    value['linker_umi'],
+                    value['ltr_match'],
+                    value['linker_match'],
+                    (rfp_site_start + 1) if rfp_site_strand == '+' else rfp_site_end,
+                    rfp_site_strand
+                    ]
+
+                removed_fp.write('\t'.join(map(str, rfp_info)) + '\n')
+                
+        site_counts = defaultdict(int)
+        
+        for value in site_dict.values():
+            item_key = (value['chrom'], value['start'], value['end'], value['strand'])
+            site_counts[item_key] += 1
+        
+        collapsed_sites = []
+        for (chrom, start, end, strand), count in site_counts.items():
+            collapsed_sites.append({
+                'chrom': chrom,
+                'start': start,
+                'end': end,
+                'name': '.',
+                'count': count,
+                'strand': strand
+            })
+
+        with gzip.open(counts_out, 'wt') as counts:
+            for value in collapsed_sites:
+                collapsed_info = [value['chrom'], value['start'], value['end'],
+                                value['name'], value['count'], value['strand']]
+                
+                counts.write('\t'.join(map(str, collapsed_info)) + '\n')
+        
+        if args.misprime_mismatch >= 0:        
+            with gzip.open(out_mp, 'wt') as mp:
+                for entry in misprime_reads:
+                    mp.write('>' + entry[0] + '\n' + entry[1] + '\n')
+                
+        with gzip.open(out_dup, 'wt', encoding = 'utf-8') as dups:
+            json.dump(dup_dict, dups, indent = 4)
+
+    else:
+        with (gzip.open(frags_out, 'wt') as frags, gzip.open(sites_out, 'wt') as sites, 
+                gzip.open(bc_out, 'wt') as bc, gzip.open(counts_out, 'wt') as counts,
+                gzip.open(out_mp, 'wt') as mp, gzip.open(out_dup, 'wt') as dups):
+            pass
+        if n_reads_qc == 0:
+            print('\n', flush = True)
+            print('No quality fragments were retained. No integration sites were mapped.', flush = True)
+            sys.exit()
+        else:
+            print('\n', flush = True)
+            print('No read pairs pass QC. No integration sites were mapped.', flush = True)
+            with open(out_bam, 'wt') as frags, open(out_bam.replace('.bam', '.bai')):
+                pass
+            sys.exit()
+    
+    if not args.disorg:
+        data_types = ['alignments', 'cropped_reads', 'fragments', 'sites', 'removed']
+        subdirs = []
+        for i in data_types:
+            subdir = os.path.join(processed_dir, '{}'.format(i))
+            if not os.path.exists(subdir):
+                os.makedirs(subdir)
+            subdirs.append(subdir)
+
+        file_mapping = {
+            '{}_aln.bai'.format(args.nm): subdirs[0],
+            '{}_aln.bam'.format(args.nm): subdirs[0],
+            '{}_fragments.bed.gz'.format(args.nm): subdirs[2],
+            '{}_sites.bed.gz'.format(args.nm): subdirs[3],
+            '{}_summary.txt.gz'.format(args.nm): subdirs[2],
+            '{}_*_cropped.fq.gz'.format(args.nm): subdirs[1],
+            '{}_sites_unique.bed.gz'.format(args.nm): subdirs[3],
+            '{}_misprimed.fa.gz'.format(args.nm): subdirs[4],
+            '{}_duplicates.json.gz'.format(args.nm): subdirs[4],
+            '{}_final_pass_removed.txt.gz'.format(args.nm): subdirs[4]
+            }
+        
+        for pattern, target_dir in file_mapping.items():
+            for filepath in glob.glob(os.path.join(processed_dir, pattern)):
+                shutil.move(filepath, target_dir)
+
+    end_time = time.time()
+    elapsed_time = round((end_time - start_time) / 60, 3)
+    print('\n', flush = True)
+    print('*** DONE with sample', args.nm, '***', flush = True)
+    print(f'Sites mapped: {n_mapped_final}', flush = True)
+    print(f'Total elapsed time: {elapsed_time}', 'minutes', flush = True)
+    print('\n', flush = True)

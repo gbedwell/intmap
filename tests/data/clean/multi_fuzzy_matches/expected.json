@@ -1,0 +1,26 @@
+{
+    "kept": {
+        "mm_read1": {
+            "read_name": "mm_read1",
+            "chrom": "chr1",
+            "start": 1000,
+            "end": 1100,
+            "count": 6,
+            "strand": "+",
+            "ltr_umi": "AAAA",
+            "linker_umi": "TTTT",
+            "seq1": "ACTGACTGACTGACTGACTG",
+            "seq2": "CAGTCAGTCAGTCAGTCAGT",
+            "multi": "True",
+            "mean_qual": 35,
+            "ltr_match": "ATGC",
+            "linker_match": "ATGC",
+            "combined_umi": "AAAATTTT"
+        }
+    },
+    "dup": {
+        "mm_read1": [
+            "mm_read2"
+        ]
+    }
+}

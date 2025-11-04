@@ -1,0 +1,166 @@
+#!/usr/local/bin/python
+
+import argparse
+
+parser = argparse.ArgumentParser(prog = 'intmap-multimap',
+                                description='''Runs intmap on a collection of samples using
+                                user-defined arguments for each intmap run.''')
+
+parser.add_argument('-args_json', '-a',
+                    type=str,
+                    help='''A JSON holding the respective arguments for each sample-of-interest. 
+                    This file can be created by setting -define_args to True.''',
+                    default=None)
+parser.add_argument('-setup_file', '-s',
+                    type=str,
+                    help='''A text file where line 1 is the number of samples,
+                    line 2 is a comma-separated string of all arguments being used in any one of the intmap calls, 
+                    and lines 3-<n_args> contain the argument values for each argument enumerated in line 2 
+                    for every sample being analyzed.  
+                    For example, if line 1 is 2 and line 2 is 'a, b, c', then line 3 will be the values of 'a' in 
+                    samples 1 and 2, line 4 will be the values of b in samples 1 and 2, etc. 
+                    Argument values should be given as a comma-separated string and the number of entries in each string
+                    should be either 1 or equal to the number of samples (line 1). 
+                    For Boolean values, values of True or False should be given for each sample.''',
+                    default=None)
+parser.add_argument('-json_name', '-n',
+                    type=str,
+                    help='''The name of the generated JSON file. 
+                    The .json extension will be appended automatically.''')
+parser.add_argument('--arg_sets_only', '-arg_sets_only',
+                    help='''Boolean. 
+                    Whether or not to stop after saving the arguments JSON.''',
+                    action='store_true')
+parser.add_argument('--single_end', '-single_end',
+                    help='''Boolean. 
+                    Whether or not the data is paired- or single-end. 
+                    When set, intmap_se is run instead of intmap.''',
+                    action='store_true')
+
+args = parser.parse_args()
+
+MULTI_VALUE_ARGS = {'-c'}
+
+def get_user_input():
+    print("Enter the number of samples:")
+    n_samp = int(input())
+    
+    print("Enter argument names (comma-separated):")
+    arg_names = input().replace(' ', '')
+    arg_names = arg_names.split(',')
+    arg_names = ['-{}'.format(arg.lstrip('-')) if not arg.startswith('-') \
+        else arg for arg in arg_names]
+    
+    arg_values = []
+    for arg_name in arg_names:
+        if arg_name in MULTI_VALUE_ARGS:
+            print(f"Enter values for {arg_name} (comma-separated for samples, semicolon-separated for multiple values per sample):")
+        else:
+            print(f"Enter values for {arg_name} (comma-separated):")
+        values = input().replace(' ', '').split(',')
+        
+        if len(values) == 1:
+            values = values * n_samp
+        elif len(values) < n_samp:
+            raise ValueError('The number of entered values must be 1 or equal to the number of samples.')
+        
+        arg_values.append(values)
+    
+    return n_samp, arg_names, arg_values
+
+def parse_input_file(setup_file):
+    with open(setup_file, 'r') as file:
+        lines = file.readlines()
+        
+    n_samp = int(lines[0].strip())
+    arg_names = lines[1].strip().replace(' ', '').split(',')
+    arg_names = ['-{}'.format(arg.lstrip('-')) if not arg.startswith('-') \
+        else arg for arg in arg_names]
+    
+    arg_values = []
+    for i, line in enumerate(lines[2:]):
+        values = line.strip().replace(' ', '').split(',')
+        if len(values) == 1:
+            values = values * n_samp
+        elif len(values) < n_samp:
+            raise ValueError(f'Error in line {i + 3}. The number of entered values must be 1 or equal to the number of samples.')
+        arg_values.append(values)
+    
+    return n_samp, arg_names, arg_values
+
+def make_arg_sets(arg_names, arg_values, multi_value_args=None):
+
+    if multi_value_args is None:
+        multi_value_args = set()
+
+    argument_sets = []
+    
+    for values in zip(*arg_values):
+        arg_set = []
+        for arg_name, value in zip(arg_names, values):
+            if value.lower() == 'none':
+                continue
+            elif value.lower() == 'true':
+                arg_set.append(arg_name)
+            elif value.lower() != 'false':
+                arg_set.append(arg_name)
+
+                if arg_name in multi_value_args:
+                    multi_values = value.split(';')
+                    arg_set.extend(multi_values)
+                else:
+                    arg_set.append(value)
+
+        argument_sets.append(arg_set)
+    
+    return argument_sets
+
+def save_to_json(argument_sets, filename):
+    with open(filename, 'w') as f:
+        json.dump(argument_sets, f, indent=4)
+
+def intmap_multi(argument_sets, single_end = args.single_end):
+    for args in argument_sets:
+        if not single_end:
+            cmd_list = ['intmap'] + args
+        else:
+            cmd_list = ['intmap_se'] + args
+        cmd = ' '.join(cmd_list)
+        subprocess.run(cmd, shell=True)
+
+if __name__ == "__main__":
+    
+    import os
+    import sys
+    import subprocess
+    import json
+        
+    if args.args_json is None:
+        if args.setup_file is None:
+            n_samp, arg_names, arg_values = get_user_input()
+            argument_sets = make_arg_sets(arg_names, arg_values, MULTI_VALUE_ARGS)
+        else:
+            n_samp, arg_names, arg_values = parse_input_file(setup_file = args.setup_file)
+            argument_sets = make_arg_sets(arg_names, arg_values, MULTI_VALUE_ARGS)
+            
+        if args.json_name is not None:
+            filename = args.json_name + '.json'                
+        else:
+            filename = "argument_sets.json"
+        
+        if not os.path.isfile(filename):
+            save_to_json(argument_sets, filename)
+        else:
+            raise ValueError('{} already exists in the output directory.'.format(filename))
+
+        if args.arg_sets_only:
+            print('Argument-sets JSON is saved. Exiting.')
+            sys.exit()
+        else:
+            args_json = filename
+    else:
+        args_json = args.args_json
+        
+    with open(args_json, 'r') as j:
+        argument_sets = json.load(j)
+    intmap_multi(argument_sets)

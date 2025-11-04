@@ -1,0 +1,29 @@
+{
+    "kept": {
+        "chr1_1000": [
+            {
+                "read_name": "read1",
+                "chrom": "chr1",
+                "start": 1000,
+                "end": 1100,
+                "count": 7,
+                "strand": "+",
+                "ltr_umi": "AAAA",
+                "linker_umi": "TTTT",
+                "seq1": "ACTGACTGACTGACTGACTGACTGACTGACTGACTGACTG",
+                "seq2": "CAGTCAGTCAGTCAGTCAGTCAGTCAGTCAGTCAGTCAGT",
+                "multi": "False",
+                "mean_qual": 35,
+                "ltr_match": "ATGC",
+                "linker_match": "ATGC",
+                "combined_umi": "AAAATTTT"
+            }
+        ]
+    },
+    "dup": {
+        "read1": [
+            "read2",
+            "read3"
+        ]
+    }
+}

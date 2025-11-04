@@ -1,0 +1,42 @@
+{
+    "mm_read1": {
+        "read_name": "mm_read1",
+        "seq1": "GCGTAGCGTGGC",
+        "count": 2,
+        "chrom": "chr2",
+        "start": 188,
+        "end": 200,
+        "strand": "-",
+        "multi": "True - relocated"
+    },
+    "mm_read2": {
+        "read_name": "mm_read2",
+        "seq1": "GCGTAGCGTGGC",
+        "count": 1,
+        "chrom": "chr2",
+        "start": 188,
+        "end": 200,
+        "strand": "-",
+        "multi": "True - relocated"
+    },
+    "mm_read3": {
+        "read_name": "mm_read3",
+        "seq1": "ATCGATCGATCG",
+        "count": 3,
+        "chrom": "chr4",
+        "start": 600,
+        "end": 612,
+        "strand": "-",
+        "multi": "True - grouped"
+    },
+    "mm_read4": {
+        "read_name": "mm_read4",
+        "seq1": "ATCGATCGATCG",
+        "count": 2,
+        "chrom": "chr4",
+        "start": 600,
+        "end": 612,
+        "strand": "-",
+        "multi": "True - grouped"
+    }
+}

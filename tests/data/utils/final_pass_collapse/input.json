@@ -1,0 +1,62 @@
+{
+    "read1": {
+        "chrom": "chr1",
+        "start": 100,
+        "end": 200,
+        "strand": "+",
+        "count": 80,
+        "seq1": "ATCGATCG",
+        "seq2": "GCTAGCTA",
+        "ltr_umi": "AAAA",
+        "linker_umi": "TTTT",
+        "multi": false,
+        "mean_qual": 35,
+        "ltr_match": "AAAA",
+        "linker_match": "AAAA"
+    },
+    "read2": {
+        "chrom": "chr1",
+        "start": 102,
+        "end": 202,
+        "strand": "+",
+        "count": 5,
+        "seq1": "ATCGATCG",
+        "seq2": "GCTAGCTA",
+        "ltr_umi": "AAAT",
+        "linker_umi": "TTTA",
+        "multi": false,
+        "mean_qual": 30,
+        "ltr_match": "AAAA",
+        "linker_match": "AAAA"
+    },
+    "read3": {
+        "chrom": "chr1",
+        "start": 300,
+        "end": 400,
+        "strand": "-",
+        "count": 90,
+        "seq1": "GCATGCAT",
+        "seq2": "ATGCATGC",
+        "ltr_umi": "CCCC",
+        "linker_umi": "GGGG",
+        "multi": true,
+        "mean_qual": 40,
+        "ltr_match": "AAAA",
+        "linker_match": "AAAA"
+    },
+    "read4": {
+        "chrom": "chr1",
+        "start": 305,
+        "end": 405,
+        "strand": "-",
+        "count": 3,
+        "seq1": "GCATGCAT",
+        "seq2": "ATGCATGC",
+        "ltr_umi": "CCCA",
+        "linker_umi": "GGGA",
+        "multi": true,
+        "mean_qual": 38,
+        "ltr_match": "AAAA",
+        "linker_match": "AAAA"
+    }
+}

@@ -1,0 +1,5 @@
+.DS_Store
+example_data/.DS_Store
+example_data/processed/
+example_data/data/raw_data/
+example_data/outputs/
