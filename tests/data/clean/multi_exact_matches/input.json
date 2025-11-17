@@ -5,7 +5,8 @@
         "seq1": "ATGC",
         "seq2": "GCTA",
         "count": 5,
-        "mean_qual": 30
+        "mean_qual": 30,
+        "map_qual": 25
     },
     "read2": {
         "ltr_umi": "AAAA",
@@ -13,7 +14,8 @@
         "seq1": "ATGC",
         "seq2": "GCTA",
         "count": 3,
-        "mean_qual": 35
+        "mean_qual": 35,
+        "map_qual": 30
     },
     "read3": {
         "ltr_umi": "GGGG",
@@ -21,6 +23,7 @@
         "seq1": "TGCA",
         "seq2": "ACTG",
         "count": 2,
-        "mean_qual": 25
+        "mean_qual": 25,
+        "map_qual": 30
     }
 }

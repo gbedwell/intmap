@@ -16,7 +16,8 @@
                 "mean_qual": 35,
                 "ltr_match": "ATGC",
                 "linker_match": "ATGC",
-                "combined_umi": "AAAATTTT"
+                "combined_umi": "AAAATTTT",
+                "map_qual": 30
             }
         ]
     },

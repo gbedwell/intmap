@@ -32,7 +32,7 @@ def unique_exact_matches(input_dict):
     tmp_exact_dup = set()
     
     sort_key = itemgetter('start', 'end', 'ltr_umi', 'linker_umi')
-    qual_key = itemgetter('mean_qual')
+    qual_key = itemgetter('map_qual', 'mean_qual')
     
     for key, entries in input_dict.items():
         entries.sort(key = sort_key)
@@ -164,7 +164,7 @@ def cluster_entries_by_umis(entries, threshold, frag_ratio):
             entry['combined_umi'] = entry['ltr_umi'] + entry['linker_umi']
     
     if len(entries) > 100: 
-        entries.sort(key=itemgetter('count', 'mean_qual'), reverse=True)
+        entries.sort(key=itemgetter('count', 'map_qual', 'mean_qual'), reverse=True)
         
         first_umi = entries[0]['combined_umi']
         tree = OptimizedBKTree(cached_hamming_distance, first_umi)
@@ -212,7 +212,7 @@ def cluster_entries_by_umis(entries, threshold, frag_ratio):
 def build_umi_networks(umi_clusters, frag_ratio, mem_aware = False):
     networks = defaultdict(list)
     unnetworked = set()
-    count_key = itemgetter('count', 'mean_qual')
+    count_key = itemgetter('count', 'map_qual', 'mean_qual')
     
     for cluster in umi_clusters:
         all_reads = {read['read_name'] for read in cluster}
@@ -339,7 +339,7 @@ def unique_fuzzy_matches(input_dict, len_diff, umi_diff, frag_ratio):
     tmp_fuzzy_dup = defaultdict(set)
     
     position_key = itemgetter('start', 'end')
-    quality_key = itemgetter('count', 'mean_qual')
+    quality_key = itemgetter('count', 'map_qual', 'mean_qual')
 
     for key, entries in input_dict.items():        
         position_groups = ranged_groupby(entries, len_diff, sort_key = position_key)
@@ -379,7 +379,7 @@ def multi_exact_matches(input_dict):
     ])
     
     unique_indices, inverse_indices, counts = np.unique(seq_array, return_inverse = True, return_counts = True)
-    qual_key = itemgetter('mean_qual')
+    qual_key = itemgetter('map_qual', 'mean_qual')
     
     for seq_idx in range(len(unique_indices)):
         group_indices = np.where(inverse_indices == seq_idx)[0]
@@ -560,7 +560,7 @@ def process_group(group, umi_diff, frag_ratio, seq_sim, len_diff, min_parallel_s
                 )
             
             for connected_entries in entry_clusters:
-                kept_entry = max(connected_entries, key = itemgetter('count', 'mean_qual'))
+                kept_entry = max(connected_entries, key = itemgetter('count', 'map_qual', 'mean_qual'))
                 kept_read = kept_entry['read_name']
                 
                 duplicate_reads = set(e['read_name'] for e in connected_entries) - {kept_read}

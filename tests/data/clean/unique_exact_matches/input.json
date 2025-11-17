@@ -7,7 +7,8 @@
             "ltr_umi": "AAAA",
             "linker_umi": "TTTT",
             "count": 1,
-            "mean_qual": 30
+            "mean_qual": 30,
+            "map_qual": 30
         },
         {
             "read_name": "read2",
@@ -16,7 +17,8 @@
             "ltr_umi": "AAAA",
             "linker_umi": "TTTT",
             "count": 2,
-            "mean_qual": 40
+            "mean_qual": 40,
+            "map_qual": 30
         }
     ]
 }

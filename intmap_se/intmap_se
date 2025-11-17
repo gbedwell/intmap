@@ -882,6 +882,7 @@ if __name__ == "__main__":
                 'seq1': read1_info['sequence'], 
                 'multi': (True if read1_info['multimapping'] else False),
                 'mean_qual': -10 * math.log10(combined_qual),
+                'map_qual': read1_info['map_quality'],
                 'ltr_match': read1_info['ltr_match'],
                 'linker_match': read1_info['linker_match'],
                 'read_name': read1_info['query_name']
@@ -920,6 +921,7 @@ if __name__ == "__main__":
                         'seq1': info['seq1'], 
                         'multi': info['multi'],
                         'mean_qual': info['mean_qual'],
+                        'map_qual': info['map_qual'],
                         'ltr_match': info['ltr_match'],
                         'linker_match': info['linker_match'],
                         'read_name': read_key}
@@ -998,7 +1000,7 @@ if __name__ == "__main__":
                     key: info[key] for key in [
                         'chrom', 'start', 'end', 'count', 'strand',
                         'ltr_umi', 'linker_umi', 'seq1', 'multi', 'mean_qual', 
-                        'ltr_match', 'linker_match', 'read_name'
+                        'map_qual', 'ltr_match', 'linker_match', 'read_name'
                     ]
                 }
                 for info_list in unique_fuzzy_kept.values()

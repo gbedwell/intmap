@@ -259,15 +259,23 @@ def collapse_group(chrom_strand_tuple, pos_counts, len_diff, min_count,
     
     return read_updates
 
-def consolidate_new_dups(kept_dict):
+def consolidate_new_dups(kept_dict, include_umis = False):
       fragment_data = []
       read_names = []
 
       for read_name, frag in kept_dict.items():
-          fragment_data.append((frag['chrom'], frag['start'], frag['end'], frag['strand']))
+          if include_umis:
+              fragment_data.append((frag['chrom'], frag['start'], frag['end'], frag['strand'], frag['ltr_umi'], frag['linker_umi']))
+          else:
+              fragment_data.append((frag['chrom'], frag['start'], frag['end'], frag['strand']))
+              
           read_names.append(read_name)
-
-      fragment_data = np.array(fragment_data, dtype=[('chrom', 'U25'), ('start', 'i8'), ('end', 'i8'), ('strand', 'U1')])
+      
+      if include_umis:
+          fragment_data = np.array(fragment_data, dtype=[('chrom', 'U25'), ('start', 'i8'), ('end', 'i8'), ('strand', 'U1'), ('ltr_umi', 'U50'), ('linker_umi', 'U50')])
+      else:
+          fragment_data = np.array(fragment_data, dtype=[('chrom', 'U25'), ('start', 'i8'), ('end', 'i8'), ('strand', 'U1')])
+      
       read_names = np.array(read_names)
 
       unique_frags, inverse_indices, counts = np.unique(fragment_data, return_inverse = True, return_counts = True)
@@ -282,8 +290,11 @@ def consolidate_new_dups(kept_dict):
           group_reads = read_names[group_mask]
           
           best_read = max(group_reads, 
-                        key=lambda x: (kept_dict[x].get('count', 0), 
-                                      kept_dict[x].get('mean_qual', 0)))
+                        key=lambda x: (
+                          kept_dict[x].get('count', 0), 
+                          kept_dict[x].get('map_qual', 0),
+                          kept_dict[x].get('mean_qual', 0)
+                          ))
           
           total_count = sum(kept_dict[read].get('count', 0) for read in group_reads)
           kept_dict[best_read]['count'] = total_count
@@ -335,9 +346,9 @@ def final_pass_collapse(kept_frags, len_diff, nthr, min_count, count_fc, ltr_cuf
                 kept_frags[read_name]['start'] = pos
     
     if ltr_umi_len == 0 and linker_umi_len == 0:
-        reads_to_remove = consolidate_new_dups(kept_frags)
+        reads_to_remove = consolidate_new_dups(kept_frags, include_umis = False)
     else:
-        reads_to_remove = set()
+        reads_to_remove = consolidate_new_dups(kept_frags, include_umis = True)
     
     if ltr_cufp:
         ltr_umi_groups = defaultdict(list)
@@ -356,7 +367,10 @@ def final_pass_collapse(kept_frags, len_diff, nthr, min_count, count_fc, ltr_cuf
                 if len(read_names) > 1:
                     sorted_reads = sorted(
                         read_names,
-                        key=lambda x: (kept_frags[x].get('count', 0), kept_frags[x].get('mean_qual', 0)),
+                        key=lambda x: (
+                          kept_frags[x].get('count', 0), 
+                          kept_frags[x].get('map_qual', 0),
+                          kept_frags[x].get('mean_qual', 0)),
                         reverse=True
                     )
                     
@@ -382,7 +396,10 @@ def final_pass_collapse(kept_frags, len_diff, nthr, min_count, count_fc, ltr_cuf
                 if len(read_names) > 1:
                     sorted_reads = sorted(
                         read_names,
-                        key=lambda x: (kept_frags[x].get('count', 0), kept_frags[x].get('mean_qual', 0)),
+                        key=lambda x: (
+                          kept_frags[x].get('count', 0), 
+                          kept_frags[x].get('map_qual', 0),
+                          kept_frags[x].get('mean_qual', 0)),
                         reverse=True
                     )
                     

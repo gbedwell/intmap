@@ -118,6 +118,7 @@ def process_read(read, aln_mismatch_rate, aln_indel_rate, min_mapq,
                     'duplicate_count': 1,
                     'sequence': seq,
                     'multimapping': multimapping,
+                    'map_quality': mapq,
                     'mean_quality': mean_qual,
                     'ltr_match': ltr_match,
                     'linker_match': linker_match
@@ -288,6 +289,7 @@ def process_read_lr(read, aln_mismatch_rate, aln_indel_rate, min_mapq, min_frag_
                     'duplicate_count': 1,
                     'sequence': seq,
                     'multimapping': multimapping,
+                    'map_quality': mapq,
                     'mean_quality': mean_qual,
                     'ltr_match': ltr_match,
                     'linker_match': linker_match

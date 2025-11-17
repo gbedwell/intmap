@@ -139,6 +139,7 @@ def process_read(read, aln_mismatch_rate, aln_indel_rate, max_frag_len,
                     'duplicate_count': 1,
                     'sequence': seq,
                     'multimapping': multimapping,
+                    'map_quality': mapq, 
                     'mean_quality': mean_qual,
                     'ltr_match': ltr_match,
                     'linker_match': linker_match

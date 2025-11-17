@@ -33,28 +33,32 @@ def test_cluster_entries_by_umis():
             'ltr_umi': 'AAAA',
             'linker_umi': 'TTTT',
             'count': 11,
-            'mean_qual': 30
+            'mean_qual': 30,
+            "map_qual": 30
         },
         {
             'read_name': 'read2',
             'ltr_umi': 'AAAT',  # 1 mismatch with read1
             'linker_umi': 'TTTT',
             'count': 5,
-            'mean_qual': 25
+            'mean_qual': 25,
+            "map_qual": 30
         },
         {
             'read_name': 'read3',
             'ltr_umi': 'AAAT',  
             'linker_umi': 'TTTA', # 1 mismatch with read2
             'count': 2,
-            'mean_qual': 20
+            'mean_qual': 20,
+            "map_qual": 30
         },
         {
             'read_name': 'read4',
             'ltr_umi': 'CGCG',  
             'linker_umi': 'GCGC',
             'count': 1,
-            'mean_qual': 20
+            'mean_qual': 20,
+            "map_qual": 30
         }
     ]
     
@@ -70,7 +74,8 @@ def test_cluster_entries_by_umis():
             'ltr_umi': umi1,
             'linker_umi': umi2,
             'count': random.randint(1, 100),
-            'mean_qual': random.randint(20, 40)
+            'mean_qual': random.randint(20, 40),
+            "map_qual": random.randint(20, 40)
         })
     
     # Test both scenarios

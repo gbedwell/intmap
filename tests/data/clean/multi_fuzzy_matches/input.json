@@ -15,7 +15,8 @@
                 "multi": "True",
                 "mean_qual": 35,
                 "ltr_match": "ATGC",
-                "linker_match": "ATGC"
+                "linker_match": "ATGC",
+                "map_qual": 30
             },
             {
                 "read_name": "mm_read2",
@@ -31,7 +32,8 @@
                 "multi": "True",
                 "mean_qual": 30,
                 "ltr_match": "ATGC",
-                "linker_match": "ATGC"
+                "linker_match": "ATGC",
+                "map_qual": 30
             }
         ]
     ]
