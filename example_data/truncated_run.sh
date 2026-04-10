@@ -1,24 +1,21 @@
 intmap \
-  -r1 data/sample3_R1.fq.gz \
-  -r2 data/sample3_R2.fq.gz \
-  -ltr5 AGGAACCCCTAGTGATGGAGTTGGC \
-  -ltr3 CACTCCCTCTCTGCGCGCTCGCTCGCTCACTGAGGCCGGGCGACCAAAGGTCGCCCGACGCCCGGGCTTTGCCCGGGCGGCCTCAGTGAGCGAGCGAGCGCGCAGAGAGGGAGTGGCCAA \
-  -ltr3_alt CACTCCCTCTCTGCGCGCTCGCTCGCTCACTGAGGCGCCCGGGCGAAACGCCCGGGCTGGTCGCCCGTTTCGGGCGACCGCCTCAGTGAGCGAGCGAGCGCGCAGAGAGGGAGTGGCCAA \
-  -linker5 ATGAGCATTC \
-  -linker3 TACACGATTAC \
+  -ltr_reads data/sample3_R1.fq.gz \
+  -linker_reads data/sample3_R2.fq.gz \
+  -ltr AGGAACCCCTAGTGATGGAGTTGGCCACTCCCTCTCTGCGCGCTCGCTCGCTCACTGAGGCCGGGCGACCAAAGGTCGCCCGACGCCCGGGCTTTGCCCGGGCGGCCTCAGTGAGCGAGCGAGCGCGCAGAGAGGGAGTGGCCAA \
+  -ltr2 AGGAACCCCTAGTGATGGAGTTGGCCACTCCCTCTCTGCGCGCTCGCTCGCTCACTGAGGCGCCCGGGCGAAACGCCCGGGCTGGTCGCCCGTTTCGGGCGACCGCCTCAGTGAGCGAGCGAGCGCGCAGAGAGGGAGTGGCCAA \
+  -linker ATGAGCATTCTACACGATTAC \
   -nm truncated_example \
   -nthr 4 \
-  -bt2_idx_dir /Users/gbedwell/Documents/github/T2T_genome/indexes/bowtie2 \
-  -bt2_idx_name hs1 \
+  -g_idx_dir /Users/gbedwell/Documents/github/T2T_genome/indexes/bowtie2 \
+  -g_idx_name hs1 \
   -v_idx_dir /Users/gbedwell/Documents/github/virus_genomes/HIV-1 \
   -v_idx_name hiv1 \
   -linker_umi_offset 0 \
   -linker_umi_len 12 \
   -seq_sim 1 \
   -len_diff 0 \
-  -umi_diff 0 \
   -frag_ratio 1000 \
   -min_count 1000 \
-  -count_fc 1000 \
+  -abundant_fc 1000 \
   --reassign_mm \
-  --ttr > truncated_output.txt
+  --ttr > outputs/truncated_output.txt

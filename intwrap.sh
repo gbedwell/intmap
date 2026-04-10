@@ -1,13 +1,15 @@
 #!/bin/bash
 
 # This script wraps demultiplexing and mapping into a single command.
-# In the setup file, the demultiplexed file paths should be given as demux/NAME_R1.fq.gz, 
+# In the setup file, the demultiplexed file paths should be given as e.g., demux/NAME_R1.fq.gz, 
 # where NAME matches the FASTA headers used for demultiplexing.
 # See https://github.com/gbedwell/intmap for more information.
 
 set -euo pipefail
 
 R2_FILE=""
+I1_FILE=""
+I2_FILE=""
 BC_R1=""
 BC_R2=""
 NTHR=1
@@ -17,6 +19,7 @@ THREE_PRIME=false
 R1_ONLY=false
 R2_ONLY=false
 NO_INDEX=false
+HEADER_INDEX=false
 FILE_MATCH=""
 
 while [[ $# -gt 0 ]]; do
@@ -27,6 +30,14 @@ while [[ $# -gt 0 ]]; do
             ;;
         -r2|--read2)
             R2_FILE="$2"
+            shift 2
+            ;;
+        -i1|--index1)
+            I1_FILE="$2"
+            shift 2
+            ;;
+        -i2|--index2)
+            I2_FILE="$2"
             shift 2
             ;;
         -bc_r1|--barcode_r1)
@@ -69,6 +80,10 @@ while [[ $# -gt 0 ]]; do
             NO_INDEX=true
             shift
             ;;
+        --header_index)
+            HEADER_INDEX=true
+            shift
+            ;;
         -file_match|--file_match)
             FILE_MATCH="$2"
             shift 2
@@ -85,12 +100,14 @@ while [[ $# -gt 0 ]]; do
             echo "Usage: $0 [OPTIONS]"
             echo "Required options:"
             echo "  -r1, --read1               Multiplexed R1 FASTQ file"
-            echo "  -setup, --setup_file       Analysis setup file"
-            echo "  -json, --json_name         Anaysis JSON name"
-            echo "  -out, --out_file           Analysis output file"
+            echo "  -setup, --setup_file       intmap_multi setup file"
+            echo "  -json, --json_name         intmap_multi argument JSON name"
+            echo "  -out, --out_file           intmap_multi output file"
             echo "  -h, --help                 Show this help message"
             echo "Optional arguments (possibly required in certain circumstances):"
             echo "  -r2, --read2               Multiplexed R2 FASTQ file"
+            echo "  -i1, --index1              Index 1 (I1) FASTQ file"
+            echo "  -i2, --index2              Index 2 (I2) FASTQ file"
             echo "  -bc_r1, --barcode_r1       R1 barcode file"
             echo "  -bc_r2, --barcode_r2       R2 barcode file"
             echo "  -nthr, --nthr              Number of threads for demultiplexing (default: 1)"
@@ -98,6 +115,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --r1_only                  Use only R1 barcode for demultiplexing"
             echo "  --r2_only                  Use only R2 barcode for demultiplexing"
             echo "  --no_index                 Do not build a barcode index"
+            echo "  --header_index             Demultiplex using index sequences in FASTQ headers"
             echo "  -file_match, --file_match  2-column csv/tsv for output file naming"
             echo "  --three_prime              Look for barcodes on the 3' end of R1"
             echo "  --single_end               Run mapping in single-end mode"
@@ -123,6 +141,8 @@ if [[ $# -eq 0 ]]; then
     echo "  -h, --help                 Show this help message"
     echo "Optional arguments (possibly required in certain circumstances):"
     echo "  -r2, --read2               Multiplexed R2 FASTQ file"
+    echo "  -i1, --index1              Index 1 (I1) FASTQ file"
+    echo "  -i2, --index2              Index 2 (I2) FASTQ file"
     echo "  -bc_r1, --barcode_r1       R1 barcode file"
     echo "  -bc_r2, --barcode_r2       R2 barcode file"
     echo "  -nthr, --nthr              Number of threads for demultiplexing (default: 1)"
@@ -130,6 +150,7 @@ if [[ $# -eq 0 ]]; then
     echo "  --r1_only                  Use only R1 barcode for demultiplexing"
     echo "  --r2_only                  Use only R2 barcode for demultiplexing"
     echo "  --no_index                 Do not build a barcode index"
+    echo "  --header_index             Demultiplex using index sequences in FASTQ headers"
     echo "  -file_match, --file_match  2-column csv/tsv for output file naming"
     echo "  --three_prime              Look for barcodes on the 3' end of R1"
     echo "  --single_end               Run mapping in single-end mode"
@@ -169,6 +190,12 @@ DEMUX_CMD+=" -r1 \"$R1_FILE\""
 if [[ -n "$R2_FILE" ]]; then
     DEMUX_CMD+=" -r2 \"$R2_FILE\""
 fi
+if [[ -n "$I1_FILE" ]]; then
+    DEMUX_CMD+=" -i1 \"$I1_FILE\""
+fi
+if [[ -n "$I2_FILE" ]]; then
+    DEMUX_CMD+=" -i2 \"$I2_FILE\""
+fi
 if [[ -n "$BC_R1" ]]; then
     DEMUX_CMD+=" -bc_r1 \"$BC_R1\""
 fi
@@ -181,6 +208,7 @@ DEMUX_CMD+=" -e \"$E\""
 if [[ "$R1_ONLY" == true ]]; then DEMUX_CMD+=" --r1_only"; fi
 if [[ "$R2_ONLY" == true ]]; then DEMUX_CMD+=" --r2_only"; fi
 if [[ "$NO_INDEX" == true ]]; then DEMUX_CMD+=" --no_index"; fi
+if [[ "$HEADER_INDEX" == true ]]; then DEMUX_CMD+=" --header_index"; fi
 if [[ "$THREE_PRIME" == true ]]; then DEMUX_CMD+=" --three_prime"; fi
 if [[ -n "$FILE_MATCH" ]]; then DEMUX_CMD+=" -file_match \"$FILE_MATCH\""; fi
 

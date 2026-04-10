@@ -76,5 +76,25 @@ This project uses the following third-party packages, each of which is governed 
 - License: MIT License
 - URL: https://github.com/lh3/minimap2
 
+### seqtk==1.5-r133
+- License: MIT License
+- URL: https://github.com/lh3/seqtk
+
+### ruptures==1.1.10
+- License: BSD-2-Clause License
+- URL: https://pypi.org/project/ruptures/
+
+### pyranges==0.1.4
+- License: MIT License
+- URL: https://pypi.org/project/pyranges/
+
+### mmh3==5.2.1
+- License: MIT License
+- URL: https://pypi.org/project/mmh3/
+
+### parasail==1.3.4
+- License: BSD License
+- URL: https://pypi.org/project/parasail/
+
 ### Other software
 + The MLE method adapts code from the R package [sonicLength](https://rdrr.io/rforge/sonicLength/). sonicLength was authored by Charles Berry and is licensed under the GPL>=2 license.

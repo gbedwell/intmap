@@ -1,27 +1,29 @@
 {
     "kept": {
-        "mm_read1": {
-            "read_name": "mm_read1",
+        "mm_read4": {
+            "read_name": "mm_read4",
             "chrom": "chr1",
             "start": 1000,
             "end": 1100,
-            "count": 6,
+            "count": 10,
             "strand": "+",
             "ltr_umi": "AAAA",
             "linker_umi": "TTTT",
             "seq1": "ACTGACTGACTGACTGACTG",
-            "seq2": "CAGTCAGTCAGTCAGTCAGT",
+            "seq2": "CAGTCAGTCAGTCATTCAGT",
             "multi": "True",
-            "mean_qual": 35,
+            "mean_qual": 34,
             "ltr_match": "ATGC",
             "linker_match": "ATGC",
             "combined_umi": "AAAATTTT",
-            "map_qual": 30
+            "map_qual": 31
         }
     },
     "dup": {
-        "mm_read1": [
-            "mm_read2"
+        "mm_read4": [
+            "mm_read1",
+            "mm_read2",
+            "mm_read3"
         ]
     }
 }

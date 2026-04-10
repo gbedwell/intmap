@@ -22,7 +22,7 @@
             "chrom": "chr1",
             "start": 1002,
             "end": 1102,
-            "count": 1,
+            "count": 2,
             "strand": "+",
             "ltr_umi": "AAAC",
             "linker_umi": "TTTT",
@@ -37,8 +37,8 @@
         {
             "read_name": "read3",
             "chrom": "chr1",
-            "start": 1001,
-            "end": 1101,
+            "start": 996,
+            "end": 1098,
             "count": 1,
             "strand": "+",
             "ltr_umi": "AAAC",
@@ -50,6 +50,57 @@
             "ltr_match": "ATGC",
             "linker_match": "ATGC",
             "map_qual": 30
-        }        
+        },
+        {
+            "read_name": "read4",
+            "chrom": "chr1",
+            "start": 1000,
+            "end": 1100,
+            "count": 1,
+            "strand": "+",
+            "ltr_umi": "GGGG",
+            "linker_umi": "TTTG",
+            "seq1": "ACTGACTGACTGACTGACTGACTGACTGACTGACTGACTG",
+            "seq2": "CAGTCAGTCAGTCAGTCAGTCAGTCAGTCAGTCAGTCAGT",
+            "multi": "False",
+            "mean_qual": 30,
+            "ltr_match": "ATGC",
+            "linker_match": "ATGC",
+            "map_qual": 30
+        },
+        {
+            "read_name": "read5",
+            "chrom": "chr1",
+            "start": 1001,
+            "end": 1101,
+            "count": 1,
+            "strand": "+",
+            "ltr_umi": "GGGC",
+            "linker_umi": "TTTG",
+            "seq1": "ACTGACTGACTGACTGACTGACTGACTGACTGACTGACTG",
+            "seq2": "CAGTCAGTCAGTCAGTCAGTCAGTCAGTCAGTCAGTCAGT",
+            "multi": "False",
+            "mean_qual": 30,
+            "ltr_match": "ATGC",
+            "linker_match": "ATGC",
+            "map_qual": 30
+        },
+        {
+            "read_name": "read6",
+            "chrom": "chr1",
+            "start": 1000,
+            "end": 1100,
+            "count": 2,
+            "strand": "+",
+            "ltr_umi": "GGGC",
+            "linker_umi": "TTTG",
+            "seq1": "ACTGACTGACTGACTGACTGACTGACTGACTGACTGACTG",
+            "seq2": "CAGTCAGTCAGTCAGTCAGTCAGTCAGTCAGTCAGTCAGT",
+            "multi": "False",
+            "mean_qual": 30,
+            "ltr_match": "ATGC",
+            "linker_match": "ATGC",
+            "map_qual": 35
+        }    
     ]
 }

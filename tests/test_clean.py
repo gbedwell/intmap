@@ -1,7 +1,7 @@
 from intmap.clean import unique_exact_matches
 from intmap.clean import unique_fuzzy_matches
 from intmap.clean import ranged_groupby
-from intmap.clean import cluster_entries_by_umis, build_umi_networks, find_connected_components
+from intmap.clean import cluster_entries_by_umis, build_umi_networks
 from intmap.clean import multi_exact_matches
 from intmap.clean import verify_sequence_groups
 from intmap.clean import multi_fuzzy_matches
@@ -14,11 +14,15 @@ from .conftest import load_test_data
 import random
 import numpy as np
 import faiss
+from collections import Counter
 
 def test_unique_exact_matches():
     input_data, expected = load_test_data('clean', 'unique_exact_matches')
     result = unique_exact_matches(input_data)
-    assert result == expected
+    sorted_result = sorted(tuple(sorted(item.items())) for item in result["chr1"])
+    sorted_expected = sorted(tuple(sorted(item.items())) for item in expected["chr1"])
+    assert len(result["chr1"]) == len(expected["chr1"])
+    assert sorted_result == sorted_expected
     
 def test_ranged_groupby():
     input_data, expected = load_test_data('clean', 'ranged_groupby')
@@ -26,7 +30,7 @@ def test_ranged_groupby():
     assert result == expected
     
 def test_cluster_entries_by_umis():
-    # Test small cluster (< 10000 entries)
+    # Test small cluster
     small_cluster_input = [
         {
             'read_name': 'read1',
@@ -62,11 +66,11 @@ def test_cluster_entries_by_umis():
         }
     ]
     
-    # Test large cluster (> 10000 entries)
+    # Test large cluster
     random.seed(1)
     large_cluster_input = []
     bases = ['A', 'T', 'G', 'C']
-    for i in range(1200):
+    for i in range(1500):
         umi1 = ''.join(random.choices(bases, k = 4))
         umi2 = ''.join(random.choices(bases, k = 4))
         large_cluster_input.append({
@@ -79,20 +83,32 @@ def test_cluster_entries_by_umis():
         })
     
     # Test both scenarios
-    small_clusters = cluster_entries_by_umis(small_cluster_input, threshold = 4, frag_ratio = 2)
-    print(f'Small clusters: {small_clusters}')
-    large_clusters = cluster_entries_by_umis(large_cluster_input, threshold = 1, frag_ratio = 2)
+    small_clusters = cluster_entries_by_umis(small_cluster_input, frag_ratio = 2)
+    large_clusters = cluster_entries_by_umis(large_cluster_input, frag_ratio = 2)
     
     # Verify small cluster results
-    assert len(small_clusters) == 2  # Should group similar UMIs
-    assert len(small_clusters[0]) == 3  # reads1-3 should cluster together
-    assert len(small_clusters[1]) == 1  # One single entry
+    assert len(small_clusters) == 2
+    assert len(small_clusters[0]) == 3
+    assert len(small_clusters[1]) == 1
     
-    # Verify large cluster results
-    assert len(large_clusters) > 1  # Should form multiple clusters
-    for cluster in large_clusters:
-        assert len(cluster) >= 1  # Each cluster should have entries
+    names1 = []
+    for entry in small_clusters[0]:
+        names1.append(entry['read_name'])
         
+    assert all(name in names1 for name in ['read1', 'read2', 'read3'])
+    
+    names2 = []
+    for entry in small_clusters[1]:
+        names2.append(entry['read_name'])
+        
+    assert all(name in names2 for name in ['read4'])
+    
+    # Check large cluster results
+    # This should be better
+    assert len(large_clusters) > 1
+    for cluster in large_clusters:
+        assert len(cluster) >= 1
+
 def test_multi_exact_matches():
     input_data, expected = load_test_data('clean', 'multi_exact_matches')
     result = multi_exact_matches(input_data)
@@ -102,42 +118,53 @@ def test_verify_sequence_groups():
     input_data, expected = load_test_data('clean', 'verify_sequence_groups')
     
     result = [verify_sequence_groups(group, seq_sim=0.95, len_diff=1, nthr=1) for group in input_data]
-    assert result == expected
+    result_set = {frozenset(frozenset(tuple(sorted(entry.items())) for entry in group) for group in cluster) for cluster in result}
+    expected_set = {frozenset(frozenset(tuple(sorted(entry.items())) for entry in group) for group in cluster) for cluster in expected}
+
+    assert result_set == expected_set
+    
+def test_verify_sequence_groups_faiss():
+    input_data, expected = load_test_data('clean', 'verify_sequence_groups_faiss')
+    
+    result = [verify_sequence_groups(group, seq_sim=0.95, len_diff=1, nthr=1, min_parallel_size=1) for group in input_data]
+    result_set = {frozenset(frozenset(tuple(sorted(entry.items())) for entry in group) for group in cluster) for cluster in result}
+    expected_set = {frozenset(frozenset(tuple(sorted(entry.items())) for entry in group) for group in cluster) for cluster in expected}
+
+    assert result_set == expected_set
     
 def test_unique_fuzzy_matches():
     input_data, expected = load_test_data('clean', 'unique_fuzzy_matches')
     kept, dup = unique_fuzzy_matches(
         input_dict=input_data,
         len_diff=5,
-        umi_diff=1,
         frag_ratio=2
         )
-    assert kept == expected['kept']
-    assert dup == expected['dup']
+    assert sorted(kept) == sorted(expected['kept'])
+    assert sorted(dup) == sorted(expected['dup'])
     
 def test_multi_fuzzy_matches():
     input_data, expected = load_test_data('clean', 'multi_fuzzy_matches')
     kept, dup = multi_fuzzy_matches(
         groups=input_data['groups'],
-        umi_diff=3,
         frag_ratio=2,
         nthr=1,
         seq_sim=0.9,
         len_diff = 1
         )
-    assert kept == expected['kept']
-    assert dup == expected['dup']
+    assert sorted(kept) == sorted(expected['kept'])
+    assert sorted(dup) == sorted(expected['dup'])
     
 def test_group_mm_sequences():
     test_group = {
         'read1': {'read_name': 'read1', 'seq1': 'AAGACTGCTTGAGCCCAGGAGTTCAAGGCTACAGTGAGCTATGATCACACCGT', 'count': 1},
         'read2': {'read_name': 'read2', 'seq1': 'AACACTGCTTGAGCCCAGGAGTTCAAGGCTACAGTGAGCTATGATCACACC', 'count': 1},
         'read3': {'read_name': 'read3', 'seq1': 'AAGACTGCTTGAGCCCAGGAGTTCAACGCAACAGTGAGCTATGATCA', 'count': 1},
-        'read4': {'read_name': 'read4', 'seq1': 'GCCTTGAACTCCTGGGCTCAAGCAGTCTT', 'count': 1}
+        'read4': {'read_name': 'read4', 'seq1': 'GCCTTGAACTCCTGGGCTCAAGCAGTCTT', 'count': 1},
+        'read5': {'read_name': 'read4', 'seq1': 'GAATTGAACTCCTGGGCTCAAGCAGTCTTCCGAT', 'count': 1}
     }
 
     subgroups1 = group_mm_sequences(mm_reads=test_group, seq_sim=0.8, min_frag_len=25,
-                                    num_perm=32, token_size=4)
+                                    num_perm=32, token_size=4, threshold=0.5)
     
     assert len(subgroups1) == 2
     
@@ -146,11 +173,11 @@ def test_group_mm_sequences():
     assert set(['AAGACTGCTTGAGCCCAGGAGTTCAAGGCTACAGTGAGCTATGATCACACCGT', 
                 'AACACTGCTTGAGCCCAGGAGTTCAAGGCTACAGTGAGCTATGATCACACC', 
                 'AAGACTGCTTGAGCCCAGGAGTTCAACGCAACAGTGAGCTATGATCA']) in group_seqs1
-    assert set(['GCCTTGAACTCCTGGGCTCAAGCAGTCTT']) in group_seqs1
-    
-from tests.data.clean.build_position_based_index.test_data import get_expected_data
+    assert set(['GCCTTGAACTCCTGGGCTCAAGCAGTCTT',
+                'GAATTGAACTCCTGGGCTCAAGCAGTCTTCCGAT']) in group_seqs1
 
 def test_build_position_based_index():
+    # expected data isn't used here -- OK to ignore, but needed for load_test_data.
     input_data, _ = load_test_data('clean', 'build_position_based_index')
     
     um_index, bloom_filter, fragment_counts = build_position_based_index(
@@ -161,7 +188,6 @@ def test_build_position_based_index():
     
     assert isinstance(um_index, dict)
     assert len(um_index) > 0
-    
     assert len(bloom_filter) > 0
     
     for read in input_data.values():
@@ -175,6 +201,10 @@ def test_build_position_based_index():
                     position_info, read_id = entry
                     assert len(position_info) == 3
                     assert isinstance(read_id, str)
+            else:
+                raise ValueError("prefix not in um_index.")
+        else:
+            raise ValueError("prefix not in bloom_filter.")
     
 def test_compare_to_um():
     # Expanded test cases with more diverse scenarios
@@ -217,7 +247,7 @@ def test_compare_to_um():
         },
         "um_read5": {
             "read_name": "um_read5",
-            "seq1": "GCGTAGCGTGGCAA",
+            "seq1": "GCGTAGCGTGGCA",
             "strand": "-",
             "start": 286,
             "end": 300,
@@ -246,7 +276,7 @@ def test_compare_to_um():
     
     group1 = [
         {
-            "read_name": "mm_read1", # Perfect match to um_read1
+            "read_name": "mm_read1",
             "seq1": "GCGTAGCGTGGC",
             "count": 1,
             "chrom": "chr1", 
@@ -256,8 +286,18 @@ def test_compare_to_um():
             "multi": "True"
         },
         {
-            "read_name": "mm_read2", # Perfect match to um_read1
+            "read_name": "mm_read2",
             "seq1": "GCGTAGCGTGG",
+            "count": 1,
+            "chrom": "chr1",
+            "start": 305,
+            "end": 316,
+            "strand": "+",
+            "multi": "True"
+        },
+        {
+            "read_name": "mm_read3", # Mismatch in 'GCGTA' prefix
+            "seq1": "GAGTAGCGTGG",
             "count": 1,
             "chrom": "chr1",
             "start": 305,
@@ -269,7 +309,7 @@ def test_compare_to_um():
     
     group2 = [
         {
-            "read_name": "mm_read3", # No match
+            "read_name": "mm_read4", # No match
             "seq1": "TGCGAAACCTAG",
             "count": 1,
             "chrom": "chr3",
@@ -286,7 +326,6 @@ def test_compare_to_um():
         nthr=1
     )
 
-    # Test group1 - should be relocated
     result1 = compare_to_um(
         mm_group=group1,
         k=5,
@@ -294,22 +333,26 @@ def test_compare_to_um():
         bloom_filter=bloom_filter,
         um_kept_dict=um_kept_dict,
         seq_sim=0.8,
-        fragment_counts = fragment_counts
+        fragment_counts = fragment_counts,
+        um_reassign_diff = 0.0,
+        um_reassign_fc = 1
     )
     
     if isinstance(result1, tuple) and len(result1) == 2:
         relocated_group, unrelocated_group = result1
-        assert len(relocated_group) > 0  # Some reads should be relocated
-        # Check that relocated reads have the correct format
+        assert len(relocated_group) == 2 
+        assert len(unrelocated_group) == 1
         for read in relocated_group:
             assert read['multi'] == 'True - relocated'
-            assert read['chrom'] == 'chr3'  # Should match um_read5
-            assert read['strand'] == '-'    # Should match um_read5
+            assert read['chrom'] == 'chr3' # see note below
+            assert read['strand'] == '-'
+            # Note:
+            # um_index: 'GCGTA': [(('chr2', 200, '-'), 'um_read1'), (('chr3', 300, '-'), 'um_read5')]
+            # ('chr2', 200, '-') has 2 fragments; ('chr3', 300, '-') has 3 fragments.
+            # Higher number of fragment counts means chr3 is chosen and um_read5 is the representative.
     else:
-        # If no relocation happened, the result should be the original group
-        assert result1 == group1
+        raise ValueError("result1 is incorrect.")
     
-    # Test group2 - should not be relocated
     result2 = compare_to_um(
         mm_group=group2,
         k=5,
@@ -317,17 +360,18 @@ def test_compare_to_um():
         bloom_filter=bloom_filter,
         um_kept_dict=um_kept_dict,
         seq_sim=0.8,
-        fragment_counts = fragment_counts
+        fragment_counts = fragment_counts,
+        um_reassign_diff = 0.0,
+        um_reassign_fc = 1
     )
     
-    # For group2, we expect no relocation
-    if isinstance(result2, tuple) and len(result2) == 2:
-        relocated_group, unrelocated_group = result2
-        assert len(relocated_group) == 0  # No reads should be relocated
-        assert unrelocated_group == group2
-    else:
-        # If no relocation happened, the result should be the original group
+    if isinstance(result2, list):
         assert result2 == group2
+    else:
+        if isinstance(result2, tuple) and len(result1) == 2:
+            raise ValueError("Reassignment not expected for group2.")
+        else:
+            raise ValueError("result2 is incorrect.")
     
 def test_assign_mm_group():
     group = [
@@ -382,17 +426,20 @@ def test_assign_mm_group():
 def test_verify_mm_positions():
     input_data, expected = load_test_data('clean', 'verify_mm_positions')
     
-    result = verify_mm_positions(
+    result1 = verify_mm_positions(
         mm_kept_dict=input_data['mm_kept_dict'],
         um_kept_dict=input_data['um_kept_dict'],
         seq_sim=0.8,
         nthr=1,
-        k = 5,
-        len_diff = 5,
+        k=5,
+        len_diff=5,
         min_frag_len=20,
         num_perm=32, 
         token_size=4,
-        mm_group_threshold=1
+        mm_group_threshold=1,
+        threshold=0.5,
+        um_reassign_diff = 0.0,
+        um_reassign_fc = 1
     )
     
-    assert result == expected
+    assert result1 == expected

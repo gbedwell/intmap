@@ -1,56 +1,113 @@
 import math
-import regex
 import pysam
 import sys
 import numpy as np
 from intmap.utils import *
+from collections import defaultdict
 
-def process_bam(out_bam):
+def process_bam(out_bam, single_end, long_read, remove_chr):
     bamfile = pysam.AlignmentFile(out_bam, 'rb')
-    reads_dict = {}
-    read_pairs = []
-
+    reads = []
     n_reads = 0
-    n_pairs = 0
+    n_pairs = 0 if not single_end else None
+    if remove_chr:
+        rm_reads = set()
+    
+    if single_end and not long_read:
+        reads_set = set()
+    else:
+        reads_dict = defaultdict(list)
+
+
     for read in bamfile.fetch():
-        n_reads += 1
-        if read.is_proper_pair:
-            if read.query_name not in reads_dict:
-                reads_dict[read.query_name] = read
-            else:
-                previous_read = reads_dict.pop(read.query_name)
-                
-                if read.is_read1:
-                    read1, read2 = read, previous_read
+        if remove_chr:
+            if read.reference_name in remove_chr:
+                if not single_end:
+                    if read.query_name in reads_dict:
+                        reads_dict.pop(read.query_name)
+                    else:
+                        rm_reads.add(read.query_name)
+                continue
+        if long_read:
+            aln_score = read.get_tag('AS')
+            reads_dict[read.query_name].append((aln_score, read))
+        elif single_end and not long_read:
+            if read.query_name not in reads_set:
+                reads_set.add(read.query_name)
+                reads.append(read)
+                n_reads += 1
+        else:
+            if remove_chr:
+                if read.query_name in rm_reads:
+                    continue
+            n_reads += 1
+            if read.is_proper_pair:
+                if read.query_name not in reads_dict:
+                    reads_dict[read.query_name] = read
                 else:
-                    read1, read2 = previous_read, read
+                    previous_read = reads_dict.pop(read.query_name)
                     
-                if read1.reference_name == read2.reference_name:
-                    if ((read1.is_forward and read2.is_reverse) or 
-                        (read1.is_reverse and read2.is_forward)):
-                        read_pairs.append((read1, read2))
-                        n_pairs += 1
+                    if read.is_read1:
+                        read1, read2 = read, previous_read
+                    else:
+                        read1, read2 = previous_read, read
+                        
+                    if read1.reference_name == read2.reference_name:
+                        if ((read1.is_forward and read2.is_reverse) or 
+                            (read1.is_reverse and read2.is_forward)):
+                            reads.append((read1, read2))
+                            n_pairs += 1
+
+    if long_read:
+        n_reads = len(reads_dict)
+        for _, alignments in reads_dict.items():
+            if len(alignments) == 1:
+                reads.append(alignments[0][1])
+            else:
+                primary_alignment = next(
+                    (aln for _, aln in alignments if (not aln.is_secondary or aln.get_tag('tp') == 'P')),
+                    None
+                )
+                if primary_alignment:
+                    primary_as_score = primary_alignment.get_tag('AS')
+                    # minimap2 will assign multimapping MAPQ scores to reads with very close alignment scores.
+                    # intmap considers these 'equal'
+                    equal_score_alignments = [
+                        aln for score, aln in alignments if abs(primary_as_score - score) < 25
+                    ]
+                    multi_best = len(equal_score_alignments) > 1
+                    if multi_best:
+                        primary_alignment.set_tag('XS', primary_as_score)
+                    reads.append(primary_alignment)
 
     print(f'Number of aligned reads: {n_reads}', flush = True)
     
     if n_reads > 0:
-        print(f'Number of proper pairs: {n_pairs} ({(((n_pairs * 2) / n_reads) * 100):.2f}%)',
-                flush = True)
+        if not single_end and not long_read:
+            print(f'Number of proper pairs: {n_pairs} ({(((n_pairs * 2) / n_reads) * 100):.2f}%)', flush = True)
         bamfile.close()
-        return read_pairs
+        return reads
     else:
         print(f'\nNo reads aligned to the target genome. Exiting.', flush = True)
         bamfile.close()
         sys.exit()
 
 def process_read(read, aln_mismatch_rate, aln_indel_rate, max_frag_len,
-                min_frag_len, min_mapq, no_mm, min_qual, match_after):
+                 min_frag_len, min_mapq, no_mm, min_qual, match_after,
+                 single_end, long_read):
+    cigartuples = read.cigartuples
+    n_clipped = 0
+    n_clipped_end = 0
     
-    cigar = read.cigarstring
-    cig_split = regex.findall('\\d+|\\D', cigar)
-    if cig_split[1] != 'M':
+    if cigartuples[0][0] == 4:  # 4 corresponds to 'S' (soft-clipping)
+        n_clipped = cigartuples[0][1]
+    elif cigartuples[0][0] != 0:  # 0 corresponds to 'M'
         return None
-    if 'S' in cig_split: # Should never happen with end-to-end
+
+    if cigartuples[-1][0] == 4:
+        n_clipped_end = cigartuples[-1][1]
+        
+    if not long_read and (n_clipped > 0 or n_clipped_end > 0):
         return None
         
     md = read.get_tag('MD')
@@ -58,11 +115,20 @@ def process_read(read, aln_mismatch_rate, aln_indel_rate, max_frag_len,
     ns = read_seq.count('N')
 
     if read.is_read1:
-        first_match = regex.match(r'^([ACGT]+)?(\d+)', md) or 'N' in read_seq[:match_after]
+        md_prefix = ''
+        for char in md:
+            if char.isalpha():
+                md_prefix += char
+            elif char.isdigit() and char != '0':
+                break
+            elif char == '^':
+                continue
+        first_match = len(md_prefix) > 0 or 'N' in read_seq[:match_after] or n_clipped > 0
         if first_match:
-            start_mm = len(first_match.group(1) or '')
+            start_mm = len(md_prefix)
             start_n = read_seq[:match_after].count('N')
-            if (start_mm + start_n) > match_after:
+            total_start_mm = start_mm + n_clipped + start_n
+            if total_start_mm > match_after:
                 return None
     
     as_tag = read.get_tag('AS')
@@ -89,12 +155,15 @@ def process_read(read, aln_mismatch_rate, aln_indel_rate, max_frag_len,
     mean_qual = np.mean(10 ** (q_array / -10))
     if mean_qual > min_qual:
         return None
-    
-    tlen = read.template_length
+
+    tlen = read.query_length if single_end else read.template_length
     if abs(tlen) > max_frag_len or abs(tlen) < min_frag_len:
         return None
 
     aln_len = read.query_alignment_length
+    # Add soft-clipped bases to aln_len -- important for treating soft-clipped bases as mismatches.
+    aln_len += n_clipped
+    aln_len += n_clipped_end
     n_mm = math.floor(aln_len * aln_mismatch_rate)
     n_indel = math.floor(aln_len * aln_indel_rate)
     edit_dist = read.get_tag('NM')
@@ -103,17 +172,19 @@ def process_read(read, aln_mismatch_rate, aln_indel_rate, max_frag_len,
         if read.has_tag('XM'):
             # N's are counted in the XM tag
             mismatch = read.get_tag('XM')
+            mismatch += n_clipped
+            mismatch += n_clipped_end
         else:
             # N's are not counted in the MD tag
-            mismatch = len(regex.findall('[ATCG]', md))
+            mismatch = sum(1 for char in md if char in 'ATCG')
             mismatch += ns
+            mismatch += n_clipped
+            mismatch += n_clipped_end
         
         if mismatch <= n_mm:
             indel = edit_dist - mismatch
             if indel <= n_indel:
-
                 strand = '-' if read.is_reverse else '+'
-                                
                 ltr_umi, linker_umi = read.get_tag('RX').split('-')
 
                 if strand == '-':
@@ -139,7 +210,7 @@ def process_read(read, aln_mismatch_rate, aln_indel_rate, max_frag_len,
                     'duplicate_count': 1,
                     'sequence': seq,
                     'multimapping': multimapping,
-                    'map_quality': mapq, 
+                    'map_quality': mapq,
                     'mean_quality': mean_qual,
                     'ltr_match': ltr_match,
                     'linker_match': linker_match
@@ -152,26 +223,21 @@ def process_read(read, aln_mismatch_rate, aln_indel_rate, max_frag_len,
         return None
 
 def process_read_pair(read1, read2, aln_mismatch_rate, aln_indel_rate, max_frag_len, 
-                        min_frag_len, min_mapq, no_mm, min_qual, match_after):
-    read1_info = process_read(read = read1, 
-                            aln_mismatch_rate = aln_mismatch_rate, 
-                            aln_indel_rate = aln_indel_rate,
-                            min_frag_len = min_frag_len,
-                            max_frag_len = max_frag_len,
-                            min_mapq = min_mapq,
-                            no_mm = no_mm,
-                            min_qual = min_qual,
-                            match_after = match_after)
+                      min_frag_len, min_mapq, no_mm, min_qual, match_after, single_end = False,
+                      long_read = False):
+    read1_info = process_read(
+      read = read1, aln_mismatch_rate = aln_mismatch_rate, aln_indel_rate = aln_indel_rate,
+      min_frag_len = min_frag_len, max_frag_len = max_frag_len, min_mapq = min_mapq,
+      no_mm = no_mm, min_qual = min_qual, match_after = match_after, single_end = single_end,
+      long_read = long_read
+    )
     
-    read2_info = process_read(read=read2, 
-                            aln_mismatch_rate = aln_mismatch_rate,
-                            aln_indel_rate = aln_indel_rate,
-                            min_frag_len = min_frag_len,
-                            max_frag_len = max_frag_len,
-                            min_mapq = min_mapq,
-                            no_mm = no_mm,
-                            min_qual = min_qual,
-                            match_after = match_after)
+    read2_info = process_read(
+      read = read2, aln_mismatch_rate = aln_mismatch_rate, aln_indel_rate = aln_indel_rate,
+      min_frag_len = min_frag_len, max_frag_len = max_frag_len, min_mapq = min_mapq,
+      no_mm = no_mm, min_qual = min_qual, match_after = match_after, single_end = single_end,
+      long_read = long_read
+    )
         
     if read1_info and read2_info:
         return read1_info, read2_info

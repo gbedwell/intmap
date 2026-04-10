@@ -1,94 +1,135 @@
-#!/usr/local/bin/python
-
+#!/usr/bin/env python3
+import os
+import subprocess
+import glob
+import shutil
+import regex
+from Bio import SeqIO
+import sys
+import gzip
+import resource
+from joblib import Parallel, delayed
 import argparse
+
 parser = argparse.ArgumentParser(prog = 'intmap_demux',
-                                description='''Demultiplexes integration site sequencing reads.''')
-parser.add_argument('-r1',
+                                 description='''Demultiplexes NGS reads based on expected index sequences.''')
+parser.add_argument('-ltr_reads',
                     type=str, 
-                    help='Forward/R1 read file.', 
+                    help='LTR/integrant reads file.', 
                     default=None, 
                     required=True)
-parser.add_argument('-r2',
+parser.add_argument('-linker_reads',
                     type=str, 
-                    help='Reverse/R2 read file when demultiplexing. The index file when appending barcodes from an index file.', 
+                    help='Linker/other read file when demultiplexing.',
                     default=None)
-parser.add_argument('-bc_r1',
+parser.add_argument('-bc_ltr',
                     type=str, 
-                    help='''LTR-end barcode fasta file. 
-                    All fasta entries should be unique.''', 
+                    help='''Fasta file containing the LTR-end sample barcodes. 
+                    All fasta entries and headers should be unique. 
+                    Sequences are expected in the 5\' to 3\' orientation, 
+                    even when the program is looking on the 3' end of the LTR-reads. 
+                    Reverse complementation happens internally.''',
                     default=None)
-parser.add_argument('-bc_r2',
+parser.add_argument('-bc_linker',
                     type=str, 
-                    help='''Linker-end barcode fasta file. 
-                    All fasta entries should be unique.''', 
+                    help='''Fasta file containing the Linker-end sample barcodes. 
+                    All fasta entries and headers should be unique. 
+                    Sequences are expected in the 5\' to 3\' orientation, 
+                    even when the program is looking on the 3' end of the LTR-reads. 
+                    Reverse complimentation happens internally.''', 
+                    default=None)
+parser.add_argument('-i1',
+                    type=str,
+                    help='''Index 1 (I1) FASTQ file. When provided, reads are demultiplexed directly
+                    using the index file(s) rather than inline barcodes.
+                    I1 is matched against bc_ltr. I2 (if given) is matched against bc_linker.''',
+                    default=None)
+parser.add_argument('-i2',
+                    type=str,
+                    help='''Index 2 (I2) FASTQ file. Used with i1 for dual-index demultiplexing.
+                    I2 is matched against bc_linker.''',
                     default=None)
 parser.add_argument('-nthr',
                     type=int, help='The number of threads to use for processing.',
                     default=1)
-parser.add_argument('-e',
+parser.add_argument('-error_rate',
                     type=float, 
                     help='''The acceptable error rate for sequence matching. 
                     Defaults to 0.1.''',
                     default=0.1)
-parser.add_argument('--keep_all', '-args.keep_all',
-                    help='''Whether or not to keep all of the demultiplexed pairs.
-                    Usually unnecessary. By default, only the relevant pairs are kept.''',
+parser.add_argument('--keep_all', '-keep_all',
+                    help='''Keep all combinatorial in-line barcode combinations.''',
                     action='store_true')
 parser.add_argument('-cutadapt_path',
                     type=str, 
                     help='The path to the cutadapt executable',
                     default='cutadapt')
-parser.add_argument('--r1_only', '-r1_only',
-                    help='Whether or not to only use the LTR barcode for demultiplexing.',
+parser.add_argument('--ltr_only', '-ltr_only',
+                    help='''Only use the LTR barcode for demultiplexing, even when paired-end data are given.''',
                     action='store_true')
-parser.add_argument('--r2_only', '-r2_only',
-                    help='Whether or not to only use the linker barcode for demultiplexing.',
+parser.add_argument('--linker_only', '-linker_only',
+                    help='''Only use the linker barcode for demultiplexing, even when paired-end data are given. 
+                    To demultiplex exclusively from linker-end barcodes with long-read data, 
+                    ignore this flag and set the \'three_prime\' flag.''',
+                    action='store_true')
+parser.add_argument('--header_index', '-header_index',
+                    help='''Demultiplex using index sequences embedded in FASTQ read headers
+                    (standard Illumina format: @...:<index1>+<index2>). When set, -i1/-i2 are
+                    not needed; indices are parsed directly from the read headers.''',
+                    action='store_true')
+parser.add_argument('--three_prime', '-three_prime',
+                    help='''Look for barcodes on the 3\' end ltr_reads.
+                    These barcodes can be given as bc_ltr or bc_linker, but only one should be given.''',
                     action='store_true')
 parser.add_argument('--no_index', '-no_index',
-                    help='Whether or not to build a barcode index. Defaults to False.',
+                    help='Tells cutadpt not to build a barcode index for faster searching..',
                     action='store_true')
 parser.add_argument('-file_match',
                     help='''A 2-column csv or tsv file defining the file names based on the given fasta headers and 
-                    the desired output name.''',
+                    the desired output name. Full file names must be specified based on demux naming pattern. Wild-cards 
+                    are not used for safety with respect to combinatorial paired-end demultiplexing.''',
                     default=None)
-parser.add_argument('--append_index', '-append_index',
-                    help='''An option to deal with sample barcodes sequenced separately from R1 and R2. 
-                    This option appends the barcode sequences stored either in separate FASTQ files or 
-                    after the e.g., 1:N:0: tag in the FASTQ header to the 5' end of the given FASTQ file. 
-                    Give the non-index FASTQ file as r1. Give the index FASTQ file (if present) as r2.
-                    The program will exit after this option runs.''',
-                    action='store_true')
-parser.add_argument('-chunk_size',
-                    type=int,
-                    help='''The chunk sized used for appending barcode reads to non-index FASTQ files. 
-                    Defaults to 5000.''',
-                    default=5000)
-parser.add_argument('--three_prime', '-three_prime',
-                    help='Boolean. When set, cutadapt looks for barcodes on the 3-prime end read 1. Only used with r1_only.',
-                    action='store_true')
 
 args = parser.parse_args()
 
 def check_executable(path, ex_name):
+    is_file = True
     if os.path.isfile(path) and os.access(path, os.X_OK):
         if os.path.basename(path) == ex_name:
             return path
         else:
-            raise ValueError('Given executable does not appear to be {}.'.format(ex_name))
-    
+            raise Exception('Given executable does not appear to be {}.'.format(ex_name))
+    else:
+        is_file = False
+          
+    is_path = True
     if os.path.isdir(path):
         path = os.path.join(path, ex_name)
         if os.path.isfile(path) and os.access(path, os.X_OK):
             return path
         else:
-            raise ValueError('A {} executable does not exist at the given location.'.format(ex_name))
+            raise Exception('{} executable does not exist at the given location.'.format(ex_name))
+    else:
+        is_path = False
+    
+    if not is_file and not is_path:
+        raise Exception("Nothing found at the given executable path.")
+          
         
 def fasta_headers(file):
     nm = []
+    seen = set()
+    dups = []
     for record in SeqIO.parse(file, "fasta"):
-        if '-' in record.description:
+        if '-' in record.id:
             raise Exception("Hyphens ('-') were found in FASTA headers. Please replace these with another character.")
-        nm.append(record.description)
+        if record.id in seen:
+            dups.append(record.id)
+        else:
+            seen.add(record.id)
+        nm.append(record.id)
+    if dups:
+        raise Exception(f"The following FASTA headers were found more than once: {', '.join(dups)}")
     return nm
 
 def unique_seqs(file):
@@ -105,7 +146,7 @@ def unique_seqs(file):
             seq_count[sequence] = 1
     
     if dups:
-        raise ValueError("The following sequences were found more than once: {}".format(", ".join(dups)))
+        raise Exception(f"The following sequences were found more than once: {', '.join(dups)}")
 
 def zipped(file):
     if os.path.exists(file):
@@ -120,136 +161,179 @@ def open_file(filename, mode):
     else:
         return open(filename, mode)
     
-def concatenate_unix(input_files, output_file):
-    cat_cmd = f"cat {' '.join(input_files)} > {output_file}"
-    subprocess.call(cat_cmd, shell=True)
-    
-def concatenate_files(input_files, output_file):       
-    buffer_size = 1024 * 1024 * 10
-    with gzip.open(output_file, 'wb') as outfile:
-        for file_name in input_files:
-            with gzip.open(file_name, 'rb') as infile:
-                while True:
-                    buffer = infile.read(buffer_size)
-                    if not buffer:
-                        break
-                    outfile.write(buffer)
-    
-def chunk_fastq_idx(file1_path, file2_path, chunk_size):
-    with open_file(file1_path, 'rt') as file1: 
-        file2 = open_file(file2_path, 'rt') if file2_path else None
-        try:
-            while True:
-                chunk = []
-                for _ in range(chunk_size):
-                    head1 = file1.readline().strip()
-                    seq1 = file1.readline().strip()
-                    opt1 = file1.readline().strip()
-                    qual1 = file1.readline().strip()
-                    
-                    if not head1:
-                        break
+def build_barcode_matchers(bc_file, error_rate):
+    matchers = []
+    for record in SeqIO.parse(bc_file, "fasta"):
+        seq = str(record.seq)
+        max_errors = int(len(seq) * error_rate)
+        pattern = regex.compile(f'({seq}){{s<={max_errors}}}', regex.IGNORECASE)
+        matchers.append((record.id, pattern))
+    return matchers
 
-                    entry = (head1, seq1, opt1, qual1)
+def match_barcode(seq, matchers):
+    for name, pattern in matchers:
+        if pattern.fullmatch(seq):
+            return name
+    return None
 
-                    if file2:
-                        head2 = file2.readline().strip()
-                        seq2 = file2.readline().strip()
-                        opt2 = file2.readline().strip()
-                        qual2 = file2.readline().strip()
+def parse_header_index(header):
+    parts = header.strip().split()
+    if len(parts) < 2:
+        return None, None
+    fields = parts[1].split(':')
+    if len(fields) < 4:
+        return None, None
+    index_field = fields[3]
+    if '+' in index_field:
+        i1, i2 = index_field.split('+', 1)
+        return i1, i2
+    return index_field, None
 
-                        if not head2:
-                            break
-                        
-                        entry += (head2, seq2, opt2, qual2)
-                        
-                    chunk.append(entry)
-                
-                if not chunk:
+def validate_header_index(r1_file, expect_dual):
+    f = open_file(r1_file, 'rt')
+    header = f.readline()
+    f.close()
+    if not header:
+        raise Exception('Rltr file is empty.')
+    i1, i2 = parse_header_index(header)
+    if i1 is None:
+        raise Exception(
+            f'Could not parse index from FASTQ header.'
+        )
+    if expect_dual and i2 is None:
+        raise Exception(
+            f'Expected dual index (INDEX1+INDEX2) in FASTQ header but found single index only.'
+        )
+
+def match_record(si1, si2, matchers_i1, matchers_i2):
+    if matchers_i1 and matchers_i2:
+        m1 = match_barcode(si1, matchers_i1)
+        m2 = match_barcode(si2, matchers_i2)
+        if m1 and m2 and m1 == m2:
+            return m1
+    elif matchers_i1:
+        return match_barcode(si1, matchers_i1) if si1 else None
+    elif matchers_i2:
+        return match_barcode(si2, matchers_i2) if si2 else None
+    return None
+
+def match_chunk(chunk, matchers_i1, matchers_i2):
+    return [match_record(si1, si2, matchers_i1, matchers_i2) for si1, si2 in chunk]
+
+def index_demux(r1, r2, i1, i2, bc_i1, bc_i2, error_rate, out_dir, out_ext, header_index = False, nthr = 1, chunk_size = 20000):
+    matchers_i1 = build_barcode_matchers(bc_i1, error_rate) if bc_i1 else None
+    matchers_i2 = build_barcode_matchers(bc_i2, error_rate) if bc_i2 else None
+
+    out_handles = {}
+
+    f_r1 = open_file(r1, 'rt')
+    f_r2 = open_file(r2, 'rt') if r2 else None
+    f_i1 = open_file(i1, 'rt') if i1 and not header_index else None
+    f_i2 = open_file(i2, 'rt') if i2 and not header_index else None
+
+    try:
+        while True:
+            records = []
+            indices = []
+
+            for _ in range(chunk_size):
+                h1 = f_r1.readline()
+                if not h1:
                     break
-                
-                yield chunk
-        finally:    
-            if file2:
-                file2.close()
-            
-def append_index_to_chunk(chunk, new_file):
-    with open_file(new_file, 'wt') as new:
-        for entry in chunk:
-            if len(entry) == 4: 
-                head1, seq1, opt1, qual1 = entry
-                idx_pattern = r"(1|2):(N|Y):(0|[0-9]*[02468]):"
-                header_split = head1.split(' ')
-                for element in header_split:
-                    if regex.match(pattern, element):
-                        idx = regex.sub(pattern, '', element)
-                        
-                dummy_qual = qual1[:len(idx)]
-                
-                new.write(f'{head1.split()[0]}\n')
-                new.write(f'{idx}{seq1}\n{opt1}\n{dummy_qual}{qual1}\n')                
+                s1 = f_r1.readline()
+                o1 = f_r1.readline()
+                q1 = f_r1.readline()
+
+                r2_block = None
+                if f_r2:
+                    h2 = f_r2.readline()
+                    s2 = f_r2.readline()
+                    o2 = f_r2.readline()
+                    q2 = f_r2.readline()
+                    r2_block = (h2, s2, o2, q2)
+
+                if header_index:
+                    si1, si2 = parse_header_index(h1)
+                else:
+                    si1 = None
+                    if f_i1:
+                        f_i1.readline()
+                        si1 = f_i1.readline().strip()
+                        f_i1.readline()
+                        f_i1.readline()
+
+                    si2 = None
+                    if f_i2:
+                        f_i2.readline()
+                        si2 = f_i2.readline().strip()
+                        f_i2.readline()
+                        f_i2.readline()
+
+                records.append(((h1, s1, o1, q1), r2_block))
+                indices.append((si1, si2))
+
+            if not records:
+                break
+
+            if nthr == 1:
+                samples = match_chunk(indices, matchers_i1, matchers_i2)
             else:
-                head1, seq1, opt1, qual1, head2, seq2, opt2, qual2 = entry
-                
-                if head1.split()[0] != head2.split()[0]:
-                    raise Exception('ERROR: FASTQ read names do not match.')
-                
-                new.write(f'{head1.split()[0]}\n')
-                new.write(f'{seq2}{seq1}\n{opt1}\n{qual2}{qual1}\n')
-                
-def append_index(file1, file2, chunk_size, nthr):
-    
-    ext_pattern = r'\.(fastq\.gz|fq\.gz|fq|fastq)$'
-    out_ext = regex.search(ext_pattern, file1).group()
-    out_path = os.path.dirname(file1)
-    basename = os.path.basename(file1)[:-len(out_ext)]
-    out_file = os.path.join(out_path, f'{basename}_bc_append{out_ext}')
+                split_size = max(1, len(indices) // nthr)
+                indices_split = [indices[i:i + split_size] for i in range(0, len(indices), split_size)]
+                results = Parallel(n_jobs = min(len(indices_split), nthr))(
+                    delayed(match_chunk)(
+                        chunk = indices_split[entry],
+                        matchers_i1 = matchers_i1,
+                        matchers_i2 = matchers_i2
+                    )
+                    for entry in range(len(indices_split))
+                )
+                samples = [s for batch in results for s in batch]
 
-    chunk_generator = chunk_fastq_idx(file1, file2, chunk_size = chunk_size)
-    chunk_gen, chunk_count = tee(chunk_generator)
-    n_chunks = sum(1 for _ in chunk_count)
-    
-    tmp_dir = os.path.join(out_path, f'{basename}_tmp')
-    if not os.path.exists(tmp_dir):
-        os.makedirs(tmp_dir)
-        
-    tmp_files = []
-    for i in range(n_chunks):
-        tmp_files.append(os.path.join(tmp_dir, f"{basename}_tmp{str(i).zfill(3)}{out_ext}"))
+            for sample, (r1_block, r2_block) in zip(samples, records):
+                if not sample:
+                    continue
 
-    Parallel(n_jobs = nthr)(
-        delayed(append_index_to_chunk)(
-            chunk = chunk,
-            new_file = tmp_files[i]
-            )
-        for i, chunk in enumerate(chunk_gen)
-    )
-    
-    inputs = sorted(tmp_files)
-    output = out_file
-    
-    op_sys = platform.system()
-    if op_sys != 'Darwin' and op_sys != 'Linux':
-        concatenate_files(input_files = inputs,
-                          output_file = output)
-    else:
-        concatenate_unix(input_files = inputs,
-                          output_file = output)
-        
-    for f in inputs:
-        os.remove(f)
-        
-    shutil.rmtree(tmp_dir)
-    
+                if sample not in out_handles:
+                    out_handles[sample] = {
+                        'Rltr': open_file(os.path.join(out_dir, f'{sample}_Rltr{out_ext}'), 'wt')
+                    }
+                    if f_r2:
+                        out_handles[sample]['Rlink'] = open_file(
+                            os.path.join(out_dir, f'{sample}_Rlink{out_ext}'), 'wt'
+                        )
+
+                out_handles[sample]['Rltr'].write(r1_block[0] + r1_block[1] + r1_block[2] + r1_block[3])
+                if f_r2 and r2_block:
+                    out_handles[sample]['Rlink'].write(r2_block[0] + r2_block[1] + r2_block[2] + r2_block[3])
+
+    finally:
+        f_r1.close()
+        if f_r2:
+            f_r2.close()
+        if f_i1:
+            f_i1.close()
+        if f_i2:
+            f_i2.close()
+        for handles in out_handles.values():
+            for fh in handles.values():
+                fh.close()
+
 def validate_file(file, description):
     if not file:
         raise Exception(f'{description} must be defined.')
     if not os.path.isfile(file):
         raise Exception(f'{description} is not a valid file.')
-    return fasta_headers(file=file)
+    unique_seqs(file = file)
+    return fasta_headers(file = file)
   
-def generate_dmx_command(adapter_option, d1, r1, d2 = None, r2 = None):
-    base_cmd = (f'{args.cutadapt_path} -e {args.e} --no-indels --discard-untrimmed --action=none -j {args.nthr} '
+def generate_dmx_command(adapter_option, d1, r1, d2 = None, r2 = None, discard_untrimmed = True):
+    if discard_untrimmed:
+        discard = "--discard-untrimmed"
+    else:
+        discard = ""
+
+    base_cmd = (f'{args.cutadapt_path} -e {args.error_rate} --no-indels {discard} --action=none -j {args.nthr} '
                 f'{adapter_option} -o {d1}')
     if d2:
         base_cmd += f' -p {d2}'
@@ -273,7 +357,7 @@ def process_file_match(file_match_path, dmx_dir, tmp_dir, nm1):
             keep_nm.append(names[0].replace(' ', ''))
             new_nm.append(names[1].replace(' ', ''))
 
-    all_nm = [f'{i}_*' if args.r1_only or args.r2_only else f'{i}-{i}_*' for i in nm1]
+    all_nm = [f'{i}_*' if args.ltr_only or args.linker_only else f'{i}-{i}_*' for i in nm1]
     keep = [file for i in keep_nm for file in glob.glob(f'{tmp_dir}/{i}')]
 
     for i, file in enumerate(keep):
@@ -284,75 +368,175 @@ def process_file_match(file_match_path, dmx_dir, tmp_dir, nm1):
             os.remove(tmp_file)
 
 def rename_and_cleanup_files(dmx_dir, tmp_dir, nm1):
-    keep_nm = [f'{i}_*' if args.r1_only or args.r2_only else f'{i}-{i}_*' for i in nm1]
+    keep_nm = [f'{i}_*' if args.ltr_only or args.linker_only else f'{i}-{i}_*' for i in nm1]
     keep = [file for i in keep_nm for file in glob.glob(f'{tmp_dir}/{i}')]
 
     for file in keep:
-        pattern = r'^(.+?)_([R][12])\.(fq|fq\.gz)$' if args.r1_only or args.r2_only else r'^(.+?)-(.+?)_([R][12])\.(fq|fq\.gz)$'
+        pattern = r'^(.+?)_(R(?:ltr|link))\.(fq|fq\.gz)$' if args.ltr_only or args.linker_only else r'^(.+?)-(.+?)_(R(?:ltr|link))\.(fq|fq\.gz)$'
         pmatch = regex.match(pattern, os.path.basename(file))
-        new_name = f"{pmatch.group(1)}_{pmatch.group(2)}.{pmatch.group(3)}" if args.r1_only or args.r2_only else f"{pmatch.group(1)}_{pmatch.group(3)}.{pmatch.group(4)}"
+        new_name = f"{pmatch.group(1)}_{pmatch.group(2)}.{pmatch.group(3)}" if args.ltr_only or args.linker_only else f"{pmatch.group(1)}_{pmatch.group(3)}.{pmatch.group(4)}"
         shutil.move(file, os.path.join(dmx_dir, new_name))
 
     if tmp_dir == os.path.join(dmx_dir, 'tmp'):
         shutil.rmtree(tmp_dir)
+        
+trans_table = bytes.maketrans(b"acgtumrwsykvhdbnACGTUMRWSYKVHDBN", 
+                              b"TGCAAKYWSRMBDHVNTGCAAKYWSRMBDHVN")
+
+def revcomp(seq):
+    return seq.translate(trans_table)[::-1]
+  
+def linked_adapters(bc_ltr, bc_linker):
+    ltr_records = [(rec.id, str(rec.seq)) for rec in SeqIO.parse(bc_ltr, "fasta")]
+    linker_records = [(rec.id, str(rec.seq)) for rec in SeqIO.parse(bc_linker, "fasta")]
+    if len(ltr_records) != len(linker_records):
+        raise Exception(
+            f'LTR and linker fasta files must have the same number of entries.'
+        )
+    return ' '.join(
+        f'-g {name}=^{ltr}...{revcomp(linker)}$'
+        for (name, ltr), (_, linker) in zip(ltr_records, linker_records)
+    )
+    
+def revcomp_from_file(bc_file):
+    records = [(r.id, revcomp(str(r.seq))) for r in SeqIO.parse(bc_file, "fasta")]
+    return ' '.join(f'-a {name}={seq}$' for name, seq in records)
 
 if __name__ == "__main__":
     
-    import os
-    import subprocess
-    import glob
-    import shutil
-    import regex
-    from Bio import SeqIO
-    from joblib import Parallel, delayed
-    from itertools import tee, count
-    import sys
-    import gzip
-    import platform
+    args.r1 = args.ltr_reads
+    args.r2 = args.linker_reads
     
-    if args.append_index:
-        append_index(file1 = args.r1, file2 = args.r2, 
-                    chunk_size = args.chunk_size, nthr = args.nthr)
-        print('\nIndices appended. Exiting.\n')
-        sys.exit()
-    
-    if args.r1_only and args.r2_only:
-        raise Exception('r1_only and r2_only cannot both be True.')
-      
-    if args.r1 and not args.r2 and not args.r1_only:
-        args.r1_only = True
+    # Header indexes or file-based indexes
+    if args.header_index or args.i1 or args.i2:
+        if args.header_index:
+            if args.i1 or args.i2:
+                raise Exception('--header_index cannot be used with -i1/-i2. Index sequences '
+                                'are read from the FASTQ headers instead.')
+            if not args.bc_ltr and not args.bc_linker:
+                raise Exception('At least one of bc_ltr or bc_linker must be provided with --header_index.')
+        else:
+            if args.i1 and not args.bc_ltr:
+                raise Exception('bc_ltr is required when i1 is provided.')
+            if args.i2 and not args.bc_linker:
+                raise Exception('bc_linker is required when i2 is provided.')
 
-    if not args.r1_only and not args.r2_only:
-        nm1 = validate_file(args.bc_r1, 'bc_r1')
-        nm2 = validate_file(args.bc_r2, 'bc_r2')
+        if args.bc_ltr:
+            nm1 = validate_file(args.bc_ltr, 'bc_ltr')
+        if args.bc_linker:
+            nm_i2 = validate_file(args.bc_linker, 'bc_linker')
+            if args.bc_ltr:
+                if nm1 != nm_i2:
+                    raise ValueError('The fasta headers in bc_ltr and bc_linker must match.')
+            else:
+                nm1 = nm_i2
+
+        if args.header_index:
+            expect_dual = args.bc_ltr is not None and args.bc_linker is not None
+            validate_header_index(args.r1, expect_dual)
+
+        soft_limit, _ = resource.getrlimit(resource.RLIMIT_NOFILE)
+        n_samples = len(nm1)
+        files_needed = n_samples * (2 if args.r2 else 1)
+        overhead = 10
+        if files_needed + overhead > soft_limit:
+            raise Exception(
+                f"\nToo many output files: {n_samples} sample(s) * "
+                f"{'2 (paired-end)' if args.r2 else '1 (single-end)'} = {files_needed} files. "
+                f"ulimit -n is {soft_limit}. "
+                f"Increase with: ulimit -S -n {files_needed + overhead + 10}\n"
+            )
+
+        curr_dir = os.getcwd()
+        dmx_dir = os.path.join(curr_dir, 'demux')
+        if not os.path.exists(dmx_dir):
+            os.makedirs(dmx_dir)
+
+        if zipped(file=args.r1):
+            out_ext = '.fq.gz'
+        else:
+            out_ext = '.fq'
+
+        index_demux(
+            r1 = args.r1, r2 = args.r2,
+            i1 = args.i1, i2 = args.i2,
+            bc_i1 = args.bc_ltr if (args.i1 or args.header_index) else None,
+            bc_i2 = args.bc_linker if (args.i2 or args.header_index) else None,
+            error_rate = args.error_rate,
+            out_dir = dmx_dir, out_ext = out_ext,
+            header_index = args.header_index,
+            nthr = args.nthr
+        )
+
+        if args.file_match:
+            keep_nm, new_nm = [], []
+            with open(args.file_match, 'r') as f:
+                delim = ',' if ',' in f.readline() else '\t'
+                f.seek(0)
+                for line in f:
+                    names = line.strip().split(delim)
+                    if len(names) != 2:
+                        raise Exception('file_match line must have exactly two entries.')
+                    keep_nm.append(names[0].replace(' ', ''))
+                    new_nm.append(names[1].replace(' ', ''))
+            for old_name, new_name in zip(keep_nm, new_nm):
+                for match in glob.glob(os.path.join(dmx_dir, f'{old_name}_*')):
+                    suffix = os.path.basename(match)[len(old_name):]
+                    shutil.move(match, os.path.join(dmx_dir, f'{new_name}{suffix}'))
+
+        sys.exit()
+
+    # In-line indexes
+    if args.r1 and not args.r2 and not args.ltr_only:
+        args.ltr_only = True
+
+    if args.ltr_only and args.linker_only:
+        raise Exception('ltr_only and linker_only cannot both be True.')
+
+    if not args.ltr_only and not args.linker_only:
+        nm1 = validate_file(args.bc_ltr, 'bc_ltr')
+        nm2 = validate_file(args.bc_linker, 'bc_linker')
         if nm1 != nm2:
-            raise ValueError('The fasta headers in bc_r1 and bc_r2 must match.')
-    elif args.r1_only:
-        nm1 = validate_file(args.bc_r1, 'bc_r1')
+            raise ValueError('The fasta headers in bc_ltr and bc_linker must match.')
+    elif args.ltr_only:
+        nm1 = validate_file(args.bc_ltr, 'bc_ltr')
     else:
-        nm1 = validate_file(args.bc_r2, 'bc_r2')
+        nm1 = validate_file(args.bc_linker, 'bc_linker')
         
     if args.cutadapt_path != 'cutadapt':
         args.cutadapt_path = check_executable(path = args.cutadapt_path, ex_name = 'cutadapt')
         
-    if len(nm1) > 3 and args.nthr > 1:
-        print('Warning: The number of barcodes is > 3 and the number of threads is > 1.\n'
-              'If demultiplexing hangs, try reducing the number of threads.\n'
-              'Or setting the flag --no_index.\n'
-              'This is an issue internal to cutadapt.\n'
-              'See: https://github.com/marcelm/cutadapt/issues/613\n')
+    # If hanging is happening, it is likely because too many files are open
+    # See: https://github.com/marcelm/cutadapt/issues/613
+    soft_limit, _ = resource.getrlimit(resource.RLIMIT_NOFILE)
+
+    if not args.ltr_only and not args.linker_only:
+        n_combinations = len(nm1) * len(nm2)
+        files_needed = n_combinations * (2 if args.r2 else 1)
+    elif args.ltr_only or args.linker_only:
+        n_combinations = len(nm1)
+        files_needed = n_combinations * (2 if args.r2 else 1)
+
+    overhead = 10
+    if files_needed + overhead > soft_limit:
+        raise Exception(
+            f"\nToo many output files required: {n_combinations} barcode combination(s) * "
+            f"{'2 (paired-end)' if args.r2 else '1 (single-end)'} ~= {files_needed} files. "
+            f"ulimit -n is {soft_limit} (overhead ~{overhead}). "
+            f"Increase with: ulimit -S -n {files_needed + overhead + 10}\n"
+        )
 
     curr_dir = os.getcwd()
 
-    dmx_dir = os.path.join(curr_dir, r'{}'.format('demux'))
+    dmx_dir = os.path.join(curr_dir, f'demux')
     if not os.path.exists(dmx_dir):
         os.makedirs(dmx_dir)
     
-    if not args.keep_all and not args.r1_only and not args.r2_only:
-        tmp_dir = os.path.join(dmx_dir, r'{}'.format('tmp'))
+    if not args.keep_all and not args.ltr_only and not args.linker_only:
+        tmp_dir = os.path.join(dmx_dir, f'tmp')
         if not os.path.exists(tmp_dir):
             os.makedirs(tmp_dir)
-    elif not args.r1_only or not args.r2_only:
+    else:
         tmp_dir = dmx_dir
         
     if zipped(file = args.r1):
@@ -362,33 +546,50 @@ if __name__ == "__main__":
     
     if args.r1 and args.r2:
         swap = False
-        d1 = os.path.join(tmp_dir, f'{{name1}}-{{name2}}_R1{out_ext}')
-        d2 = os.path.join(tmp_dir, f'{{name1}}-{{name2}}_R2{out_ext}')
-        if not args.r1_only and not args.r2_only:
-            adapter_option = f'-g ^file:{args.bc_r1} -G ^file:{args.bc_r2}'
-        elif args.r1_only:
-            adapter_option = f'-g ^file:{args.bc_r1}'
-        elif args.r2_only:
-            adapter_option = f'-g ^file:{args.bc_r2}'
+        if not args.ltr_only and not args.linker_only:
+            d1 = os.path.join(tmp_dir, f'{{name1}}-{{name2}}_Rltr{out_ext}')
+            d2 = os.path.join(tmp_dir, f'{{name1}}-{{name2}}_Rlink{out_ext}')
+            adapter_option = f'-g ^file:{args.bc_ltr} -G ^file:{args.bc_linker}'
+            discard_untrimmed = True
+        elif args.ltr_only:
+            d1 = os.path.join(tmp_dir, f'{{name}}_Rltr{out_ext}')
+            d2 = os.path.join(tmp_dir, f'{{name}}_Rlink{out_ext}')
+            adapter_option = f'-g ^file:{args.bc_ltr}'
+            discard_untrimmed = False
+        elif args.linker_only:
+            d1 = os.path.join(tmp_dir, f'{{name}}_Rltr{out_ext}')
+            d2 = os.path.join(tmp_dir, f'{{name}}_Rlink{out_ext}')
+            adapter_option = f'-g ^file:{args.bc_linker}'
             swap = True
-        dmx_cmd = generate_dmx_command(adapter_option = adapter_option, 
-                                      d1 = d1 if not swap else d2, 
-                                      r1 = args.r1 if not swap else args.r2,
-                                      d2 = d2 if not swap else d1, 
-                                      r2 = args.r2 if not swap else args.r1)
-    elif args.r1 and not args.r2:
-        d1 = os.path.join(dmx_dir, f'{{name}}_R1{out_ext}')
-        # adapter_option = f'-a file$:{args.bc_r1}' if args.three_prime else f'-g ^file:{args.bc_r1}'
-        if args.bc_r2:
-            adapter_option = f'-g ^file:{args.bc_r1} -a file$:{args.bc_r2}'
-        elif args.three_prime:
-            adapter_option = f'-a file$:{args.bc_r1}'
-        else:
-            adapter_option = f'-g ^file:{args.bc_r1}'
+            discard_untrimmed = False
 
-        dmx_cmd = generate_dmx_command(adapter_option = adapter_option, 
-                                      d1 = d1, 
-                                      r1 = args.r1)
+        dmx_cmd = generate_dmx_command(
+            adapter_option = adapter_option, 
+            d1 = d1 if not swap else d2, 
+            r1 = args.r1 if not swap else args.r2,
+            d2 = d2 if not swap else d1, 
+            r2 = args.r2 if not swap else args.r1,
+            discard_untrimmed = discard_untrimmed
+        )
+        
+    elif args.r1 and not args.r2:
+        d1 = os.path.join(dmx_dir, f'{{name}}_Rltr{out_ext}')
+        if args.bc_ltr and args.bc_linker:
+            adapter_option = linked_adapters(args.bc_ltr, args.bc_linker)
+        elif args.three_prime:
+            if args.bc_ltr:
+                adapter_option = revcomp_from_file(args.bc_ltr)
+            else:
+                adapter_option = revcomp_from_file(args.bc_linker)
+        else:
+            adapter_option = f'-g ^file:{args.bc_ltr}'
+
+        dmx_cmd = generate_dmx_command(
+            adapter_option = adapter_option, 
+            d1 = d1, 
+            r1 = args.r1,
+            discard_untrimmed = True
+        )
 
     subprocess.call(dmx_cmd, shell = True)
         
@@ -397,5 +598,3 @@ if __name__ == "__main__":
             process_file_match(args.file_match, dmx_dir, tmp_dir, nm1)
         else:
             rename_and_cleanup_files(dmx_dir, tmp_dir, nm1)
-
-

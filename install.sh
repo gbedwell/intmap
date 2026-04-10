@@ -29,7 +29,7 @@ else
     echo
     echo 'Creating the intmap virtual environment...'
     echo
-    conda env create -f intmap.yaml
+    conda env create -f intmap.yaml || { echo "Error: Failed to create intmap environment. Exiting."; exit 1; }
 
     if [[ $(echo "${CONDA_DEFAULT_ENV}") != "intmap" ]]; then
         conda activate intmap
@@ -198,8 +198,8 @@ pip install -e ".[test]" --use-pep517
 # $CONDA_PREFIX/bin/pip install -e ".[test]" --use-pep517
 
 if [ $? -eq 0 ]; then
-    cp wrapim.sh "$CONDA_PREFIX/bin/wrapim"
-    chmod +x "$CONDA_PREFIX/bin/wrapim"
+    cp intwrap.sh "$CONDA_PREFIX/bin/intwrap"
+    chmod +x "$CONDA_PREFIX/bin/intwrap"
     cp prepim.sh "$CONDA_PREFIX/bin/prepim"
     chmod +x "$CONDA_PREFIX/bin/prepim"
     if [ $env_active -eq 0 ]; then

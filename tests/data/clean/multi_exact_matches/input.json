@@ -18,10 +18,19 @@
         "map_qual": 30
     },
     "read3": {
-        "ltr_umi": "GGGG",
-        "linker_umi": "CCCC",
-        "seq1": "TGCA",
-        "seq2": "ACTG",
+        "ltr_umi": "AAAG",
+        "linker_umi": "TTTT",
+        "seq1": "ATGC",
+        "seq2": "GCTA",
+        "count": 2,
+        "mean_qual": 25,
+        "map_qual": 30
+    },
+    "read4": {
+        "ltr_umi": "AAAA",
+        "linker_umi": "TTTT",
+        "seq1": "ATCC",
+        "seq2": "GCTA",
         "count": 2,
         "mean_qual": 25,
         "map_qual": 30

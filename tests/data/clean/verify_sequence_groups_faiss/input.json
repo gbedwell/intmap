@@ -1,0 +1,41 @@
+[
+    [
+        {
+            "seq1": "ATCGATCGAT",
+            "seq2": "TAGCTAGCTA",
+            "count": 10,
+            "mean_qual": 30,
+            "read_name": "read1"
+        },
+        {
+            "seq1": "ATCGATCGAA",
+            "seq2": "TTGCTAGCTA",
+            "count": 8,
+            "mean_qual": 28,
+            "read_name": "read2"
+        },
+        {
+            "seq1": "ATCGATCGAC",
+            "seq2": "TAGCTAGCTT",
+            "count": 6,
+            "mean_qual": 25,
+            "read_name": "read3"
+        }
+    ],
+    [
+        {
+            "seq1": "GGGGGGGGGG",
+            "seq2": "CCCCCCCCCC",
+            "count": 12,
+            "mean_qual": 32,
+            "read_name": "read4"
+        },
+        {
+            "seq1": "GGGGGGGGGC",
+            "seq2": "GCCCCCCCCCC",
+            "count": 7,
+            "mean_qual": 25,
+            "read_name": "read5"
+        }
+    ]
+]

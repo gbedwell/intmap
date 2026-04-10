@@ -9,6 +9,26 @@
             "count": 3,
             "mean_qual": 40,
             "map_qual": 30
+        },
+        {
+            "read_name": "read3",
+            "start": 101,
+            "end": 200,
+            "ltr_umi": "AAAA",
+            "linker_umi": "TTTT",
+            "count": 2,
+            "mean_qual": 40,
+            "map_qual": 30
+        },
+        {
+            "read_name": "read4",
+            "start": 100,
+            "end": 200,
+            "ltr_umi": "AAAC",
+            "linker_umi": "TTTT",
+            "count": 2,
+            "mean_qual": 40,
+            "map_qual": 30
         }
     ]
 }

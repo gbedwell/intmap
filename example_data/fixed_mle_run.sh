@@ -1,21 +1,18 @@
 intmap \
-  -r1 data/sample1_R1.fq.gz \
-  -r2 data/sample1_R2.fq.gz \
-  -ltr5 AGTCAGTGTGGA \
-  -ltr3 AAATCTCTAGCA \
-  -linker5 ATGAGCATTC \
-  -linker3 TACACGATTAC \
+  -ltr_reads data/sample1_R1.fq.gz \
+  -linker_reads data/sample1_R2.fq.gz \
+  -ltr AGTCAGTGTGGAAAATCTCTAGCA \
+  -linker ATGAGCATTCTACACGATTAC \
   -nm fixed_mle_example \
   -nthr 4 \
-  -bt2_idx_dir /Users/gbedwell/Documents/github/T2T_genome/indexes/bowtie2 \
-  -bt2_idx_name hs1 \
+  -g_idx_dir /Users/gbedwell/Documents/github/T2T_genome/indexes/bowtie2 \
+  -g_idx_name hs1 \
   -v_idx_dir /Users/gbedwell/Documents/github/virus_genomes/HIV-1 \
   -v_idx_name hiv1 \
   -seq_sim 1 \
   -len_diff 0 \
-  -umi_diff 0 \
   -frag_ratio 1000 \
   -min_count 1000 \
-  -count_fc 1000 \
+  -abundant_fc 1000 \
   --reassign_mm \
-  --mle > fixed_mle_output.txt
+  --mle > outputs/fixed_mle_output.txt

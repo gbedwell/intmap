@@ -3,14 +3,8 @@
 import argparse
 
 parser = argparse.ArgumentParser(prog = 'intmap-multimap',
-                                description='''Runs intmap on a collection of samples using
-                                user-defined arguments for each intmap run.''')
+                                 description='''Serializes intmap analyses.''')
 
-parser.add_argument('-args_json', '-a',
-                    type=str,
-                    help='''A JSON holding the respective arguments for each sample-of-interest. 
-                    This file can be created by setting -define_args to True.''',
-                    default=None)
 parser.add_argument('-setup_file', '-s',
                     type=str,
                     help='''A text file where line 1 is the number of samples,
@@ -27,19 +21,18 @@ parser.add_argument('-json_name', '-n',
                     type=str,
                     help='''The name of the generated JSON file. 
                     The .json extension will be appended automatically.''')
+parser.add_argument('-args_json', '-a',
+                    type=str,
+                    help='''A JSON holding the respective arguments for each sample-of-interest. 
+                    This file can be created by setting -define_args to True.''',
+                    default=None)
 parser.add_argument('--arg_sets_only', '-arg_sets_only',
-                    help='''Boolean. 
-                    Whether or not to stop after saving the arguments JSON.''',
-                    action='store_true')
-parser.add_argument('--single_end', '-single_end',
-                    help='''Boolean. 
-                    Whether or not the data is paired- or single-end. 
-                    When set, intmap_se is run instead of intmap.''',
+                    help='''Stop after saving the arguments JSON.''',
                     action='store_true')
 
 args = parser.parse_args()
 
-MULTI_VALUE_ARGS = {'-c'}
+multi_value_args = {'-contam', '-remove_chr', '-annotations'}
 
 def get_user_input():
     print("Enter the number of samples:")
@@ -53,7 +46,7 @@ def get_user_input():
     
     arg_values = []
     for arg_name in arg_names:
-        if arg_name in MULTI_VALUE_ARGS:
+        if arg_name in multi_value_args:
             print(f"Enter values for {arg_name} (comma-separated for samples, semicolon-separated for multiple values per sample):")
         else:
             print(f"Enter values for {arg_name} (comma-separated):")
@@ -88,7 +81,7 @@ def parse_input_file(setup_file):
     
     return n_samp, arg_names, arg_values
 
-def make_arg_sets(arg_names, arg_values, multi_value_args=None):
+def make_arg_sets(arg_names, arg_values, multi_value_args = None):
 
     if multi_value_args is None:
         multi_value_args = set()
@@ -119,12 +112,9 @@ def save_to_json(argument_sets, filename):
     with open(filename, 'w') as f:
         json.dump(argument_sets, f, indent=4)
 
-def intmap_multi(argument_sets, single_end = args.single_end):
+def intmap_multi(argument_sets):
     for args in argument_sets:
-        if not single_end:
-            cmd_list = ['intmap'] + args
-        else:
-            cmd_list = ['intmap_se'] + args
+        cmd_list = ['intmap'] + args
         cmd = ' '.join(cmd_list)
         subprocess.run(cmd, shell=True)
 
@@ -138,10 +128,10 @@ if __name__ == "__main__":
     if args.args_json is None:
         if args.setup_file is None:
             n_samp, arg_names, arg_values = get_user_input()
-            argument_sets = make_arg_sets(arg_names, arg_values, MULTI_VALUE_ARGS)
+            argument_sets = make_arg_sets(arg_names, arg_values, multi_value_args)
         else:
             n_samp, arg_names, arg_values = parse_input_file(setup_file = args.setup_file)
-            argument_sets = make_arg_sets(arg_names, arg_values, MULTI_VALUE_ARGS)
+            argument_sets = make_arg_sets(arg_names, arg_values, multi_value_args)
             
         if args.json_name is not None:
             filename = args.json_name + '.json'                
