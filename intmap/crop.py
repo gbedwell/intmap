@@ -42,7 +42,7 @@ def check_crop_input(ltr, linker, ltr_primer, ltr_error_rate,
         
         if linker_error_rate > 0.4:
             raise Exception('Linker sequence error rate cannot be > 0.4.')
-            
+
     if contamination:
         for cc in contamination:
             cont = cc.replace(' ', '')
@@ -236,9 +236,11 @@ def crop(r1, r2, ltr, ltr2, linker, ltr_error_rate, linker_error_rate, min_frag_
     if r1 == r2:
         raise Exception('r1 and r2 file names are identical.')
 
+    ltr_errors = math.floor(min_ttr_len * ltr_error_rate) if cap_ttr_error else None
+
     if not ttr:
         ltr_seq = f"\"-g {ltr};min_overlap={len(ltr)}{';rightmost' if not leftmost else ''}\""
-    else:
+    else: 
         if ltr and ltr2:
             ttr_left = list(set([ltr[:min_ttr_len], ltr2[:min_ttr_len]]))
             if len(ttr_left) == 1:
@@ -272,28 +274,30 @@ def crop(r1, r2, ltr, ltr2, linker, ltr_error_rate, linker_error_rate, min_frag_
                                    write = False, rc = False, leftmost = leftmost, cap_ttr_error = cap_ttr_error)
         
     if mixed and long_read:
-        ltr_seq_rc = f"\"-a {revcomp(ltr)};min_overlap={len(ltr)}{';rightmost' if leftmost else ''}\""
+        mixed_raw = ltr if not ttr else ltr[0:min_ttr_len]
+        mixed_seq = f"\"-g {mixed_raw};min_overlap={len(mixed_raw)}{';rightmost' if not leftmost else ''}\""
+        mixed_seq_rc = f"\"-a {revcomp(mixed_raw)};min_overlap={len(mixed_raw)}{';rightmost' if leftmost else ''}\""
 
         mixed_trim = (
             f'{cut_path} '
-            f'-e {ltr_error_rate} '
+            f'-e {ltr_error_rate if not cap_ttr_error else ltr_errors} '
             f'-j {nthr} '
             f'--discard-untrimmed '
             f'--action=none '
             f'-m {min_frag_len} '
-            f'{ltr_seq} '
+            f'{mixed_seq} '
             f"--quiet -o {os.path.join(processed_directory, 'mixed_for.fq.gz')} "
             f"{r1}"
         )
         
         mixed_rc_trim = (
             f'{cut_path} '
-            f'-e {ltr_error_rate} '
+            f'-e {ltr_error_rate if not cap_ttr_error else ltr_errors} '
             f'-j {nthr} '
             f'--discard-untrimmed '
             f'--action=none '
             f'-m {min_frag_len} '
-            f'{ltr_seq_rc} '
+            f'{mixed_seq_rc} '
             f"--quiet -o {os.path.join(processed_directory, 'mixed_rev.fq.gz')} "
             f"{r1}"
         )
@@ -317,7 +321,7 @@ def crop(r1, r2, ltr, ltr2, linker, ltr_error_rate, linker_error_rate, min_frag_
 
     ltr_trim1 = (
         f'{cut_path} '
-        f'-e {ltr_error_rate} '
+        f'-e {ltr_error_rate if not cap_ttr_error else ltr_errors} '
         f'-j {nthr} '
         f"--info-file {os.path.join(processed_directory, 'ltr_info.txt')} "
         f'--discard-untrimmed '
@@ -335,7 +339,7 @@ def crop(r1, r2, ltr, ltr2, linker, ltr_error_rate, linker_error_rate, min_frag_
     if mixed and r2:
         ltr_trim_mixed = (
             f'{cut_path} '
-            f'-e {ltr_error_rate} '
+            f'-e {ltr_error_rate if not cap_ttr_error else ltr_errors} '
             f'-j {nthr} '
             f"--info-file {os.path.join(processed_directory, 'ltr_mixed_info.txt')} "
             f'--discard-untrimmed '
@@ -380,7 +384,7 @@ def crop(r1, r2, ltr, ltr2, linker, ltr_error_rate, linker_error_rate, min_frag_
 
         ltr_trim2 = (
             f'{cut_path} '
-            f'-e {ltr_error_rate} '
+            f'-e {ltr_error_rate if not cap_ttr_error else ltr_errors} '
             f'-j {nthr} '
             f"--info-file {os.path.join(processed_directory, 'linker_rc_info.txt')} "
             f'{"--discard-untrimmed" if long_read else ""} '
@@ -516,6 +520,7 @@ def crop(r1, r2, ltr, ltr2, linker, ltr_error_rate, linker_error_rate, min_frag_
         linker_rc_data[0] = linker_rc_data[0].str.split(' ').str[0]
     except (pd.errors.EmptyDataError, FileNotFoundError):
         linker_rc_data = pd.DataFrame(columns=[0,1,2,3,4,5,6])
+    linker_rc_data[0] = linker_rc_data[0].str.split(' ').str[0]
     linker_rc_data[2] = pd.to_numeric(linker_rc_data[2], errors = 'coerce')
     linker_rc_data[3] = pd.to_numeric(linker_rc_data[3], errors = 'coerce')
     
@@ -548,6 +553,23 @@ def crop(r1, r2, ltr, ltr2, linker, ltr_error_rate, linker_error_rate, min_frag_
         linker_data = linker_data.drop(columns=[6])
         linker_data = linker_data[~linker_rc_data[0].isin(short_reads)]
         del linker_rc_data
+        if kept_occ:
+            linker_data['occurence'] = linker_data.groupby(0).cumcount()
+            dup_reads = linker_data[0].isin(kept_occ)
+            if dup_reads.any():
+                dup_linker = linker_data[dup_reads].copy()
+                dup_linker = dup_linker[
+                    dup_linker.apply(lambda r: r['occurence'] == kept_occ[r[0]], axis=1)
+                ]
+                linker_data = pd.concat(
+                    [linker_data[~dup_reads], dup_linker], ignore_index=True
+                )
+            linker_data = linker_data.drop(columns=['occurence'])
+        if long_read:
+            common = set(ltr_data.iloc[:, 0]) & set(linker_data.iloc[:, 0])
+            ltr_data = ltr_data[ltr_data.iloc[:, 0].isin(common)]
+            linker_data = linker_data[linker_data.iloc[:, 0].isin(common)]
+            linker_data = linker_data.drop_duplicates(subset=[0])
     else:
         del linker_rc_data
         if linker:
@@ -626,12 +648,12 @@ def crop(r1, r2, ltr, ltr2, linker, ltr_error_rate, linker_error_rate, min_frag_
                 if dup_reads.any():
                     dup_linker = linker_data[dup_reads].copy()
                     dup_linker = dup_linker[
-                        dup_linker.apply(lambda r: r['occurence'] == kept_occ[r[0]], axis=1)
+                        dup_linker.apply(lambda r: r['occurence'] == kept_occ[r[0]], axis = 1)
                     ]
                     linker_data = pd.concat(
-                        [linker_data[~dup_reads], dup_linker], ignore_index=True
+                        [linker_data[~dup_reads], dup_linker], ignore_index = True
                     )
-                linker_data = linker_data.drop(columns=['occurence'])
+                linker_data = linker_data.drop(columns = ['occurence'])
 
             try:
                 ltr_rc_data = pd.read_csv(
@@ -675,7 +697,7 @@ def crop(r1, r2, ltr, ltr2, linker, ltr_error_rate, linker_error_rate, min_frag_
 
             ltr_rc_trim = (
                 f'{cut_path} '
-                f'-e {ltr_error_rate} '
+                f'-e {ltr_error_rate if not cap_ttr_error else ltr_errors} '
                 f'-j {nthr} '
                 f"--info-file {os.path.join(processed_directory, 'ltr_rc_info.txt')} "
                 f'-m {min_frag_len} '
@@ -720,10 +742,10 @@ def crop(r1, r2, ltr, ltr2, linker, ltr_error_rate, linker_error_rate, min_frag_
             linker_data[5] = 'N'
 
     ltr_data, linker_data = parse_matches(
-        ltr_matches = ltr_data, 
+        ltr_matches = ltr_data,
         linker_matches = linker_data,
-        ltr_umi_len = ltr_umi_len, 
-        ltr_umi_offset = ltr_umi_offset, 
+        ltr_umi_len = ltr_umi_len,
+        ltr_umi_offset = ltr_umi_offset,
         ltr_umi_pattern = ltr_umi_pattern,
         linker_umi_len = linker_umi_len, 
         linker_umi_offset = linker_umi_offset, 

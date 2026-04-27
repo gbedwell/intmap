@@ -80,10 +80,9 @@ parser.add_argument('-ltr_primer',
                     Must be at least 10 bp.''',
                     default=None)
 parser.add_argument('--U3', '-U3',
-                    help='''Whether or not the sequenced reads come from the U3 end of the provirus 
-                    (or equivalent). 
-                    Used for defining the 1st bp of the target site duplication, 
-                    defining integrant orientation, etc.''',
+                    help='''Whether or not the integrant-host junctions are sequenced from the U3 end of the provirus (or equivalent). 
+                    This should be set for any sequencing strategy that sequences the integrant off of the reverse strand. Used for defining the 
+                    1st bp of the target site duplication (when applicable), properly defining integrant orientation, etc.''',
                     action='store_true')
 parser.add_argument('-nthr',
                     type=int, 
@@ -114,8 +113,8 @@ parser.add_argument('--leftmost', '-leftmost',
                     action='store_true')
 parser.add_argument('--mixed', '-mixed',
                     help='''When set/True, the cropping step accomodates situations where library preparation 
-                    can result in target LTR-ends on either terminus of a given fragment. 
-                    Cannot be used with ttr or with single-end short-read data.''',
+                    can result in target integrant-ends on either terminus of a given fragment.
+                    Cannot be used with single-end short-read data.''',
                     action='store_true')
 parser.add_argument('-min_frag_len',
                     type=int, 
@@ -428,8 +427,10 @@ parser.add_argument('-annotations',
                     Annotation files are assumed to be in BED format (https://github.com/samtools/hts-specs/blob/master/BEDv1.pdf).
                     Nearest distance is determined independently of feature strandedness.''')
 parser.add_argument('-write_peaks', '--write_peaks',
-                    help='''When set/True, mapped sites are collapsed into peaks and peak ranges are output.
-                    Intended for calling integration hotspots of e.g., AAV integration following Cas-induced DSBs.''',
+                    help='''When set/True, mapped sites are collapsed into peaks and peak ranges are output.''',
+                    action='store_true')
+parser.add_argument('-stranded_peaks', '--stranded_peaks',
+                    help='''When set/True, peaks are called by strand. This should not be set for e.g., AAV integration.''',
                     action='store_true')
 parser.add_argument('-peak_win',
                     type=int,
@@ -621,8 +622,8 @@ if __name__ == "__main__":
         parser.error('min_ttr_len must be >= 10 bp.')
     if args.seq_sim <= 0 or args.seq_sim > 1:
         parser.error('seq_sim must be > 0 and <= 1.')
-    if args.mixed and (args.ttr or (single_end and not args.long_read)):
-        parser.error('mixed and ttr cannot both be True.')
+    if args.mixed and (single_end and not args.long_read):
+        parser.error('mixed cannot both be used with single-end short-read data.')
     if args.write_peaks and args.peak_win < 0:
         parser.error('peak_win must be >= 0.')
     if args.tsd < 1:
@@ -631,6 +632,8 @@ if __name__ == "__main__":
         parser.error('um_reassign_diff must be > 0 or <= 0.25.')
     if args.um_reassign_fc < 1:
         parser.error('um_reassign_fc must be >= 1.')
+    if args.cap_ttr_error and not args.ttr:
+        parser.error('cap_ttr_error cannot be true with ttr is not set.')
         
     if args.genome_fasta:
         genome_compression = check_genome_compression(args.genome_fasta)
@@ -682,7 +685,8 @@ if __name__ == "__main__":
     print(f'Number of threads: {args.nthr}', flush = True)
     print(f'Integrant-end search sequence: {args.ltr}', flush = True)
     if args.ltr2 is not None:
-      print(f'Alternative LTR-end search sequence: {args.ltr2}', flush = True)
+        print(f'Alternative LTR-end search sequence: {args.ltr2}', flush = True)
+    print(f'Mixed integrant ends: {args.mixed}')
     print(f'Linker-end search sequence: {args.linker}', flush = True)
     print(f'LTR match error rate {args.ltr_error_rate}', flush = True)
     print(f'Linker match error rate: {args.linker_error_rate}', flush = True)
@@ -691,7 +695,7 @@ if __name__ == "__main__":
         print(f'Truncated terminal repeats: True', flush = True)
         print(f'Minimum TTR length: {args.min_ttr_len} bp', flush = True)
         if args.cap_ttr_error:
-            print(f'Truncated termini errors allowed: {math.floor(args.min_ttr_len * args.cap_ttr_error)}')
+            print(f'Truncated termini errors allowed: {math.floor(args.min_ttr_len * args.ltr_error_rate)}')
     else:
         print(f'Truncated terminal repeats: False', flush = True)
         
@@ -781,6 +785,7 @@ if __name__ == "__main__":
         if args.write_peaks:
             print('Collapse sites to peaks: True')
             print(f'Peak window size: {args.peak_win} bp')
+            print(f'Stranded peaks: {args.stranded_peaks}')
             print(f'Peak alpha: {args.peak_alpha}')
     
     print('\n')
@@ -826,7 +831,8 @@ if __name__ == "__main__":
         print('\n', flush = True)
         print('No reads were retained after cropping. Exiting.', flush = True)
         os.remove(fq1)
-        os.remove(fq2)
+        if args.r2:
+            os.remove(fq2)
         sys.exit()
 
     align_start = time.time()
@@ -1515,44 +1521,52 @@ if __name__ == "__main__":
                 uniq.write('\t'.join(map(str, collapsed_info)) + '\n')
                 
         if args.write_peaks:
-            is_plus  = defaultdict(int)
-            is_minus = defaultdict(int)
-            for site in collapsed_sites:
-                is_coord = site['start'] if site['strand'] == '+' else site['end']
-                site_key = (site['chrom'], is_coord)
-                if site['strand'] == '+': 
-                    is_plus[site_key]  += site['count']
-                else:
-                    is_minus[site_key] += site['count']
-
-            dual_keys = set(is_plus) & set(is_minus)
-            total_plus = sum(is_plus[k]  for k in dual_keys)
-            total_minus = sum(is_minus[k] for k in dual_keys)
-            total = total_plus + total_minus
-            if total > 0:
-                plus_prob = total_plus / total
-                se = (plus_prob * (1 - plus_prob) / total) ** 0.5
-                plus_prob = plus_prob if se <= 0.1 else 0.5
-            else:
-                plus_prob = 0.5
-
-            all_keys = set(is_plus) | set(is_minus)
             all_sites = []
-            for key in all_keys:
-                chrom, is_coord = key
-                if key in dual_keys:
-                    count = is_plus[key] + is_minus[key]
-                    strand = '.'
-                    quality_site = True
-                else:
-                    count = is_plus.get(key, 0) + is_minus.get(key, 0)
-                    prob = plus_prob ** count if key in is_plus else (1 - plus_prob) ** count
-                    strand = '+' if key in is_plus else '-'
-                    quality_site = prob >= args.peak_alpha
+            
+            if args.stranded_peaks:
+                for site in collapsed_sites:
+                    is_coord = site['start'] if site['strand'] == '+' else site['end']
+                    all_sites.append({'chrom': site['chrom'], 'start': is_coord,
+                                      'end': is_coord if site['strand'] == '-' else (is_coord + 1), 'count': site['count'],
+                                      'strand': site['strand'], 'quality': True})
+            else:
+                is_plus  = defaultdict(int)
+                is_minus = defaultdict(int)
+                for site in collapsed_sites:
+                    is_coord = site['start'] if site['strand'] == '+' else site['end']
+                    site_key = (site['chrom'], is_coord)
+                    if site['strand'] == '+': 
+                        is_plus[site_key]  += site['count']
+                    else:
+                        is_minus[site_key] += site['count']
 
-                all_sites.append({'chrom': chrom, 'start': is_coord,
-                                  'end': is_coord + 1, 'count': count,
-                                  'strand': strand, 'quality': quality_site})
+                dual_keys = set(is_plus) & set(is_minus)
+                total_plus = sum(is_plus[k]  for k in dual_keys)
+                total_minus = sum(is_minus[k] for k in dual_keys)
+                total = total_plus + total_minus
+                if total > 0:
+                    plus_prob = total_plus / total
+                    se = (plus_prob * (1 - plus_prob) / total) ** 0.5
+                    plus_prob = plus_prob if se <= 0.1 else 0.5
+                else:
+                    plus_prob = 0.5
+
+                all_keys = set(is_plus) | set(is_minus)
+                for key in all_keys:
+                    chrom, is_coord = key
+                    if key in dual_keys:
+                        count = is_plus[key] + is_minus[key]
+                        strand = '.'
+                        quality_site = True
+                    else:
+                        count = is_plus.get(key, 0) + is_minus.get(key, 0)
+                        prob = plus_prob ** count if key in is_plus else (1 - plus_prob) ** count
+                        strand = '+' if key in is_plus else '-'
+                        quality_site = prob >= args.peak_alpha
+
+                    all_sites.append({'chrom': chrom, 'start': is_coord,
+                                      'end': is_coord + 1, 'count': count,
+                                      'strand': strand, 'quality': quality_site})
 
             all_sites.sort(key=lambda x: (natural_key(x['chrom']), x['start']))
 
@@ -1560,13 +1574,15 @@ if __name__ == "__main__":
             for site in all_sites:
                 if (peaks
                     and site['chrom'] == peaks[-1]['chrom']
-                    and site['start'] - peaks[-1]['end'] <= args.peak_win):
+                    and site['start'] - peaks[-1]['end'] <= args.peak_win
+                    and (not args.stranded_peaks or site['strand'] == peaks[-1]['strand'])):
                     peaks[-1]['end'] = max(peaks[-1]['end'], site['end'])
                     if site['quality']:
                         peaks[-1]['count'] += site['count']
                         peaks[-1]['n_sites'] += 1
-                        peaks[-1]['has_plus'] = peaks[-1]['has_plus'] or site['strand'] in ('+', '.')
-                        peaks[-1]['has_minus'] = peaks[-1]['has_minus'] or site['strand'] in ('-', '.')
+                        if not args.stranded_peaks:
+                            peaks[-1]['has_plus'] = peaks[-1]['has_plus'] or site['strand'] in ('+', '.')
+                            peaks[-1]['has_minus'] = peaks[-1]['has_minus'] or site['strand'] in ('-', '.')
                         if site['count'] > peaks[-1]['apex_count']:
                             peaks[-1]['apex'] = site['start']
                             peaks[-1]['apex_count'] = site['count']
@@ -1575,6 +1591,7 @@ if __name__ == "__main__":
                         'chrom': site['chrom'],
                         'start': site['start'],
                         'end': site['end'],
+                        'strand': site['strand'],
                         'count': site['count'] if site['quality'] else 0,
                         'n_sites': 1 if site['quality'] else 0,
                         'has_plus': site['strand'] in ('+', '.') if site['quality'] else False,
@@ -1586,19 +1603,22 @@ if __name__ == "__main__":
             written_peaks = []
             with gzip.open(peaks_out, 'wt') as pf:
                 for i, peak in enumerate(
-                        (p for p in peaks if p['n_sites'] > 2 and p['has_plus'] and p['has_minus']), 1):
+                        (p for p in peaks if p['n_sites'] > 2 and (args.stranded_peaks or (p['has_plus'] and p['has_minus']))), 1):
                     peak_info = [peak['chrom'], peak['start'], peak['end'],
-                                f'peak_{i}', peak['count'], '.', peak['apex']]
+                                 f'peak_{i}', peak['count'], peak['strand'] if args.stranded_peaks else '.', peak['apex']]
+
                     pf.write('\t'.join(map(str, peak_info)) + '\n')
                     written_peaks.append(peak)
 
             if args.annotations and written_peaks:
-                chroms, starts, ends = zip(*((p['chrom'], p['start'], p['end']) for p in written_peaks))
+                chroms, starts, ends, strands = zip(*((p['chrom'], p['start'], p['end'],
+                                                        p['strand'] if args.stranded_peaks else '.')
+                                                       for p in written_peaks))
                 peak_coords = pr.PyRanges(pd.DataFrame({
                     'Chromosome': chroms,
                     'Start': starts,
                     'End': ends,
-                    'Strand': '.'
+                    'Strand': strands
                 }))
                 print('\n')
                 for ff in args.annotations:
@@ -1671,7 +1691,7 @@ if __name__ == "__main__":
               gzip.open(bc_out, 'wt') as bc, gzip.open(uniq_out, 'wt') as counts,
               gzip.open(out_mp, 'wt') as mp, gzip.open(out_dup, 'wt') as dups):
             pass
-        if n_pairs_qc == 0:
+        if n_reads_qc == 0:
             print('\n', flush = True)
             print('No quality fragments were retained. No integration sites were mapped.', flush = True)
         else:

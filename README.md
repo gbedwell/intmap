@@ -71,7 +71,9 @@ When the `-reassign_mm` flag is set, intmap will attempt to reassign multi-mappi
 
 After deduplication, intmap makes a final pass through the mapped fragments. The primary purpose of the final pass is to clean up the mapped sites. To do this, intmap collapses ISs within `-cluster_win` distance of an "abundant" IS (defined with the `-min_count` parameter). If two abundant ISs are nearby each other, the less abundant IS will be collapsed into the more abundant IS if the more abundant IS is > `-abundant_fc` more abundant. Low-confidence ISs are also removed in this step. Low-confidence ISs are defined as ISs sequenced < `-low_confidence_fc`-fold of the number of times the average IS was sequenced in the dataset.
 
-When sequencing from the U3-end of integrants with a target site duplication (TSD), the `--U3` flag should be set and the `-tsd` argument should be defined as the expected size of the TSD. For HIV-1, the expected TSD width is 5 nucleotides. Setting these parameters is required to properly map the first position of the TSD. 
+Despite the retro/lentiviral-specific nomenclature of the `--U3` flag, this option is universally applicable to any sequencing strategy that sequences the integrant off of the reverse strand. In such cases, this flag should be set to properly define the orientation of the integrant. In addition, when a target site duplication (TSD) is present, the `-tsd` parameter should be properly defined alongside `--U3` in order for the first position of the TSD to be returned. For HIV-1, the expected TSD is 5 nucleotides.
+
+The `--mixed` flag should be set in situations when integrant-ends can be present on either end of a given fragment (e.g., when sequencing adapters are appended to fragment ends by ligation). When set, the cropping routine will account for the directional ambiguity of the data.
 
 A final note to add is that several intmap arguments can be effectively turned off by setting them to certain values. For example, fuzzy deduplication can be turned off by setting `-len_diff` = 0 (for uniquely-mapping reads) and `-seq_sim` = 1 (for multi-mapping reads). Similarly, other parameters such as `-frag_ratio`, `-min_count`, and `-abundant_fc` can be rendered effectively irrelevant for a given analysis by setting their values to a high number (like 1000).
 
@@ -150,14 +152,14 @@ ATTGCATCAA; TTTGCGGAGC, GCGATATAGC; ATGGACTACT
 7. `-linker_error_rate`: The acceptable error rate in the linker sequence. Defaults to 0.1. Cannot exceed 0.4.
 8. `-contam`: Possible contaminating sequences immediately downstream of the defined integrant search sequence.
 9. `-ltr_primer`: The 3' end of the integrant primer used for PCR amplification. Used to control for mispriming during fragment amplification. Must be at least 10 bp.
-10. `-U3` or `--U3`: Whether or not the integrant-host junctions are sequenced from the U3 end of the provirus (or equivalent). Used for defining the 1st bp of the target site duplication, defining integrant orientation, etc.
+10. `-U3` or `--U3`: Whether or not the integrant-host junctions are sequenced from the U3 end of the provirus (or equivalent). This should be set for any sequencing strategy that sequences the integrant off of the reverse strand. Used for defining the 1st bp of the target site duplication (when applicable), properly defining integrant orientation, etc.
 11. `-nthr`: The number of threads to use for processing. Defaults to 1.
 12. `-nm`: The name of the dataset. Used for naming output files.
 13. `-ttr`, `--ttr`, `-truncated_terminal_repeat`, or `--truncated_terminal_repeat`: Tells the software to look truncation of the defined integrant search sequence. When set/True, the first min_ttr_len bases of the search sequence are assumed to be obligatory (an anchor sequence).
 14. `-min_ttr_len`: The minimum allowed length of the truncated terminal repeat. Only used when ttr is True. Defaults to 10.
 15. `-cap_ttr_error` or `--cap_ttr_error`: When set/True, the number of mismatches allowed for truncated integrant ends is capped at min_ttr_len * ltr_error_rate.
 16. `-leftmost` or `--leftmost`: When set/True, cutadapt looks for the leftmost occurrence of the defined LTR/integrant search sequence. When not set/False (default), the rightmost occurrence is found. Does not affect linker search sequence position.
-17. `-mixed` or `--mixed`: When set/True, the cropping step accommodates situations where library preparation can result in target LTR-ends on either terminus of a given fragment. Cannot be used with ttr or with single-end short-read data.
+17. `-mixed` or `--mixed`: When set/True, the cropping step accommodates situations where library preparation can result in target integrant-ends on either terminus of a given fragment. Cannot be used with with single-end short-read data.
 18. `-min_frag_len`: The minimum allowed fragment length. Defaults to 25.
 19. `-max_frag_len`: The maximum allowed fragment length. Defaults to 2000.
 20. `-g_idx_dir`: The path to the Bowtie2 or minimap2 genome index directory. Note that this should not contain the index prefix.
@@ -214,15 +216,16 @@ ATTGCATCAA; TTTGCGGAGC, GCGATATAGC; ATGGACTACT
 71. `-lr_type`: The type of long-read sequencing. Fills in the -x value in minimap2. Choices: map-ont, map-pb, map-hifi, lr:hq. Defaults to map-ont.
 72. `-annotations`: File paths to genomic annotation files (comma-separated). When not None, ISs overlapping each feature-set and the distance from each IS to the nearest feature in each feature-set are determined. Annotation files are assumed to be in BED format. Nearest distance is determined independently of feature strandedness.
 73. `-write_peaks` or `--write_peaks`: When set/True, mapped sites are collapsed into peaks and peak ranges our output.
-74. `-peak_win`: Maximum distance (bp) between sites to merge into a single peak. Only used when write_peaks is True. Defaults to 25.
-75. `-peak_alpha`: Significance threshold for retaining single-strand IS positions in peaks. Expressed as the probability of only observing mapped sites on a given strand. Sites where this probability is >= peak_alpha are deemed high quality. Only used when write_peaks is True. Defaults to 0.05.
-76. `-remove_chr`: The names of chromosomes to remove during mapping.
-77. `-bt2_path`: The path to the Bowtie2 executable. Defaults to 'bowtie2'. OK to ignore for standard installations.
-78. `-sam_path`: The path to the samtools executable. Defaults to 'samtools'. OK to ignore for standard installations.
-79. `-cut_path`: The path to the cutadapt executable. Defaults to 'cutadapt'. OK to ignore for standard installations.
-80. `-seqtk_path`: The path to the seqtk executable. Defaults to 'seqtk'. OK to ignore for standard installations.
-81. `-bed_path`: The path to the bedtools executable. Defaults to 'bedtools'. OK to ignore for standard installations.
-82. `-mm2_path`: The path to the minimap2 executable. Defaults to 'minimap2'. OK to ignore for standard installations.
+74. `-stranded_peaks`, `--stranded_peaks`: When set/True, peaks are called by strand. This should not be set for e.g., AAV integration.
+75. `-peak_win`: Maximum distance (bp) between sites to merge into a single peak. Only used when write_peaks is True. Defaults to 25.
+76. `-peak_alpha`: Significance threshold for retaining single-strand IS positions in peaks. Expressed as the probability of only observing mapped sites on a given strand. Sites where this probability is >= peak_alpha are deemed high quality. Only used when write_peaks is True. Defaults to 0.05.
+77. `-remove_chr`: The names of chromosomes to remove during mapping.
+78. `-bt2_path`: The path to the Bowtie2 executable. Defaults to 'bowtie2'. OK to ignore for standard installations.
+79. `-sam_path`: The path to the samtools executable. Defaults to 'samtools'. OK to ignore for standard installations.
+80. `-cut_path`: The path to the cutadapt executable. Defaults to 'cutadapt'. OK to ignore for standard installations.
+81. `-seqtk_path`: The path to the seqtk executable. Defaults to 'seqtk'. OK to ignore for standard installations.
+82. `-bed_path`: The path to the bedtools executable. Defaults to 'bedtools'. OK to ignore for standard installations.
+83. `-mm2_path`: The path to the minimap2 executable. Defaults to 'minimap2'. OK to ignore for standard installations.
 
 #### intmap_demux
 1. `-ltr_reads`: Integrant-end FASTQ file.

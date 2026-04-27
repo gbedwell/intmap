@@ -334,10 +334,10 @@ def verify_sequence_groups_faiss(group, seq_sim, len_diff, nthr):
     base_to_val = {'A': 0, 'C': 1, 'G': 2, 'T': 3, 'N': 0}
     dim = 4**k
     
-    vectors = np.zeros((len(group), dim), dtype=np.float32)
+    vectors = np.zeros((len(group), dim), dtype = np.float32)
     
     for i, seq in compare_seqs.items():
-        kmer_counts = np.zeros(dim, dtype=np.float32)
+        kmer_counts = np.zeros(dim, dtype = np.float32)
         for j in range(len(seq) - k + 1):
             kmer = seq[j:j + k]
             if all(base in base_to_val for base in kmer):
@@ -347,7 +347,7 @@ def verify_sequence_groups_faiss(group, seq_sim, len_diff, nthr):
                 kmer_counts[idx] += 1
         vectors[i] = kmer_counts
     
-    norms = np.sqrt(np.sum(vectors**2, axis=1))
+    norms = np.sqrt(np.sum(vectors ** 2, axis = 1))
     norms[norms == 0] = 1
     vectors = vectors / norms[:, np.newaxis]
     
@@ -370,8 +370,9 @@ def verify_sequence_groups_faiss(group, seq_sim, len_diff, nthr):
             
             if abs(len_i - len_j) > len_diff:
                 continue
-                
-            if D[i][j_idx] < seq_sim - 0.05:
+
+            k_diff = max(min(0.2, k / (min(len_i, len_j) - k + 1)), 0.05)
+            if D[i][j_idx] < max(0, seq_sim - k_diff):
                 continue
                 
             sim = seq_similarity(seq_i, seq_j)

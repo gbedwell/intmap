@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name='intmap',
-    version='2.0.0',
+    version='2.0.1',
     author='Greg Bedwell',
     author_email='gregoryjbedwell@gmail.com',
     packages=find_packages(),

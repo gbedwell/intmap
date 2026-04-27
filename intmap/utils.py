@@ -341,7 +341,7 @@ def extract_grouped_entries(groups, input_dict):
     return grouped_entries
 
 def collapse_group(chrom_strand_tuple, pos_counts, cluster_win, min_count, 
-                    abundant_fc, read_mapping):
+                   abundant_fc, read_mapping):
     positions = np.array([p for p, _, _ in pos_counts])
     counts = np.array([c for _, c, _ in pos_counts])
     dup_counts = np.array([dc for _, _, dc in pos_counts])
@@ -356,7 +356,7 @@ def collapse_group(chrom_strand_tuple, pos_counts, cluster_win, min_count,
     abundant_counts = abundant_counts[sort_idx]
     abundant_dup_counts = abundant_dup_counts[sort_idx]
 
-    keep_abundant = np.ones(len(abundant_positions), dtype=bool)
+    keep_abundant = np.ones(len(abundant_positions), dtype = bool)
     collapsed = set()
     for i in range(1, len(abundant_positions)):
         if i in collapsed:
@@ -416,11 +416,11 @@ def consolidate_new_dups(kept_dict):
           group_reads = read_names[group_mask]
           
           best_read = max(group_reads, 
-                        key=lambda x: (
+                        key = lambda x: (
                           kept_dict[x].get('count', 0), 
                           kept_dict[x].get('map_qual', 0),
                           kept_dict[x].get('mean_qual', 0)
-                          ))
+                      ))
           
           total_count = sum(kept_dict[read].get('count', 0) for read in group_reads)
           kept_dict[best_read]['count'] = total_count
