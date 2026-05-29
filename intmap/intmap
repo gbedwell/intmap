@@ -260,6 +260,11 @@ parser.add_argument('--check_mispriming', '-check_mispriming',
                     help='''When set/True, look for mispriming around each mapped IS. 
                     Aligment parameters are currently set internally.''',
                     action='store_true')
+parser.add_argument('-misprime_win',
+                    type=int, 
+                    help='''The one-sided window size in which to check for mispriming.
+                    Defaults to 25.''',
+                    default=25)
 parser.add_argument('-num_perm',
                     type=int, 
                     help='''The number of permutations in the minhash fingerprint. 
@@ -1285,7 +1290,13 @@ if __name__ == "__main__":
         for key, value in list(kept_dict.items()):
             if not isinstance(value, dict):
                 print(f'key: {key} value: {value}')
-            seq = fetch_sequence(coordinates = value, genome = genome, U3 = args.U3, shift = shift)
+            seq = fetch_sequence(
+                coordinates = value, 
+                genome = genome, 
+                U3 = args.U3, 
+                shift = shift, 
+                misprime_win = args.misprime_win
+            )
 
             if is_misprimed(seq = seq, primer = ltr_primer, matrix = ps_matrix):
                 del kept_dict[key]

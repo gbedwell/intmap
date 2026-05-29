@@ -202,6 +202,8 @@ if [ $? -eq 0 ]; then
     chmod +x "$CONDA_PREFIX/bin/intwrap"
     cp prepim.sh "$CONDA_PREFIX/bin/prepim"
     chmod +x "$CONDA_PREFIX/bin/prepim"
+    cp primer_match.sh "$CONDA_PREFIX/bin/primer_match"
+    chmod +x "$CONDA_PREFIX/bin/primer_match"
     if [ $env_active -eq 0 ]; then
         conda deactivate
     fi

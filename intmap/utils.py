@@ -125,7 +125,7 @@ def check_genome_compression(genome_fasta):
             return 'bgzf'
     return 'uncompressed'
 
-def fetch_sequence(coordinates, genome, U3, shift):
+def fetch_sequence(coordinates, genome, U3, shift, misprime_win):
     chrom = coordinates['chrom']
     if coordinates['strand'] == '-':
         strand = '-' if not U3 else '+'
@@ -135,11 +135,11 @@ def fetch_sequence(coordinates, genome, U3, shift):
     chr_len = genome.get_reference_length(chrom)
     
     if strand == '-':
-        start = max(((coordinates['end'] - shift) - 50), 0)
-        end = min((coordinates['end'] - shift) + 50, chr_len)
+        start = max(((coordinates['end'] - shift) - misprime_win), 0)
+        end = min((coordinates['end'] - shift) + misprime_win, chr_len)
     else:
-        start = max(((coordinates['start'] + shift) - 50), 0)
-        end = min(((coordinates['start'] + shift) + 50), chr_len)
+        start = max(((coordinates['start'] + shift) - misprime_win), 0)
+        end = min(((coordinates['start'] + shift) + misprime_win), chr_len)
         
     sequence = genome.fetch(chrom, start, end)
     

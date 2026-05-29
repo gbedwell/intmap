@@ -186,46 +186,47 @@ ATTGCATCAA; TTTGCGGAGC, GCGATATAGC; ATGGACTACT
 41. `-genome_fasta`: The file path to the genome fasta file. The file must be either bgzip compressed or uncompressed. Used when ltr_primer is given to look for mispriming.
 42. `-genome_fasta_index`: The file path to the genome fasta index file. This is not strictly necessary if the genome fasta index file is named \<genome_fasta\>.fai for an uncompressed genome_fasta file, or \<genome_fasta\>.gzi for a bgzip compressed genome_fasta file.
 43. `-check_mispriming`: When set/True, look for mispriming around each mapped IS. Aligment parameters are currently set internally.
-44. `-num_perm`: The number of permutations in the minhash fingerprint. Defaults to 128. Must be divisible by 8 and >= 32.
-45. `-seq_sim`: Sequence similarity threshold. Used for validating multimapping read groups and, in certain instances, assigning multimapping read positions. Defaults to 0.95. Must be > 0 and <= 1.
-46. `-token_size`: The token size for MinHash generation. Defaults to 4 for short-read data and 8 for long-read data. A value of -1 tells the program to use default values.
-47. `-hash_similarity`: Defines the similarity threshold between MinHashes. Used for coarse clustering of multimapping fragments. Must be >= 0 and <= 1. By default, internally defined as seq_sim^token_size / (2 - seq_sim^token_size) - 0.05.
-48. `-b_bits`: Defines the number of bits with which to represent each MinHash. Must be between 1 and 32. Defaults to 32.
-49. `-minimizer_win`: Defines the minimizer window size. By default, internally defined as 2 \* token_size for long-read sequences and token_size for short-read sequences. Must be > 0 and <= min_frag_len - token_size + 1. When -1, all k-mers are included in the MinHash.
-50. `-min_count`: The minimum number of mapped sites required to define a particular integration site as abundant. Used during the final pass to clean up mapped ISs. Defaults to 1.
-51. `-abundant_fc`: The fold-change threshold between nearby abundant sites for them to be considered the same. If two nearby abundant sites have abundance fold-change values < abundant_fc, they are considered different. Defaults to 2.
-52. `-low_confidence_fc`: The fold-change threshold relative to the average number of observations per fragment for a mapped site to be considered low-confidence. If a site has an observed value < low_confidence_fc-fold from the average number of observations per fragment, the site is removed. Defaults to 100.
-53. `-reassign_mm` or `--reassign_mm`: When set/True, attempts to reassign multimapping reads based on concordance with uniquely mapping reads or similar multimapping reads.
-54. `-mm_k`: The size of the k-mers used to reassign multimapping reads. Defaults to 15. Must be <= min_frag_len - len_diff.
-55. `-mm_group_threshold`: Defines the lower multimapping group size threshold for whole-group reassignment to a probable location. Expressed as a fraction of the total number of multimapping reads. Defaults to 0.002.
-56. `-um_reassign_diff`: The fuzzy similarity difference enforced when choosing the best uniquely-mapping fragment position for multi-mapping fragment reassignment. Used in conjection with um_reassign_fc. Must be >= 0 and < 0.25. Defaults to 0.05.
-57. `-um_reassign_fc`: Defines the count fold-change required between two uniquely-mapping fragments with similar sequence similarity scores to a multi-mapping fragment in order to re-define the best match. Used in conjunction with um_reassign_diff. Must be >= 1. Defaults to 2.
-58. `-no_dedup` or `--no_dedup`: When set/True, the pipeline stops after alignment and QC.
-59. `-check_consensus` or `--check_consensus`: When set/True, reads from input files are sampled to identify common variants of the given LTR and linker sequences. Results are written to stdout.
-60. `-consensus_sample_size`: The number of reads to sample for consensus checking. Defaults to 10000.
-61. `-consensus_threshold`: The fractional threshold for sequence significance. Used during consensus checking. If the frequency of any sequence is >= this value, that sequence will be reported. Defaults to 0.01.
-62. `-consensus_error_rate`: The error rate for consensus searching. Any sequence with <= len(LTR/linker sequence) \* consensus_error_rate errors will be reported as a variant provided sufficient representation (see consensus_threshold). Defaults to 0.3.
-63. `-extract_consensus` or `--extract_consensus`: When set/True, a consensus sequence of length consensus_length is determined from provided FASTQ files. Useful for determining integrant/linker sequences when they are unknown/ambiguous.
-64. `-consensus_length`: The length of the consensus sequence to generate. Used with extract_consensus. Defaults to 100.
-65. `-consensus_base_threshold`: The threshold required to call a base the consensus. Positions with base frequency values below this are returned as N. Defaults to 0.65.
-66. `-consensus_cpt_penalty`: The penalty term for changepoint estimation. Used in defining the estimated consensus sequence. Higher values increase sensitivity, but also potentially increase noise. Defaults to 1.5.
-67. `-consensus_peak_threshold`: The fractional threshold relative to the maximum segment mean for a changepoint segment to be considered part of the consensus. Defaults to 0.9.
-68. `-umi_dedup_fp`, `--umi_dedup_fp`: When set/True, checks for conflicting UMIs during the final pass. These would be similar UMIs on fragments mapping to different genomic positions.
-69. `-mle` or `--mle`: When set/True, site abundance is estimated using maximum likelihood estimation. This cannot be set when either linker_umi_len or ltr_umi_len > 0 or when single-end short-read sequencing is being analyzed. Requires random genome fragmentation.
-70. `-long_read`, `--long_read`, `-lr`, or `--lr`: When set/True, reads are processed as long-reads (ONT/PB).
-71. `-lr_type`: The type of long-read sequencing. Fills in the -x value in minimap2. Choices: map-ont, map-pb, map-hifi, lr:hq. Defaults to map-ont.
-72. `-annotations`: File paths to genomic annotation files (comma-separated). When not None, ISs overlapping each feature-set and the distance from each IS to the nearest feature in each feature-set are determined. Annotation files are assumed to be in BED format. Nearest distance is determined independently of feature strandedness.
-73. `-write_peaks` or `--write_peaks`: When set/True, mapped sites are collapsed into peaks and peak ranges our output.
-74. `-stranded_peaks`, `--stranded_peaks`: When set/True, peaks are called by strand. This should not be set for e.g., AAV integration.
-75. `-peak_win`: Maximum distance (bp) between sites to merge into a single peak. Only used when write_peaks is True. Defaults to 25.
-76. `-peak_alpha`: Significance threshold for retaining single-strand IS positions in peaks. Expressed as the probability of only observing mapped sites on a given strand. Sites where this probability is >= peak_alpha are deemed high quality. Only used when write_peaks is True. Defaults to 0.05.
-77. `-remove_chr`: The names of chromosomes to remove during mapping.
-78. `-bt2_path`: The path to the Bowtie2 executable. Defaults to 'bowtie2'. OK to ignore for standard installations.
-79. `-sam_path`: The path to the samtools executable. Defaults to 'samtools'. OK to ignore for standard installations.
-80. `-cut_path`: The path to the cutadapt executable. Defaults to 'cutadapt'. OK to ignore for standard installations.
-81. `-seqtk_path`: The path to the seqtk executable. Defaults to 'seqtk'. OK to ignore for standard installations.
-82. `-bed_path`: The path to the bedtools executable. Defaults to 'bedtools'. OK to ignore for standard installations.
-83. `-mm2_path`: The path to the minimap2 executable. Defaults to 'minimap2'. OK to ignore for standard installations.
+44. `-misprime_win`: The one-sided window size in which to check for mispriming. Defaults to 25.
+45. `-num_perm`: The number of permutations in the minhash fingerprint. Defaults to 128. Must be divisible by 8 and >= 32.
+46. `-seq_sim`: Sequence similarity threshold. Used for validating multimapping read groups and, in certain instances, assigning multimapping read positions. Defaults to 0.95. Must be > 0 and <= 1.
+47. `-token_size`: The token size for MinHash generation. Defaults to 4 for short-read data and 8 for long-read data. A value of -1 tells the program to use default values.
+48. `-hash_similarity`: Defines the similarity threshold between MinHashes. Used for coarse clustering of multimapping fragments. Must be >= 0 and <= 1. By default, internally defined as seq_sim^token_size / (2 - seq_sim^token_size) - 0.05.
+49. `-b_bits`: Defines the number of bits with which to represent each MinHash. Must be between 1 and 32. Defaults to 32.
+50. `-minimizer_win`: Defines the minimizer window size. By default, internally defined as 2 \* token_size for long-read sequences and token_size for short-read sequences. Must be > 0 and <= min_frag_len - token_size + 1. When -1, all k-mers are included in the MinHash.
+51. `-min_count`: The minimum number of mapped sites required to define a particular integration site as abundant. Used during the final pass to clean up mapped ISs. Defaults to 1.
+52. `-abundant_fc`: The fold-change threshold between nearby abundant sites for them to be considered the same. If two nearby abundant sites have abundance fold-change values < abundant_fc, they are considered different. Defaults to 2.
+53. `-low_confidence_fc`: The fold-change threshold relative to the average number of observations per fragment for a mapped site to be considered low-confidence. If a site has an observed value < low_confidence_fc-fold from the average number of observations per fragment, the site is removed. Defaults to 100.
+54. `-reassign_mm` or `--reassign_mm`: When set/True, attempts to reassign multimapping reads based on concordance with uniquely mapping reads or similar multimapping reads.
+55. `-mm_k`: The size of the k-mers used to reassign multimapping reads. Defaults to 15. Must be <= min_frag_len - len_diff.
+56. `-mm_group_threshold`: Defines the lower multimapping group size threshold for whole-group reassignment to a probable location. Expressed as a fraction of the total number of multimapping reads. Defaults to 0.002.
+57. `-um_reassign_diff`: The fuzzy similarity difference enforced when choosing the best uniquely-mapping fragment position for multi-mapping fragment reassignment. Used in conjection with um_reassign_fc. Must be >= 0 and < 0.25. Defaults to 0.05.
+58. `-um_reassign_fc`: Defines the count fold-change required between two uniquely-mapping fragments with similar sequence similarity scores to a multi-mapping fragment in order to re-define the best match. Used in conjunction with um_reassign_diff. Must be >= 1. Defaults to 2.
+59. `-no_dedup` or `--no_dedup`: When set/True, the pipeline stops after alignment and QC.
+60. `-check_consensus` or `--check_consensus`: When set/True, reads from input files are sampled to identify common variants of the given LTR and linker sequences. Results are written to stdout.
+61. `-consensus_sample_size`: The number of reads to sample for consensus checking. Defaults to 10000.
+62. `-consensus_threshold`: The fractional threshold for sequence significance. Used during consensus checking. If the frequency of any sequence is >= this value, that sequence will be reported. Defaults to 0.01.
+63. `-consensus_error_rate`: The error rate for consensus searching. Any sequence with <= len(LTR/linker sequence) \* consensus_error_rate errors will be reported as a variant provided sufficient representation (see consensus_threshold). Defaults to 0.3.
+64. `-extract_consensus` or `--extract_consensus`: When set/True, a consensus sequence of length consensus_length is determined from provided FASTQ files. Useful for determining integrant/linker sequences when they are unknown/ambiguous.
+65. `-consensus_length`: The length of the consensus sequence to generate. Used with extract_consensus. Defaults to 100.
+66. `-consensus_base_threshold`: The threshold required to call a base the consensus. Positions with base frequency values below this are returned as N. Defaults to 0.65.
+67. `-consensus_cpt_penalty`: The penalty term for changepoint estimation. Used in defining the estimated consensus sequence. Higher values increase sensitivity, but also potentially increase noise. Defaults to 1.5.
+68. `-consensus_peak_threshold`: The fractional threshold relative to the maximum segment mean for a changepoint segment to be considered part of the consensus. Defaults to 0.9.
+69. `-umi_dedup_fp`, `--umi_dedup_fp`: When set/True, checks for conflicting UMIs during the final pass. These would be similar UMIs on fragments mapping to different genomic positions.
+70. `-mle` or `--mle`: When set/True, site abundance is estimated using maximum likelihood estimation. This cannot be set when either linker_umi_len or ltr_umi_len > 0 or when single-end short-read sequencing is being analyzed. Requires random genome fragmentation.
+71. `-long_read`, `--long_read`, `-lr`, or `--lr`: When set/True, reads are processed as long-reads (ONT/PB).
+72. `-lr_type`: The type of long-read sequencing. Fills in the -x value in minimap2. Choices: map-ont, map-pb, map-hifi, lr:hq. Defaults to map-ont.
+73. `-annotations`: File paths to genomic annotation files (comma-separated). When not None, ISs overlapping each feature-set and the distance from each IS to the nearest feature in each feature-set are determined. Annotation files are assumed to be in BED format. Nearest distance is determined independently of feature strandedness.
+74. `-write_peaks` or `--write_peaks`: When set/True, mapped sites are collapsed into peaks and peak ranges our output.
+75. `-stranded_peaks`, `--stranded_peaks`: When set/True, peaks are called by strand. This should not be set for e.g., AAV integration.
+76. `-peak_win`: Maximum distance (bp) between sites to merge into a single peak. Only used when write_peaks is True. Defaults to 25.
+77. `-peak_alpha`: Significance threshold for retaining single-strand IS positions in peaks. Expressed as the probability of only observing mapped sites on a given strand. Sites where this probability is >= peak_alpha are deemed high quality. Only used when write_peaks is True. Defaults to 0.05.
+78. `-remove_chr`: The names of chromosomes to remove during mapping.
+79. `-bt2_path`: The path to the Bowtie2 executable. Defaults to 'bowtie2'. OK to ignore for standard installations.
+80. `-sam_path`: The path to the samtools executable. Defaults to 'samtools'. OK to ignore for standard installations.
+81. `-cut_path`: The path to the cutadapt executable. Defaults to 'cutadapt'. OK to ignore for standard installations.
+82. `-seqtk_path`: The path to the seqtk executable. Defaults to 'seqtk'. OK to ignore for standard installations.
+83. `-bed_path`: The path to the bedtools executable. Defaults to 'bedtools'. OK to ignore for standard installations.
+84. `-mm2_path`: The path to the minimap2 executable. Defaults to 'minimap2'. OK to ignore for standard installations.
 
 #### intmap_demux
 1. `-ltr_reads`: Integrant-end FASTQ file.

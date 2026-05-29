@@ -62,3 +62,7 @@
 + Added a dynamic seq_sim adjustment for k-mer frequency comparisons.
   + Replaces the static and universal seq_sim - 0.05 adjustment.
   + Now calculated as seq_sim - max(min(0.2, k / (min(len_i, len_j) - k + 1)), 0.05)
+
+## v2.0.2 (2026-05-29)
++ Added `misprime_win` to give users control over the window size used when checking for mispriming.
++ Added the helper script primer_match.sh to extract primer sequences from a reference file.
