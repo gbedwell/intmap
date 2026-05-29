@@ -2,7 +2,7 @@
 intmap is a python package for mapping the locations of genomic integration from second- and third-generation sequencing data.
 
 ## Current version
-The latest version of intmap is v2.0.0. Versions of intmap <= v1.0.1 are considered obsolete and should not be used. It is recommended that users of older versions upgrade to intmap >= v2.0.0. See the CHANGELOG for more information.
+The latest version of intmap is v2.0.2. Versions of intmap <= v1.0.1 are considered obsolete and should not be used. It is recommended that users of older versions upgrade to intmap >= v2.0.0. See the CHANGELOG for more information.
 
 ## Installation
 The easiest way to install intmap is by cloning this repository, navigating to the generated 'intmap' directory, and running `bash install.sh`. This bash script will:
