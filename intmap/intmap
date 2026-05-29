@@ -770,6 +770,7 @@ if __name__ == "__main__":
         if args.check_mispriming:
             print(f'Look for mispriming: True', flush = True)
             print(f'LTR primer sequence: {args.ltr_primer}', flush = True)
+            print(f'Mispriming window size: {args.misprime_win} bp', flush = True)
         else:
             print('Look for mispriming: False', flush = True)
         

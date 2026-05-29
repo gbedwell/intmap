@@ -274,5 +274,12 @@ prepim.sh is another helper script useful for creating setup files for intmap_mu
 prepim input.tsv
 ```
 
+#### primer_match
+primer_match.sh is a helper script for the quick extraction of integrant- and linker-end primer sequences from a reference file given an input file containing 1) sample names, 2) integrant-end primer IDs, and 3) linker-end primer IDs. The input and reference files are expected to be tab-delimited. As with the other helper scripts, primer_match is copied to `~/CONDA_PREFIX/intmap/bin/` upon installation.
+
+```
+primer_match -i input.txt -o output.txt -r /path/to/reference.txt
+```
+
 ## Licensing
 intmap is licensed under the GPL-3 License (see LICENSE). It additionally relies on several third-party tools, which are governed by their own licenses. See `THIRD_PARTY_LICENSES.md` for details.
